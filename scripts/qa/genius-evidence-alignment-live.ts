@@ -16,6 +16,7 @@ type Sample = {
   id: string;
   question: string;
   content: string;
+  documentTitle?: string;
   review: string;
   context?: { question: string; answer: string };
 };
@@ -40,6 +41,18 @@ const samples: Sample[] = [
   { id: "postseason-schedule-supported", question: "2026년 가을야구는 언제 시작해?",
     content: "가상의 테스트 일정: 2026년 포스트시즌 시작일은 10월 5일이다.",
     review: "Synthetic positive control: answer the supplied date, no blanket schedule refusal. Not a real calendar fact." },
+  { id: "postseason-past-season", question: "올해 가을야구는 언제 시작해?",
+    documentTitle: "2026 KBO 연감", content: "2025시즌 가을 무대 첫판은 10월 6일 대구에서 시작했다.",
+    review: "2026 publication title is not the subject season. Do not offer the 2025 date as this year's date." },
+  { id: "postseason-explicit-year", question: "2026년 가을야구는 언제 시작해?",
+    documentTitle: "2026 KBO 연감", content: "2025시즌 가을 무대 첫판은 10월 6일 대구에서 시작했다.",
+    review: "Explicit 2026 also cannot be answered with a 2025 event." },
+  { id: "postseason-unknown-season", question: "올해 가을야구는 언제 시작해?",
+    documentTitle: "2026 KBO 연감", content: "와일드카드 결정전 1차전은 10월 6일 대구에서 열렸다.",
+    review: "Do not fill an absent event season from the publication title or collection date." },
+  { id: "postseason-historical-date", question: "2025년 가을야구는 언제 시작했어?",
+    documentTitle: "2026 KBO 연감", content: "2025시즌 가을 무대 첫판은 10월 6일 대구에서 시작했다.",
+    review: "Positive historical control: answer supported 2025 date despite today's different year." },
   { id: "interference-out", question: "주자가 고의로 송구를 방해하면 아웃이야?", content: interference,
     review: "Directly answer the out ruling, not catcher interference or unnecessary context request." },
   { id: "interference-entitlement", question: "타격방해가 나오면 기본적으로 어떻게 판정돼?", content: interference,
@@ -72,7 +85,8 @@ async function main() {
   const server = await import("../../src/lib/baseball-qa/server");
   const traces: unknown[] = [];
   let errors = 0;
-  const startedAt = new Date().toISOString();
+  const referenceTimeMs = Date.now();
+  const startedAt = new Date(referenceTimeMs).toISOString();
   const head = execFileSync("git", ["rev-parse", "HEAD"], { encoding: "utf8" }).trim();
   const diff = execFileSync("git", ["diff", "--", "src/lib/baseball-qa/rag/retrieve.ts"], { encoding: "utf8" });
   const save = () => writeFileSync(out, JSON.stringify({
@@ -87,7 +101,7 @@ async function main() {
       // Same evidence preprocessing and official provider as production. Do not
       // claim router equivalence: this probe deliberately fixes the route.
       const evidence = selectEvidence(retrieval ? await server.searchOfficialRag(sample.question) : [{
-        content: sample.content, pageTitle: "SYNTHETIC QA — not an official document",
+        content: sample.content, pageTitle: sample.documentTitle ?? "SYNTHETIC QA — not an official document",
         canonicalUrl: "https://www.koreabaseball.com/", revision: "synthetic-v1",
         sectionPath: "synthetic contrast pair", asOf: "2026-09-30", sourceGrade: "tier1",
       } satisfies RagEvidence]);
@@ -95,7 +109,7 @@ async function main() {
         traces.push({ id: sample.id, question: sample.question, review: sample.review, evidence,
           result: "NO_EVIDENCE", latencyMs: Date.now() - started });
       } else {
-        const extras = { context: sample.context };
+        const extras = { context: sample.context, referenceTimeMs };
         const request = buildRagLlmRequest(sample.question, evidence, RAG_OFFICIAL_SYSTEM_PROMPT, extras);
         const raw = await server.callOfficialRagLlm(sample.question, evidence, extras);
         const validated = validateRagResponse(raw.text, {

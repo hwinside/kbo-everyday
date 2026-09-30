@@ -4313,6 +4313,8 @@ export function validateLlmResponse(raw: string, question = "", previous?: Conte
 /** 사전에서 정규화 exact 매칭 (term/alias 각각 key·question 두 정규화 레벨로 인덱싱) */
 /** LLM 재서술 호출에 함께 넘기는 부가 맥락 — 직전 턴 + 현재 로스터 블록 (축 A·D). */
 export interface RagLlmExtras {
+  /** Server-owned official RAG reference clock; injectable for replay. */
+  referenceTimeMs?: number;
   ruleRequest?: RequiredRuleRequest;
   context?: ContextTurn;
   definition?: StatDefinitionFrame;

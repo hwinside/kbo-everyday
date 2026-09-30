@@ -29,6 +29,7 @@ import {
   type QaDeps,
 } from "../../src/lib/baseball-qa/pipeline";
 import {
+  buildRagLlmRequest,
   allowsNumericAnswer,
   evidenceGrade,
   numericTokensGrounded,
@@ -182,6 +183,38 @@ check("source_kind → 등급 매핑", () => {
   assert.equal(gradeForSourceKind("kbo_structured"), "tier1");
   assert.equal(gradeForSourceKind("namu_document"), "tier2");
   assert.equal(gradeForSourceKind("wikipedia_document"), "tier2");
+});
+
+// Request-boundary checks are not a semantic verdict. The live replay owns that.
+check("공식 기준일 — KST 자정·연도 경계이며 숫자 근거로 승격하지 않는다", () => {
+  for (const [time, date] of [
+    ["2026-12-31T14:59:59Z", "2026-12-31"],
+    ["2026-12-31T15:00:00Z", "2027-01-01"],
+  ]) {
+    const request = buildRagLlmRequest("올해 일정은?", [OFFICIAL], RAG_OFFICIAL_SYSTEM_PROMPT,
+      { referenceTimeMs: Date.parse(time) });
+    assert.ok(request.contents[0].parts[0].text.includes(`${date} (Asia/Seoul)`));
+  }
+  assert.equal(numericTokensGrounded("2027년 10월 6일입니다.", [OFFICIAL]), false);
+});
+check("공식 메타데이터 — 발행연도를 대상 시즌으로 만들지 않고 혼합 본문 보존", () => {
+  const historical = { ...OFFICIAL, pageTitle: "2026 KBO 연감", sectionPath: "기록",
+    content: "2020시즌 기록과 2025시즌 경기, 2026 FA 자격 명단이 함께 실렸다." };
+  const before = JSON.stringify(historical);
+  const request = buildRagLlmRequest("올해 가을야구는?", [historical], RAG_OFFICIAL_SYSTEM_PROMPT,
+    { referenceTimeMs: Date.parse("2026-09-30T00:00:00Z") });
+  const text = request.contents[0].parts[0].text;
+  assert.ok(text.includes('"subjectSeason":null'));
+  assert.ok(text.includes('"collectedAt":"2026-08-01"'));
+  assert.ok(text.includes(historical.content));
+  assert.ok(!text.includes("현재성: 최신"));
+  assert.equal(JSON.stringify(historical), before);
+});
+check("비공식 경로 — 공식 기준일·메타데이터 형식이 새지 않는다", () => {
+  const base = buildRagLlmRequest("문보경은 누구야?", [WIKI]);
+  const timed = buildRagLlmRequest("문보경은 누구야?", [WIKI], undefined,
+    { referenceTimeMs: Date.parse("2026-09-30T00:00:00Z") });
+  assert.deepEqual(timed, base);
 });
 
 // ── 5. 파이프라인 배선 ────────────────────────────────────────────────────────
@@ -632,6 +665,18 @@ checkAsync("파이프라인: 공식 경로 GENERAL 답의 질문 밖 숫자는 �
   });
   const result = await answerQuestion("u1", "지명 타자의 DH 는 뭐의 약자야?", deps);
   assert.equal(result.source, "unsure", "지어낸 수치가 GENERAL 로 새면 안 된다");
+});
+
+checkAsync("실제 서버 요청 빌더 — 공식 기준일 주입과 기본 서버 시계", async () => {
+  const { buildProductionRagRequest } = await import("../../src/lib/baseball-qa/server");
+  const fixed = buildProductionRagRequest("올해 일정은?", [OFFICIAL], RAG_OFFICIAL_SYSTEM_PROMPT,
+    { referenceTimeMs: Date.parse("2026-12-31T15:00:00Z") });
+  assert.ok(fixed.contents[0].parts[0].text.includes("2027-01-01 (Asia/Seoul)"));
+  const { toKSTDateString } = await import("../../src/lib/utils/date-kst");
+  const before = toKSTDateString(new Date().toISOString());
+  const liveClock = buildProductionRagRequest("올해 일정은?", [OFFICIAL], RAG_OFFICIAL_SYSTEM_PROMPT);
+  const after = toKSTDateString(new Date().toISOString());
+  assert.ok([before, after].some(date => liveClock.contents[0].parts[0].text.includes(`${date} (Asia/Seoul)`)));
 });
 
 (async () => {
