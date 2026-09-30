@@ -950,6 +950,8 @@ const FA_CURRENT_CRITERIA_PROMPT = [
 ].join("\n");
 
 export interface RagRequestExtras {
+  /** Historical record fallback only; never licenses current totals. */
+  recordbookRequest?: boolean;
   /** Server-owned reference clock; official requests only. Injectable for replay. */
   referenceTimeMs?: number;
   /** Typed requested policy scope; never adds source facts or numeric license. */
@@ -1040,6 +1042,21 @@ export function formatEvidenceTimeAnnotation(
   return `${seasonLabel} · ${asOfLabel} · ${currencyLabel}`;
 }
 
+/** Source metadata selection, not question-keyword routing. Publication years
+ * are labels, never fact seasons or collection-date freshness licenses. */
+export function isRecordbookEvidence(row: RagEvidence): boolean {
+  return row.sourceGrade === "tier1" && row.sourceKind === "kbo_ebook"
+    && /레코드북|기록대백과/.test(row.pageTitle);
+}
+
+const RECORDBOOK_PROMPT = [
+  "이 요청은 기존 기록 라우터의 미지원 질문에 대한 공식 기록 간행물 대체 조회다.",
+  "질문 의미를 판정해 통산·역대·과거 최고기록이면 recordScope=historical, 현재/올해/오늘/최신 누계 요구면 current, 불명확하거나 기록 질문이 아니면 unknown으로 출력한다. current/unknown은 INSUFFICIENT다.",
+  "historical도 질문의 선수·리그·기록종류·기간을 직접 뒷받침하는 자료가 있어야 GROUNDED다. 단일 자료 번호를 recordEvidence에 넣고 그 자료에 없는 숫자·다른 선수 숫자를 답하지 않는다. 여러 자료를 합산하거나 일부 시즌만 더해 통산으로 만들지 않는다.",
+  "기록은 해당 간행물 발행 시점에 수록된 누계/역대기록이다. 발행연도나 수집일을 기록 기준 시즌으로 바꾸거나 발행연도에서 1을 빼지 않는다. 본문에 명시된 기록 연도·범위만 답하고 최신 누계로 단정하지 않는다.",
+  "일반 지식(GENERAL)이나 질문 숫자로 기록을 보충하지 않는다. 근거가 없으면 INSUFFICIENT다.",
+].join("\n");
+
 /** Official responses carry typed citation bindings; semantic extraction remains
  * the model's responsibility and is evaluated separately from schema validity. */
 export const OFFICIAL_RAG_RESPONSE_SCHEMA = {
@@ -1072,6 +1089,7 @@ export function buildRagLlmRequest(
   extras: RagRequestExtras = {},
 ) {
   const official = systemPrompt === RAG_OFFICIAL_SYSTEM_PROMPT;
+  const recordbook = official && extras.recordbookRequest;
   // 🔴 근거 헤더에 **시점 주석**을 붙인다 (삼순 2026-08-28 재리뷰 P0-①).
   //   검색이 lane 으로 최신을 골라와도 모델이 "이게 언제 자료인지"를 모르면 쓸 수 없다.
   //   주석은 **데이터 구획 안**에만 들어간다 — 지시문은 systemInstruction 에만 둔다(인젝션 경계).
@@ -1139,7 +1157,7 @@ export function buildRagLlmRequest(
   }
   sections.push(`질문: ${question}`);
   return {
-    systemInstruction: { parts: [{ text: extras.definition ? `${systemPrompt}\n${STAT_DEFINITION_PROMPT}`
+    systemInstruction: { parts: [{ text: recordbook ? `${systemPrompt}\n${RECORDBOOK_PROMPT}` : extras.definition ? `${systemPrompt}\n${STAT_DEFINITION_PROMPT}`
       : extras.ruleRequest?.kind === "fa_general" ? `${systemPrompt}\n${FA_CURRENT_CRITERIA_PROMPT}` : systemPrompt }] },
     contents: [
       {
@@ -1153,7 +1171,14 @@ export function buildRagLlmRequest(
       maxOutputTokens: BASEBALL_GENIUS_MAX_OUTPUT_TOKENS,
       responseMimeType: "application/json",
       ...(systemPrompt === RAG_TEAM_SYSTEM_PROMPT ? { responseSchema: TEAM_CORRECTION_RESPONSE_SCHEMA } : {}),
-      ...(official ? { responseSchema: OFFICIAL_RAG_RESPONSE_SCHEMA } : {}),
+      ...(official ? { responseSchema: recordbook ? {
+        ...OFFICIAL_RAG_RESPONSE_SCHEMA,
+        properties: { ...OFFICIAL_RAG_RESPONSE_SCHEMA.properties,
+          recordScope: { type: "STRING", enum: ["historical", "current", "unknown"] },
+          recordEvidence: { type: "INTEGER", description: "단일 근거 번호(1부터), 근거가 없으면 0" },
+        },
+        required: [...OFFICIAL_RAG_RESPONSE_SCHEMA.required, "recordScope", "recordEvidence"],
+      } : OFFICIAL_RAG_RESPONSE_SCHEMA } : {}),
     },
   };
 }
@@ -1503,6 +1528,7 @@ function groundedAgainst(answer: string, raw: string, teamCounts: string[] = [])
  *   사유는 `hasNumericCharacter` 위 §정책 주석 참조(파서 12라운드 사고).
  */
 export interface ValidateRagOptions {
+  recordbookRequest?: boolean;
   /** Require typed event-date bindings on production official responses. */
   calendarContract?: { referenceTimeMs: number };
   /** Official RAG must bind competition identity before accepting any model status. */
@@ -1626,6 +1652,20 @@ export function validateRagResponse(
   }
   const row = value as Record<string, unknown>;
   const status = String(row.status);
+  if (options.recordbookRequest) {
+    const index = row.recordEvidence;
+    const selected = typeof index === "number" && Number.isInteger(index)
+      ? options.evidence?.[index - 1] : undefined;
+    if (row.recordScope !== "historical" || status !== RAG_GROUNDED_SENTINEL
+      || !selected || !isRecordbookEvidence(selected)) {
+      return { kind: "insufficient", reason: "model_insufficient" };
+    }
+    // Numeric license is confined to the cited passage, not all retrieved rows.
+    if (typeof row.answer === "string" && !numericTokensGrounded(row.answer, [selected])) {
+      return { kind: "insufficient", reason: "numeric_not_in_evidence" };
+    }
+  }
+
   if (options.officialQuestion && !officialEventEvidenceSupported(
     options.officialQuestion, options.evidence ?? [], typeof row.answer === "string" ? row.answer : "",
   )) return { kind: "insufficient", reason: "model_insufficient" };

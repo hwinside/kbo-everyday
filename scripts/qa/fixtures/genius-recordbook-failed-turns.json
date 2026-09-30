@@ -1,0 +1,18 @@
+{
+  "note": "Replay against base/head with production deps; include original 144 turns separately. Compare improvements, preservation and unavailable counts independently. Migration rows must be staged in QA glossary before terminology replay. No production accuracy claim from synthetic numeric fixtures.",
+  "turns": [
+    "오승환 통산 기록",
+    "레이예스 최다안타기록",
+    "오승환 현재 통산 세이브는?",
+    "레이예스 올해 안타 몇 개야?",
+    "레이예스 최다안타기록은 지금도 1위야?",
+    "2015년 이후 오승환 통산 기록",
+    "통산 안타 1위 누구야?",
+    "보살",
+    "홈보살",
+    "홈보살 많이 한 선수는?",
+    "보크가 뭐야?",
+    "오늘 삼성 선발 누구야?",
+    "몇 시야?"
+  ]
+}
