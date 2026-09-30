@@ -189,7 +189,7 @@ function makeDeps(answers: {
     searchOfficialRag: async () => [OFFICIAL_EVIDENCE],
     callOfficialRagLlm: async () => ({
       text: JSON.stringify({
-        status: answers.officialStatus ?? RAG_GROUNDED_SENTINEL,
+        calendarClaims: [], status: answers.officialStatus ?? RAG_GROUNDED_SENTINEL,
         answer: answers.official ?? "인필드 플라이 상황에서 타구가 주자에게 닿으면 둘 다 아웃이에요.",
       }),
       inputTokens: 10,
@@ -597,7 +597,7 @@ async function run(): Promise<void> {
     // 실제 재생: `getLlmState` 가 저장된 envelope 를 돌려주는 상태에서 재실행한다.
     const beforeReplay = logs.length;
     const replayDeps = {
-      ...(makeDeps().deps as Record<string, unknown>),
+      ...makeDeps().deps,
       getLlmState: async () => ({ started: true, result: stored.value, ownerActive: false }),
       // ⚠️ 하니스가 수집하지 않는 칸은 게이트가 **영원히 못 본다**. 재생 로그도
       //   production 이 넘기는 관측 4칸을 그대로 담는다(수집 누락 = 구조적 false-green).
@@ -619,6 +619,7 @@ async function run(): Promise<void> {
     } as unknown as QaDeps;
     await answerQuestion("u-crash-1", "LG 트윈스 역사 알려줘", replayDeps);
     const replayed = logs.at(-1);
+    assert.ok(replayed, "replay must emit a log entry");
     assert.ok(logs.length > beforeReplay, "재생이 로그를 쓰지 않았다");
     assert.equal(
       replayed.ragDiscardReason, "numeric_claim_ungrounded",
@@ -651,7 +652,7 @@ async function run(): Promise<void> {
     );
 
     const replayDeps = {
-      ...(makeDeps().deps as Record<string, unknown>),
+      ...makeDeps().deps,
       getLlmState: async () => ({ started: true, result: stored.value, ownerActive: false }),
       log: async (entry: {
         matchPath: string;

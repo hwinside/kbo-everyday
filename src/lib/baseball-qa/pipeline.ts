@@ -1387,7 +1387,7 @@ export interface QaDeps {
    */
   searchOfficialRag?: (question: string) => Promise<RagEvidence[]>;
   /** 공식 간행물 근거 전용 재서술 호출. tier1이므로 근거에 적힌 숫자를 쓸 수 있다. */
-  callOfficialRagLlm?: (question: string, evidence: RagEvidence[], extras?: { context?: ContextTurn; definition?: StatDefinitionFrame; ruleRequest?: RequiredRuleRequest }) => Promise<LlmResult>;
+  callOfficialRagLlm?: (question: string, evidence: RagEvidence[], extras?: { context?: ContextTurn; definition?: StatDefinitionFrame; ruleRequest?: RequiredRuleRequest; referenceTimeMs?: number }) => Promise<LlmResult>;
   /** 수요 기반 ingestion 우선순위용 — 질문이 지목한 source를 기록한다. 실패는 무시한다. */
   recordRagDemand?: (sourceKeys: string[]) => Promise<void>;
   /**
@@ -4308,6 +4308,8 @@ export function validateLlmResponse(raw: string, question = "", previous?: Conte
 /** 사전에서 정규화 exact 매칭 (term/alias 각각 key·question 두 정규화 레벨로 인덱싱) */
 /** LLM 재서술 호출에 함께 넘기는 부가 맥락 — 직전 턴 + 현재 로스터 블록 (축 A·D). */
 export interface RagLlmExtras {
+  /** Server-owned official RAG reference clock; injectable for replay. */
+  referenceTimeMs?: number;
   ruleRequest?: RequiredRuleRequest;
   context?: ContextTurn;
   definition?: StatDefinitionFrame;
@@ -5116,6 +5118,7 @@ async function answerOfficialDocumentQuestion(
   context?: ContextTurn | null,
 ): Promise<QaResult | null> {
   let evidence: RagEvidence[];
+  const referenceTimeMs = (deps.now ?? Date.now)();
   const requiredRule = !definition ? requiredRuleEvidence(question, (deps.now ?? Date.now)()) : null;
   // A plural demonstrative with no explicit current club needs its two club
   // operands from the qualified exact prior USER question. Do not mine the
@@ -5183,7 +5186,7 @@ async function answerOfficialDocumentQuestion(
       if (!won) return { status: 202, answer: "", source: "pending", remaining };
     }
     try {
-      const officialExtras = { context: definition?.context ?? context ?? undefined, definition: definition ?? undefined };
+      const officialExtras = { context: definition?.context ?? context ?? undefined, definition: definition ?? undefined, referenceTimeMs };
       llm = await deps.callOfficialRagLlm!(question, evidence, { ...officialExtras,
         ...(requiredRule ? { ruleRequest: { kind: requiredRule.kind, season: requiredRule.season, competition: requiredRule.competition, faFocus: requiredRule.faFocus, postseasonStage: requiredRule.postseasonStage, ...(currentRuleFact ? { fact: currentRuleFact } : {}) } } : {}),
       });
@@ -5195,6 +5198,7 @@ async function answerOfficialDocumentQuestion(
   }
 
   const validateOfficial = (raw: LlmResult) => validateRagResponse(raw.text, {
+    calendarContract: { referenceTimeMs },
     officialQuestion: question,
     numericEvidence: true, evidence,
     ruleRequest: requiredRule ?? undefined,
@@ -5213,7 +5217,7 @@ async function answerOfficialDocumentQuestion(
     const repair = definitionRepairFrame(definition, llm, validated.reason);
     if (repair) {
       try {
-        const rewritten = await deps.callOfficialRagLlm!(question, evidence, { context: definition.context, definition: repair });
+        const rewritten = await deps.callOfficialRagLlm!(question, evidence, { context: definition.context, definition: repair, referenceTimeMs });
         llm = combineLlmAttempts(llm, rewritten);
       } catch { return failCloseError(llm); }
       validated = validateOfficial(llm);

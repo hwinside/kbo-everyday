@@ -1,0 +1,58 @@
+{
+  "version": 1,
+  "documents": [
+    {
+      "documentContentHash": "a210465d47df44ecd061062826d866bb7055960d688b81c092f5cde145777226",
+      "sourcePdfSha256": "6fe2612e5116ae73ed456e763dcbf46eeffbbec211516dddc63fabf8b41d56c6",
+      "note": "Calendar event occurrence only; not FA eligibility season, regulation effective year, or every fact in the section. Unknown pages remain unbound. PDF page numbers include covers.",
+      "sections": [
+        {
+          "calendarSeason": 2025,
+          "headingPage": 23,
+          "heading": "2025 KBO 일지",
+          "pages": [
+            {
+              "page": 23,
+              "textSha256": "e65afcdb6835d0b741dc7c7abebc2a2c6fb533ffa7cea00b564158fb76c22d66"
+            },
+            {
+              "page": 24,
+              "textSha256": "f150e3a63afeb90ff2d7b2cd9674c52204a4975bbe35ffbef8bd89923dbd803e"
+            },
+            {
+              "page": 25,
+              "textSha256": "4a3062d33c28243f06af7199d59c8703972527ed8ec26d98359bba2f89c54c7b"
+            },
+            {
+              "page": 26,
+              "textSha256": "d50a1ea029038eb2e40906ed16bf070296817ea2d57e7cea29eb574bb7620131"
+            },
+            {
+              "page": 27,
+              "textSha256": "b5f77805e2d267860865d5b026698debc6db1973f9ae579cd8ad1ba45b343148"
+            },
+            {
+              "page": 28,
+              "textSha256": "cdd4d1a98f538795141a95c81a522876ee320dde65a5db8beee18205ac58acbe"
+            },
+            {
+              "page": 29,
+              "textSha256": "48521eb7e8555f0e52eef7f1f026aaffd9a76e307127aac2cfea4b07d48df2c5"
+            }
+          ]
+        },
+        {
+          "calendarSeason": 2025,
+          "headingPage": 443,
+          "heading": "2025 KBO 와일드카드 결정전 결산",
+          "pages": [
+            {
+              "page": 443,
+              "textSha256": "58f91e26f51a72076cbbbe29f0f68c37552c83ddcae52b6e04faa02fd3eb4201"
+            }
+          ]
+        }
+      ]
+    }
+  ]
+}
