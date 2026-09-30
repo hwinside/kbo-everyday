@@ -1197,7 +1197,7 @@ export function answerPlayerRoleForTarget(
 }
 
 export interface QaDeps {
-  loadGameConversation?: (date: string) => Promise<Pick<GameConversationInput, "games" | "favoriteTeam">>;
+  loadGameConversation?: (date: string) => Promise<Pick<GameConversationInput, "games" | "favoriteTeam" | "appFacts">>;
   callGameConversation?: (input: GameConversationInput) => Promise<GameConversationResult>;
   /** Internal observation only; never controls serving. */
   observeAgentFallback?: (outcome: import("./classifier-observation").AgentFallbackOutcome) => void;
@@ -2044,7 +2044,7 @@ const RULE_TERM_INTENT =
 // 범위 판정은 llm_scope_gate 가 하고(룰 최소화·LLM 위임, 00:53 방향 확정), 실명 환각은
 // name_suggest 가드가, 수치 환각은 프롬프트 근거없음 계약이 각각 이미 막는다.
 const OUT_OF_SCOPE_INTENT =
-  /추천|오늘\s*경기|날씨|주식|코인|요리|프롬프트|비밀번호|영화|메뉴|가방|하늘|음식|맛집|몇\s*시(?!즌)|시\s*(?:써|하나)|아무거나/;
+  /추천|날씨|주식|코인|요리|프롬프트|비밀번호|영화|메뉴|가방|하늘|음식|맛집|시\s*(?:써|하나)|아무거나/;
 
 /**
  * 위 denylist 중 **구단이 지명되면 범위 밖이 아닌** 패턴.
@@ -6786,7 +6786,8 @@ async function answerQuestionObserved(userId: string, rawQuestion: string, deps:
       const result = await Promise.race([
         (async () => {
           const snapshot = await deps.loadGameConversation!(date);
-          const input: GameConversationInput = { question, context: context ?? undefined, date, ...snapshot,
+          const input: GameConversationInput = { question, context: context ?? undefined, date, nowMs: deps.now?.() ?? Date.now(),
+            games: snapshot.games, favoriteTeam: snapshot.favoriteTeam, appFacts: snapshot.appFacts,
             teamNames: { question: mentionedTeamCanonicals(question),
               context_question: mentionedTeamCanonicals(context?.question ?? ""),
               profile: mentionedTeamCanonicals(snapshot.favoriteTeam ?? "") },
@@ -6799,9 +6800,14 @@ async function answerQuestionObserved(userId: string, rawQuestion: string, deps:
       if (result) {
         const { model, served } = result;
         if (served) {
-          await deps.log({ userId, question, questionNorm, matchPath: served.source, answer: served.answer,
-            inputTokens: model.inputTokens, outputTokens: model.outputTokens });
-          return { status: 200, ...served, remaining };
+          const log = deps.log;
+          return settleThroughDurableBoundary(served, served.answer, {
+            userId, question, questionNorm, remaining,
+            deps: { ...deps, log: (entry) => log({ ...entry,
+              inputTokens: (entry.inputTokens ?? 0) + (model.inputTokens ?? 0),
+              outputTokens: (entry.outputTokens ?? 0) + (model.outputTokens ?? 0),
+            }) },
+          });
         }
         // Preserve paid classifier tokens even when it yields to the existing path.
         const baseLog = deps.log;

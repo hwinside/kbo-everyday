@@ -3,6 +3,7 @@
  * 실행: npm run qa:venue-stats-s1b-db-route
  */
 import assert from "node:assert/strict";
+import { mock } from "node:test";
 import { readFileSync } from "node:fs";
 import { resolve } from "node:path";
 import { PGlite } from "@electric-sql/pglite";
@@ -299,7 +300,7 @@ async function seasonUniverseFailClosedRegression() {
   __resetSeasonAggregatesCaches();
   const red2 = await fetchSeasonAggregates(2026, { fetcher: rejectGameDate, rpc: faithfulRpc });
   assert.equal(red2.seasonGames, null);
-  const partialCollection = await collectSeasonGameUniverse(2026, "0", { fetcher: rejectGameDate });
+  const partialCollection = await collectSeasonGameUniverse(2026, "0", { fetcher: rejectGameDate, today: "2026-09-01" });
   assert.equal(partialCollection.complete, false);
   assert.ok(partialCollection.games.length > 0);
   assert.deepEqual(partialCollection.failedDates, [DATE_B]);
@@ -490,7 +491,8 @@ async function backfillContrastRegression(db: PGlite) {
   const { collectSeasonGameUniverse } = await import("../../src/lib/crawler/season-games-cache");
   const contrastFetcher: SeasonGameFetcher = async (date) =>
     gamesByDate[date] ? gamesResult(gamesByDate[date]) : VERIFIED_EMPTY;
-  const collection = await collectSeasonGameUniverse(2026, "0", { fetcher: contrastFetcher });
+  // The 480-game fixture has a fixed season horizon; wall-clock October must not add unverified dates.
+  const collection = await collectSeasonGameUniverse(2026, "0", { fetcher: contrastFetcher, today: "2026-09-01" });
   assert.equal(collection.complete, true);
   assert.equal(collection.failedDates.length, 0);
   // 수집 helper가 만든 final 우주를 그대로 RPC에 넘긴다 (route와 동일 매핑).
@@ -731,7 +733,7 @@ async function regularSeasonWindowScopeRegression() {
   assert.equal(unknown.complete, false, "window 미등록 연도는 fail-close");
 
   // 전-시리즈 우주(시범·포스트 포함)는 종래대로 3월 1일부터 — 범위를 즐이지 않는다.
-  const all = await collectSeasonGameUniverse(2026, "0,1,3,4,5,7,9", { fetcher: noop });
+  const all = await collectSeasonGameUniverse(2026, "0,1,3,4,5,7,9", { fetcher: noop, today: "2026-09-01" });
   assert.ok(all.expectedDates.includes("20260301"), "전-시리즈 우주는 3/1 포함(기존 동작 보존)");
   assert.ok(
     all.expectedDates.length > regular.expectedDates.length,
@@ -776,7 +778,7 @@ async function verifiedEmptyActualRegression() {
         : date === GAME_DATE
           ? gamesResult([makeFinalGame(GAME_ID)])
           : VERIFIED_EMPTY; // 무경기 확정
-    const red = await collectSeasonGameUniverse(2026, "0", { fetcher: seamFetcher });
+    const red = await collectSeasonGameUniverse(2026, "0", { fetcher: seamFetcher, today: "2026-09-01" });
     assert.equal(red.complete, false, "P0-1 RED: unverified soft-empty → complete=false");
     assert.ok(red.failedDates.includes(FAULT_DATE), "fault 날짜가 failedDates에");
     assert.ok(red.games.some((g) => g.gameId === GAME_ID), "non-empty partial(진짜 경기 수집)");
@@ -794,7 +796,7 @@ async function verifiedEmptyActualRegression() {
     gameDate: GAME_DATE, gameId: GAME_ID, faultDate: FAULT_DATE, faultNaverHasGame: true,
   });
   try {
-    const failover = await collectSeasonGameUniverse(2026, "0"); // 기본 fetcher=fetchSeasonUniverseDate
+    const failover = await collectSeasonGameUniverse(2026, "0", { today: "2026-09-01" }); // 기본 fetcher=fetchSeasonUniverseDate
     assert.equal(failover.complete, false, "미설명 Naver 경기 → fail-close");
     assert.ok(failover.failedDates.includes(FAULT_DATE));
     assert.ok(!failover.games.some((g) => g.gameId === `${FAULT_DATE}KTSS0`));
@@ -808,7 +810,7 @@ async function verifiedEmptyActualRegression() {
     gameDate: GAME_DATE, gameId: GAME_ID, faultDate: FAULT_DATE, faultNaverHasGame: false,
   });
   try {
-    const green = await collectSeasonGameUniverse(2026, "0");
+    const green = await collectSeasonGameUniverse(2026, "0", { today: "2026-09-01" });
     assert.equal(green.complete, true, "P0-1 GREEN: 모든 빈 날짜 verified-empty → complete=true");
     assert.equal(green.failedDates.length, 0);
     assert.ok(green.games.some((g) => g.gameId === GAME_ID));
@@ -912,7 +914,7 @@ async function seriesAwareVerifiedEmptyRegression() {
     preseasonDate: PRESEASON_DATE, preseasonGameIds: PRESEASON_IDS,
   });
   try {
-    const green = await collectSeasonGameUniverse(2026, "0"); // 기본 fetcher=fetchSeasonUniverseDate
+    const green = await collectSeasonGameUniverse(2026, "0", { today: "2026-09-01" }); // 기본 fetcher=fetchSeasonUniverseDate
     assert.equal(green.complete, true, "P0-1 series GREEN: 시범경기일이 정규 우주를 죽이지 않는다");
     assert.equal(green.failedDates.length, 0);
     // 우주에는 정규 경기만 — 시범경기가 우주·분모에 샐지 않는다.
@@ -947,7 +949,7 @@ async function seriesAwareVerifiedEmptyRegression() {
     kboNonRegularDrops: ["20260711WEEA0"],
   });
   try {
-    const scoped = await collectSeasonGameUniverse(2026, "0");
+    const scoped = await collectSeasonGameUniverse(2026, "0", { today: "2026-09-01" });
     assert.ok(scoped.expectedDates.includes(PRESEASON_DATE), "올스타일은 window 내부 수집 대상");
     assert.equal(scoped.complete, false, "미설명 Naver 경기는 fail-close");
     assert.ok(scoped.failedDates.includes(PRESEASON_DATE));
@@ -1529,12 +1531,20 @@ async function routeGameErrorsWiringRegression() {
 }
 
 async function main() {
-  await rpcDbRegression();
-  await seasonUniverseFailClosedRegression();
-  await routeShapeRegression();
-  await routeEligibleAttendanceRegression();
-  await routeGameErrorsWiringRegression();
-  console.log("\n결과: S1b DB/RPC + 시즌 우주 fail-closed(gate1/2/3) + owner-auth route actual + D7 실책 route 배선 PASS");
+  // Pin the synthetic 2026 fixture clock at the outermost boundary, including
+  // fetchSeasonAggregates -> collectSeasonGameUniverse and route-internal calls.
+  // Explicit season-end override cases still exercise their own dates.
+  mock.timers.enable({ apis: ["Date"], now: Date.parse("2026-09-01T03:00:00Z") });
+  try {
+    await rpcDbRegression();
+    await seasonUniverseFailClosedRegression();
+    await routeShapeRegression();
+    await routeEligibleAttendanceRegression();
+    await routeGameErrorsWiringRegression();
+    console.log("\n결과: S1b DB/RPC + 시즌 우주 fail-closed(gate1/2/3) + owner-auth route actual + D7 실책 route 배선 PASS");
+  } finally {
+    mock.timers.reset();
+  }
 }
 
 void main().catch((error) => {

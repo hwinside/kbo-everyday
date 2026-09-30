@@ -1,3 +1,4 @@
+import { checkAppFactConversation } from "./genius-app-fact-conversation";
 import assert from "node:assert/strict";
 import { answerQuestion, mentionedTeamCanonicals, GREETING_ANSWER, type QaDeps } from "../../src/lib/baseball-qa/pipeline";
 import { gameConversationRequest, renderGameConversation, type GameConversationInput } from "../../src/lib/baseball-qa/game-conversation";
@@ -133,6 +134,7 @@ function deps(calls: string[], reply = match): QaDeps {
   };
 }
 async function main() {
+  await checkAppFactConversation();
   for (const row of r1Cases) {
     const testDeps = deps([]);
     testDeps.loadGameConversation = async () => ({ games: r1Schedule, favoriteTeam: input.favoriteTeam });
