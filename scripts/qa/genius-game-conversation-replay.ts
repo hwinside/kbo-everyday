@@ -61,10 +61,13 @@ async function main() {
           return result;
         },
       };
-      // Baseline needs its former profile-copy behavior, using local snapshot only.
-      if (variant === "base") {
+      // Both variants use their own copy implementation and the same local profile snapshot.
+      {
         const { TEAMS } = await import("../../src/lib/constants/teams");
-        const { renderTeamFanCopy } = await import("../../src/lib/constants/baseball-genius-team-copy");
+        const copyPath = variant === "base"
+          ? path.resolve(arg("base-root")!, "src/lib/constants/baseball-genius-team-copy.ts")
+          : path.resolve(import.meta.dirname, "../../src/lib/constants/baseball-genius-team-copy.ts");
+        const { renderTeamFanCopy } = await import(pathToFileURL(copyPath).href);
         deps.pickTeamFanCopy = async () => renderTeamFanCopy(TEAMS.find((t) => t.name === snapshot.favoriteTeams?.[row.user_id])?.id ?? null, 0);
       }
       try {

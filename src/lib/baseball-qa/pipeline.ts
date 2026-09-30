@@ -1206,7 +1206,7 @@ export interface QaDeps {
   loadGlossary: () => Promise<GlossaryEntry[]>;
   loadPlayers: () => Promise<PlayerRef[]>;
   getCache: (questionNorm: string) => Promise<string | null>;
-  /** Legacy seam retained for callers; profile copy is never a greeting declaration. */
+  /** Greeting-only profile copy; neutral lead-in, approved body and durable rotation preserved. */
   pickTeamFanCopy?: () => Promise<string | null>;
   setCache: (questionNorm: string, answer: string) => Promise<void>;
   callLlm: (question: string, context?: ContextTurn, rosterBlock?: string, statIntentMode?: boolean, definition?: StatDefinitionFrame) => Promise<LlmResult>;
@@ -6633,6 +6633,14 @@ async function answerQuestionObserved(userId: string, rawQuestion: string, deps:
         }
       } catch {
         // 남용 방지는 보조 장치다. 조회 장애가 인사 응답을 막으면 안 된다.
+      }
+    }
+    if (!streakFixed && route === "ack" && isGreetingPhrase(question) && deps.pickTeamFanCopy) {
+      try {
+        const teamCopy = await deps.pickTeamFanCopy();
+        if (teamCopy) answer = teamCopy;
+      } catch {
+        // 팀 카피는 장식이다. 조회 장애가 인사 응답을 막으면 안 된다.
       }
     }
     if (!streakFixed && route === "ack" && deps.claimPositiveEnding) {
