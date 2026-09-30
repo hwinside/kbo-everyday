@@ -187,8 +187,8 @@ async function checkServerBinding(): Promise<void> {
   {
     const calls: string[] = [];
     const res = await answerQuestion("u1", GREETING_Q, stubDeps(async () => { calls.push("pick"); return TEAM_COPY_FIXED; }, calls) as never);
-    check("pipeline 실실행 (greeting + 팀 → 팀 카피 답변)",
-      res.source === "ack" && res.answer === TEAM_COPY_FIXED && calls.includes("pick"),
+    check("pipeline 실실행 (greeting + 프로필 → 선언 없는 중립 인사)",
+      res.source === "ack" && res.answer === GREETING_ANSWER && !calls.includes("pick"),
       `source=${res.source} answer=${String(res.answer).slice(0, 40)}`);
   }
   {

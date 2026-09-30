@@ -1,3 +1,5 @@
+import { gameConversationRequest, type GameConversationInput, type GameConversationResult } from "./game-conversation";
+import { getTeamById } from "@/lib/constants/teams";
 import { createCurrentSeasonRecordFetcher } from "@/lib/baseball-qa/stats/current-season-source";
 import { productionAgentFallback } from "./agent/production";
 import { readClassifierObservation } from "./classifier-observation";
@@ -153,6 +155,31 @@ export async function loadGlossary(): Promise<GlossaryEntry[]> {
   const entries = (data ?? []) as GlossaryEntry[];
   glossaryCache = { entries, loadedAt: Date.now() };
   return entries;
+}
+
+/** Bounded semantic selector; it returns no generated answer text to the user. */
+export async function callGameConversation(input: GameConversationInput): Promise<GameConversationResult> {
+  if (!GEMINI_API_KEY) throw new Error("GEMINI_API_KEY missing");
+  const res = await fetch(GEMINI_URL, {
+    method: "POST", headers: { "Content-Type": "application/json" },
+    body: JSON.stringify(gameConversationRequest(input)),
+    signal: AbortSignal.timeout(3000),
+  });
+  if (!res.ok) throw new Error(`Game context provider failed: ${res.status}`);
+  const data = await res.json();
+  return {
+    text: data.candidates?.[0]?.content?.parts?.find((part: { text?: string }) => part.text)?.text ?? "",
+    inputTokens: data.usageMetadata?.promptTokenCount ?? null,
+    outputTokens: data.usageMetadata?.candidatesTokenCount ?? null,
+  };
+}
+
+async function boundedGameContext<T>(work: Promise<T>, fallback: T): Promise<T> {
+  let timer: ReturnType<typeof setTimeout> | undefined;
+  try {
+    return await Promise.race([work.catch(() => fallback),
+      new Promise<T>((resolve) => { timer = setTimeout(() => resolve(fallback), 1200); })]);
+  } finally { if (timer) clearTimeout(timer); }
 }
 
 export async function callLlm(
@@ -946,6 +973,23 @@ export function makeDeps(
     // 로스터가 끊기는 변종을 RED 로 잡는다(삼순 8차 P0-2).
     loadPlayers: loadRosterPlayers,
     callLlm,
+    callGameConversation,
+    loadGameConversation: async (date) => {
+      const [games, favoriteTeam] = await Promise.all([
+        boundedGameContext<GameConversationInput["games"]>(fetchTodayStarters(date.replaceAll("-", "")), null),
+        boundedGameContext<string | null>((async () => {
+          if (!signatureUserId) return null;
+          // query-guard: bounded -- own profile by primary key, used only as context.
+          const { data, error } = await supabaseAdmin.from("profiles").select("team_id")
+            .eq("id", signatureUserId).maybeSingle();
+          if (error) throw error;
+          return data?.team_id == null ? null : getTeamById(Number(data.team_id))?.name ?? null;
+        })(), null),
+      ]);
+      // Explicitly project schedule facts: no starter facts or profile identifiers.
+      return { favoriteTeam, games: games?.map(({ awayName, homeName, stadium, time, status }) =>
+        ({ awayName, homeName, stadium, time, status })) ?? null };
+    },
     // C 질문 정규화 (2026-08-11): 사전 exact 매칭이 잉여어로 놓친 정의 질문을
     // 폐쇄집합 후보 + LLM 의도판정으로 사전 답변에 결속한다. 후보 밖 반환은 pipeline 이 버린다.
     mapGlossaryDefinition,
