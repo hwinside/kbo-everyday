@@ -23,7 +23,7 @@ function proposal(question: string, kind: string, period: string, teams: string[
 const cases = [
   { q: "오늘 경기 일정 알려줘", kind: "schedule", period: "today", teams: [], includes: /KT vs 삼성/, source: "kbo_structured" },
   { q: "삼성 경기 몇 시에 시작해?", kind: "schedule", period: "today", teams: ["삼성"], includes: /18:30/, source: "kbo_structured" },
-  { q: "오늘 삼성과 kt경기 예측", kind: "prediction", period: "today", teams: ["삼성", "KT"], includes: /승패를 예측해 단정할 수는 없지만/, source: "kbo_structured" },
+  { q: "오늘 삼성과 kt경기 예측", normalized: "오늘 삼성과 KT 경기 예측", kind: "prediction", period: "today", teams: ["삼성", "KT"], includes: /승패를 예측해 단정할 수는 없지만/, source: "kbo_structured" },
   { q: "야잘알이면 경기예측도 할 줄 알아야지", kind: "prediction", period: "current", teams: [], includes: /KT vs 삼성/, source: "kbo_structured" },
   { q: "고객님의물품이국제운송접수가완료되었습니다 삼성라이온즈 1번타자 누구?", kind: "lineup", period: "current", teams: ["삼성"], includes: /과거 라인업으로 대신 답하지 않겠습니다/, source: "history_hold" },
   { q: "삼성 일정 말해줘", kind: "schedule", period: "current", teams: ["삼성"], includes: /2026-09-30 경기 일정/, source: "kbo_structured" },
@@ -32,11 +32,15 @@ const cases = [
 ];
 
 export async function checkAppFactConversation() {
+  // Mirror the production spelling-normalization port; the lexical resolver does
+  // not split kt경기 itself. Never invent the second team in the selector stub.
+  assert.deepEqual(mentionedTeamCanonicals("오늘 삼성과 kt경기 예측"), ["삼성"]);
   for (const c of cases) {
     let stored: LlmResult | null = null, started = false, calls = 0;
     const logs: string[] = [];
     const deps: QaDeps = {
       loadGlossary: async () => [], loadPlayers: async () => [],
+      normalizeQuestionLlm: async () => ({ text: c.normalized ?? null, inputTokens: 0, outputTokens: 0 }),
       getCache: async () => null, setCache: async () => { throw new Error("app facts must not enter shared cache"); },
       reserveDaily: async () => ({ allowed: true, remaining: 9 }), now: () => now,
       log: async (row) => { logs.push(row.matchPath); },
@@ -45,10 +49,10 @@ export async function checkAppFactConversation() {
       storeLlm: async (result) => { stored = result; },
       loadGameConversation: async () => ({ ...snapshot, date: "1999-01-01", nowMs: 0 }),
       callGameConversation: async (input) => {
-        calls++; assert.equal(input.question, c.q, "snapshot cannot overwrite current question");
+        calls++; assert.equal(input.question, c.normalized ?? c.q, "snapshot cannot overwrite current question");
         assert.equal(input.date, "2026-09-30"); assert.equal(input.nowMs, now);
         assert.deepEqual(input.teamNames.question, c.teams);
-        return { text: JSON.stringify(proposal(c.q, c.kind, c.period, [])), inputTokens: 2, outputTokens: 3 };
+        return { text: JSON.stringify(proposal(input.question, c.kind, c.period, [])), inputTokens: 2, outputTokens: 3 };
       },
       callLlm: async () => { throw new Error("must not generate historical prose"); },
       enableTeamRag: true,

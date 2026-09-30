@@ -3,6 +3,7 @@
  * 실행: npm run qa:venue-stats-s1b-db-route
  */
 import assert from "node:assert/strict";
+import { mock } from "node:test";
 import { readFileSync } from "node:fs";
 import { resolve } from "node:path";
 import { PGlite } from "@electric-sql/pglite";
@@ -1530,12 +1531,20 @@ async function routeGameErrorsWiringRegression() {
 }
 
 async function main() {
-  await rpcDbRegression();
-  await seasonUniverseFailClosedRegression();
-  await routeShapeRegression();
-  await routeEligibleAttendanceRegression();
-  await routeGameErrorsWiringRegression();
-  console.log("\n결과: S1b DB/RPC + 시즌 우주 fail-closed(gate1/2/3) + owner-auth route actual + D7 실책 route 배선 PASS");
+  // Pin the synthetic 2026 fixture clock at the outermost boundary, including
+  // fetchSeasonAggregates -> collectSeasonGameUniverse and route-internal calls.
+  // Explicit season-end override cases still exercise their own dates.
+  mock.timers.enable({ apis: ["Date"], now: Date.parse("2026-09-01T03:00:00Z") });
+  try {
+    await rpcDbRegression();
+    await seasonUniverseFailClosedRegression();
+    await routeShapeRegression();
+    await routeEligibleAttendanceRegression();
+    await routeGameErrorsWiringRegression();
+    console.log("\n결과: S1b DB/RPC + 시즌 우주 fail-closed(gate1/2/3) + owner-auth route actual + D7 실책 route 배선 PASS");
+  } finally {
+    mock.timers.reset();
+  }
 }
 
 void main().catch((error) => {
