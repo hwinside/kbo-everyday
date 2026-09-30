@@ -17,7 +17,7 @@ const snapshot: GameConversationInput = {
 };
 function proposal(question: string, kind: string, period: string, teams: string[]) {
   return { action: "app_facts", evidenceSource: "none", attendanceEvidence: "",
-    appRequest: { kind, period, quote: question }, target: { source: teams.length ? "question" : "none", quote: teams.length ? question : "",
+    appRequest: { informationNeed: ({ schedule: "game_schedule", starters: "starting_pitchers", standings: "team_standing", postseason: "qualification", lineup: "batting_order", prediction: "match_prediction" } as Record<string, string>)[kind], kind, period, quote: question }, target: { source: teams.length ? "question" : "none", quote: teams.length ? question : "",
       teams, excludedTeams: [], backgroundTeams: [], stadium: "", excludedStadiums: [] } };
 }
 const cases = [
@@ -66,6 +66,14 @@ export async function checkAppFactConversation() {
     const replay = await answerQuestion("qa-app-facts", c.q, deps);
     assert.equal(replay.answer, first.answer); assert.equal(replay.source, first.source); assert.equal(calls, 1);
     assert.deepEqual(logs, [c.source, c.source]);
+  }
+  // A requested event date must not become a current standings answer, even
+  // when the provider proposes the old erroneous postseason capability.
+  const eventInput = { ...snapshot, question: "가을야구는 언제 시작해", teamNames: { question: [], context_question: [], profile: [] } };
+  const eventPlan = proposal(eventInput.question, "postseason", "current", []);
+  for (const informationNeed of ["event_date", "game_schedule", "none", "invented", undefined]) {
+    assert.equal(renderGameConversation(JSON.stringify({ ...eventPlan,
+      appRequest: { ...eventPlan.appRequest, informationNeed } }), eventInput), null);
   }
   // App targets come from current resolver entities, not a model's attendance source.
   const q = "내일 케이티 투수 ㄴㄱ?";
