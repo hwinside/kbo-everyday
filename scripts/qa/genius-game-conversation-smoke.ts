@@ -134,6 +134,53 @@ function deps(calls: string[], reply = match): QaDeps {
   };
 }
 async function main() {
+  const reaction = "음 그렇구나";
+  const ackPlan = { action: "ack", evidenceSource: "none", attendanceEvidence: "",
+    dialogue: { quote: reaction, speechAct: "understanding", hasRequest: false, hasCorrection: false },
+    appRequest: { informationNeed: "none", kind: "none", period: "unsupported", quote: "" },
+    target: { source: "none", quote: "", teams: [], excludedTeams: [], backgroundTeams: [], excludedStadiums: [], stadium: "" } };
+  const reactionInput = { ...input, question: reaction };
+  assert.equal(renderGameConversation(JSON.stringify(ackPlan), reactionInput)?.source, "ack");
+  for (const [question, speechAct] of [["음 그렇구나", "understanding"], ["ㅋㅋㅋ", "laughter"],
+    ["고마워", "thanks"], ["안녕", "greeting"], ["응", "neutral_ack"]]) {
+    assert.equal(renderGameConversation(JSON.stringify({ ...ackPlan,
+      dialogue: { ...ackPlan.dialogue, quote: question, speechAct } }), { ...input, question })?.source, "ack");
+  }
+  // Even a mistaken ack action must not override a negative/unknown speech act.
+  const nonAckCases = [["이해가 잘 안돼…", "confusion"], ["이해가 힘들어", "confusion"],
+    ["응 너 야알못", "criticism"], ["ㅋㅋ 설명 진짜 못하네", "criticism"],
+    ["고마워 근데 다시 설명해줘", "other"], [reaction, "unknown"], [reaction, null], [reaction, undefined]];
+  for (const [question, speechAct] of nonAckCases) {
+    const rejectedPlan = { ...ackPlan, dialogue: { ...ackPlan.dialogue, quote: question, speechAct } };
+    assert.equal(renderGameConversation(JSON.stringify(rejectedPlan), { ...input, question: question! }), null);
+    const fallbackDeps = deps([]);
+    fallbackDeps.callGameConversation = async () => ({ text: JSON.stringify(rejectedPlan), inputTokens: 7, outputTokens: 3 });
+    const result = await answerQuestion("qa-game-context", question!, fallbackDeps);
+    assert.notEqual(result.source, "ack", `${question}: rejected speech act must reach the existing pipeline`);
+    assert.notEqual(result.answer, renderGameConversation(JSON.stringify(ackPlan), reactionInput)?.answer);
+  }
+  for (const dialogue of [{ ...ackPlan.dialogue, hasRequest: true }, { ...ackPlan.dialogue, hasCorrection: true },
+    { ...ackPlan.dialogue, quote: "그렇구나" }, { quote: reaction }]) {
+    assert.equal(renderGameConversation(JSON.stringify({ ...ackPlan, dialogue }), reactionInput), null);
+  }
+  assert.equal(renderGameConversation(JSON.stringify(ackPlan), { ...reactionInput, question: reaction + " 근데 내일 선발은?" }), null);
+  assert.equal(renderGameConversation(JSON.stringify({ ...ackPlan, appRequest: { ...ackPlan.appRequest, kind: "postseason" } }), reactionInput), null);
+  assert.equal(renderGameConversation(JSON.stringify({ ...ackPlan, target: { ...ackPlan.target, source: "profile", teams: ["롯데"] } }), reactionInput), null);
+  const reactionCalls: string[] = [];
+  const reactionDeps = deps(reactionCalls);
+  reactionDeps.callGameConversation = async () => ({ text: JSON.stringify(ackPlan), inputTokens: 7, outputTokens: 3 });
+  let stored: Awaited<ReturnType<NonNullable<QaDeps["callLlm"]>>> | null = null;
+  reactionDeps.getLlmState = async () => ({ started: stored !== null, result: stored });
+  reactionDeps.acquireLlmStart = async () => true;
+  reactionDeps.storeLlm = async (result) => { stored = result; };
+  const acknowledged = await answerQuestion("qa-game-context", reaction, reactionDeps);
+  assert.equal(acknowledged.source, "ack");
+  assert.ok(stored, "semantic ack must persist through the existing durable boundary");
+  assert.ok(!reactionCalls.includes("official") && !reactionCalls.includes("cache"));
+  reactionDeps.callGameConversation = async () => { throw new Error("durable ack must not reclassify"); };
+  const replayedAck = await answerQuestion("qa-game-context", reaction, reactionDeps);
+  assert.equal(replayedAck.answer, acknowledged.answer);
+  assert.equal(replayedAck.source, "ack");
   await checkAppFactConversation();
   for (const row of r1Cases) {
     const testDeps = deps([]);
