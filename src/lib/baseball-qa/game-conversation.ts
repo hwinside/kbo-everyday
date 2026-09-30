@@ -50,7 +50,7 @@ attendanceEvidence에는 관람 행동·계획을 드러내는 원문 구절을 
 관람 의도의 근거(attendanceEvidence)와 관람 대상(target)은 별개입니다. 직전 관람 계획을 이어도 현재 발화가 대상을 바꾸면 target.source=question입니다. 이전 구장과 프로필은 현재 대상에 덧붙이지 않습니다.
 target은 {source:question|context_question|profile|none,quote:대상을 명시한 해당 출처의 원문,teams:대상 구단 canonical 배열,excludedTeams:명시적으로 제외한 구단 배열,backgroundTeams:팬이라는 배경 등 관람 대상을 뜻하지 않는 구단 배열,stadium:명시한 관람 구장 또는 빈 문자열,excludedStadiums:명시적으로 제외한 구장 배열}입니다. 구단 이름은 제공된 teamNames의 해당 출처 값만 씁니다. 구장에서 홈팀이나 상대팀을 추론해 teams에 넣지 않습니다. backgroundTeams는 팬 배경이며 일정 조회 조건이 아닙니다. 구장을 바꾸면 이전 구장은 excludedStadiums, 새 관람 구장은 stadium에 넣습니다. 현재 구단 언급은 teams/excludedTeams/backgroundTeams에서 빠뜨리지 않습니다. 부정한 팀을 관람 대상으로 뒤집지 않습니다. 팀과 구장 모두 현재 명시했으면 두 조건을 모두 유지합니다. 구장명은 games의 명칭을 사용하되 원문에 없는 구장을 만들어내지 않습니다.
 대상이 생략됐을 때만 직전 질문 또는 프로필로 보완합니다. 프로필 선택 시 quote는 favoriteTeam 원문입니다. 대상 불명확·다른 주제면 source=none, quote/stadium은 빈 문자열, teams/excludedTeams/backgroundTeams/excludedStadiums는 빈 배열입니다.
-target.segmentedSource는 target.source가 가리키는 원문 전체를 글자·문장부호는 그대로 두고 띄어쓰기만 보완한 문자열입니다. 붙여 쓴 구단과 경기 명사는 분리하되 회사명·선수명 같은 하나의 고유명사를 구단명으로 쪼개지 않습니다. source=none이면 빈 문자열입니다. teamNames에서 누락된 구단은 segmentedSource에서 독립된 구단명으로 확인되는 경우에만 teams에 넣습니다.
+target.quote는 대상의 짧은 인용이지만 segmentedSource는 그 인용이 아닙니다. 두 필드를 같은 짧은 팀명으로 채우지 마세요. target.segmentedSource는 target.source가 가리키는 원문 전체를 글자·문장부호는 그대로 두고 띄어쓰기만 보완한 문자열입니다. 붙여 쓴 구단과 경기 명사는 분리하되 회사명·선수명 같은 하나의 고유명사를 구단명으로 쪼개지 않습니다. source=none이면 빈 문자열입니다. teamNames에서 누락된 구단은 segmentedSource에서 독립된 구단명으로 확인되는 경우에만 teams에 넣습니다.
 ${APP_FACT_PROMPT}
 JSON만 출력합니다. action은 match/clarify/unavailable/other/app_facts/ack 중 하나입니다. 일정의 존재 여부와 조회 성공 여부는 코드가 판단하므로, 대상 조건을 확인했으면 games가 비어 있거나 null이어도 match로 반환합니다.` }] },
     contents: [{ role: "user", parts: [{ text: JSON.stringify(input) }] }],
@@ -72,7 +72,7 @@ JSON만 출력합니다. action은 match/clarify/unavailable/other/app_facts/ack
           target: { type: "OBJECT", properties: {
             source: { type: "STRING", enum: ["question", "context_question", "profile", "none"] },
             quote: { type: "STRING" },
-            segmentedSource: { type: "STRING" },
+            segmentedSource: { type: "STRING", description: "Copy the ENTIRE source field, not target.quote or the team name: question=input.question; context_question=input.context.question; profile=input.favoriteTeam; none=empty string. Only whitespace may change. Preserve every other character including punctuation. Never split a company/person proper name into a team. Example: source text 오늘 한화경기 선발 누구였어) must become 오늘 한화 경기 선발 누구였어), NEVER 한화. 한화생명 영업시간 알려줘 stays unchanged, NEVER 한화 생명 영업시간 알려줘." },
             teams: { type: "ARRAY", items: { type: "STRING" } },
             excludedTeams: { type: "ARRAY", items: { type: "STRING" } },
             backgroundTeams: { type: "ARRAY", items: { type: "STRING" } },

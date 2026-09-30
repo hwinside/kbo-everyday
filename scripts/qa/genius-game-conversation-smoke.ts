@@ -175,6 +175,10 @@ async function main() {
     { ...ackPlan.dialogue, quote: "그렇구나" }, { quote: reaction }]) {
     assert.equal(renderGameConversation(JSON.stringify({ ...ackPlan, dialogue }), reactionInput), null);
   }
+  for (const patch of [{ intentSource: "question" }, { intentQuote: reaction }]) {
+    assert.equal(renderGameConversation(JSON.stringify({ ...ackPlan,
+      appRequest: { ...ackPlan.appRequest, ...patch } }), reactionInput), null);
+  }
   assert.equal(renderGameConversation(JSON.stringify(ackPlan), { ...reactionInput, question: reaction + " 근데 내일 선발은?" }), null);
   assert.equal(renderGameConversation(JSON.stringify({ ...ackPlan, appRequest: { ...ackPlan.appRequest, kind: "postseason" } }), reactionInput), null);
   assert.equal(renderGameConversation(JSON.stringify({ ...ackPlan, target: { ...ackPlan.target, source: "profile", teams: ["롯데"] } }), reactionInput), null);

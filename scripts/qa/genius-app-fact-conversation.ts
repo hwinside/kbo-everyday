@@ -143,6 +143,22 @@ export async function checkAppFactConversation() {
   for (const segmentedSource of ["오늘 삼성 경기 선발 누구였어)", "오늘 한화 경기 선발 누구였어?", "한화"]) {
     assert.equal(render({ ...followup, target: { ...followup.target, segmentedSource } }, input)?.source, "context_missing");
   }
+  // The real R0 selector returned only the team. It must remain rejected;
+  // fixing generation must never weaken the full-source provenance gate.
+  for (const [company, team] of [["한화생명", "한화"], ["기아자동차", "KIA"], ["삼성전자", "삼성"]]) {
+    const question = `${company} 영업시간 알려줘`;
+    const companyInput = { ...input, context: { question, answer: "회사 안내" },
+      teamNames: { ...input.teamNames, context_question: mentionedTeamCanonicals(question) } };
+    assert.deepEqual(companyInput.teamNames.context_question, []);
+    for (const segmentedSource of [question, team]) {
+      assert.equal(render({ ...followup, target: { ...followup.target, quote: company,
+        teams: [team], segmentedSource } }, companyInput)?.source, "context_missing");
+    }
+  }
+  // Spacing repair is not authorized for the current turn by this contract.
+  const directInput = { ...input, question: prior, context: undefined };
+  const directPlan = proposal(prior, "lineup", "today", ["한화"]);
+  assert.equal(render({ ...directPlan, target: { ...followup.target, source: "question" } }, directInput)?.source, "context_missing");
   assert.equal(render(followup, { ...input, context: undefined }), null);
   assert.equal(render({ ...followup, appRequest: { ...followup.appRequest, intentQuote: "없는 요청" } }, input), null);
   const current = { ...input, question: "오늘 삼성 선수 누구였어?", teamNames: { ...input.teamNames, question: ["삼성"] } };
