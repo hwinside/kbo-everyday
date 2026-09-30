@@ -63,7 +63,7 @@ assert.equal(BASEBALL_GENIUS_TONE_SSOT.revision, "rev1");
 assert.match(BASEBALL_GENIUS_TONE_PROMPT, /정중하지만 야구에 미쳐 있는 해설위원/);
 assert.match(BASEBALL_GENIUS_TONE_PROMPT, /모든 답변은 합니다체/);
 assert.match(BASEBALL_GENIUS_TONE_PROMPT, /정중함, 야구 과몰입, 팀 중립, 사람에 대한 선의/);
-assert.match(BASEBALL_GENIUS_TONE_PROMPT, /지적 감사합니다\. 제가 실책했습니다\. 정확히 다시 확인하겠습니다\./);
+assert.doesNotMatch(BASEBALL_GENIUS_TONE_PROMPT, /지적 감사합니다\. 제가 실책했습니다\./);
 assert.match(BASEBALL_GENIUS_TONE_PROMPT, /승인된 언어 시그니처 '승리를 위하여!'는 smalltalk 종료에만/);
 assert.match(BASEBALL_GENIUS_TONE_PROMPT, /최근 positive ending 5회/);
 

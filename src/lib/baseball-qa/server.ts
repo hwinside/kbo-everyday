@@ -1,3 +1,4 @@
+import { renderTeamCorrection } from "./rag/correction";
 import { gameConversationRequest, type GameConversationInput, type GameConversationResult } from "./game-conversation";
 import { getTeamById } from "@/lib/constants/teams";
 import { createCurrentSeasonRecordFetcher } from "@/lib/baseball-qa/stats/current-season-source";
@@ -640,7 +641,8 @@ export async function callTeamRagLlm(
   evidence: RagEvidence[],
   extras?: RagLlmExtras,
 ): Promise<LlmResult> {
-  return callRagLlmWithPrompt(question, evidence, RAG_TEAM_SYSTEM_PROMPT, extras);
+  const result = await callRagLlmWithPrompt(question, evidence, RAG_TEAM_SYSTEM_PROMPT, extras);
+  return { ...result, text: renderTeamCorrection(result.text, evidence, extras?.context) };
 }
 
 /**

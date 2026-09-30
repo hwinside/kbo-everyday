@@ -39,13 +39,13 @@ async function main() {
   const variants = await Promise.all(roots.map(async ([variant, root]) => ({
     variant, root,
     sha: execFileSync("git", ["rev-parse", "HEAD"], { cwd: root, encoding: "utf8" }).trim(),
-    diff: execFileSync("git", ["diff", "--", "src/lib/baseball-qa/tone.ts"], { cwd: root, encoding: "utf8" }),
+    diff: execFileSync("git", ["diff", "--", "src/lib/baseball-qa"], { cwd: root, encoding: "utf8" }),
     server: await import(pathToFileURL(path.join(root, "src/lib/baseball-qa/server.ts")).href),
     rag: await import(pathToFileURL(path.join(root, "src/lib/baseball-qa/rag/retrieve.ts")).href),
   })));
   const traces: unknown[] = [];
   const save = () => fs.writeFileSync(out, JSON.stringify({
-    scope: "synthetic paired team RAG provider diagnostic; NOT routing/UI/quality PASS",
+    scope: "synthetic paired team RAG provider diagnostic; includes each version's correction rendering; grade raw.correction, raw.factualAnswer (when acknowledged), validated answer and refusals; NOT routing/UI/quality PASS",
     samples: samples.length, runs, total: samples.length * runs * variants.length,
     completed: traces.length, versions: variants.map(({ variant, sha, diff }) => ({ variant, sha, diff })), traces,
   }, null, 2), { mode: 0o600 });
