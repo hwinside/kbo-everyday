@@ -20,7 +20,7 @@ export async function GET(request: NextRequest) {
     const result = await scanNextGame({
       dates,
       signal: request.signal,
-      fetchGames: (date) => fetchSharedDateGames(request.nextUrl.origin, date),
+      fetchGames: (date) => fetchSharedDateGames(process.env.NEXT_PUBLIC_APP_URL || "https://keubo.fan", date),
       matches: (game) => (game.homeTeamId === teamId || game.awayTeamId === teamId) &&
         game.gameId !== excludeId &&
         (game.status === "scheduled" || (mode === "active" && game.status === "live")),
