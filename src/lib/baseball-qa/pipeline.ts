@@ -138,6 +138,7 @@ import {
   BASEBALL_GENIUS_UNCLEAR_ANSWER,
   BASEBALL_GENIUS_SYSTEM_ERROR_ANSWER,
   BASEBALL_GENIUS_NAME_SUGGEST_ANSWER,
+  BASEBALL_GENIUS_NAME_CANDIDATES_ANSWER,
   BASEBALL_GENIUS_MAX_ANSWER_LENGTH,
   BASEBALL_GENIUS_MAX_QUESTION_LENGTH,
   BASEBALL_GENIUS_MIN_QUESTION_LENGTH,
@@ -3010,6 +3011,8 @@ export type UnboundName = {
   token: string;
   /** 그 오타가 가리키는 현 로스터 선수 이름 */
   suggestion: string;
+  /** 애칭에 대응하는 복수 실존 후보. 자동으로 한 명에게 결속하지 않는다. */
+  candidates?: PlayerRef[];
 };
 
 /**
@@ -3111,9 +3114,11 @@ export function resolveUnboundName(
         const given = token.slice(0, -1);
         if (commonNouns.has(given) || glossaryNames.has(normalizeKey(given)) || glossaryNames.has(normalizeKey(token))) continue;
         const matches = players.filter((p) => /^[가-힣]{3}$/u.test(p.name) && p.name.slice(1) === given);
-        if (matches.length > 1) return null;
-        if (matches.length === 0) continue;
-        candidates.set(matches[0].kboId, { token, suggestion: matches[0].name });
+        const distinct = [...new Map(matches.map(player => [String(player.kboId), player])).values()];
+        if (distinct.length === 0) continue;
+        candidates.set(token, distinct.length === 1
+          ? { token, suggestion: distinct[0].name }
+          : { token, suggestion: "", candidates: distinct });
       }
     }
     if (candidates.size === 1) return [...candidates.values()][0];
@@ -6614,7 +6619,10 @@ async function answerQuestionObserved(userId: string, rawQuestion: string, deps:
       route === "name_suggest"
         // ⚠️ 판정기와 문구 생성이 **같은 함수**를 쓴다. 둘이 갈라지면 "막기로 라우팅해놓고
         //   정작 문구가 없는" 모순이 되므로 그 경우 fail-close 한다.
-        ? (unbound === null ? UNCLEAR_ANSWER : NAME_SUGGEST_ANSWER(unbound.suggestion))
+        ? (unbound === null ? UNCLEAR_ANSWER : (unbound.candidates
+          ? BASEBALL_GENIUS_NAME_CANDIDATES_ANSWER(unbound.candidates.map(player =>
+            `${player.name}${player.team ? `(${player.team}${player.backNo ? ` ${player.backNo}번` : ""})` : ""}`))
+          : NAME_SUGGEST_ANSWER(unbound.suggestion)))
         :
       BLOCKED_ANSWER;
     // ── 팀별 팬 카피 (rev2) — **단독 인사에만** 적용한다 ─────────────────────────

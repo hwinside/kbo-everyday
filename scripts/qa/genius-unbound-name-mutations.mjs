@@ -103,7 +103,7 @@ const MUTATIONS = [
   },
   {
     name: "N-I 문구 생성 fail-close 제거 (라우팅만 하고 문구가 없다)",
-    from: `        ? (unbound === null ? UNCLEAR_ANSWER : NAME_SUGGEST_ANSWER(unbound.suggestion))`,
+    from: "        ? (unbound === null ? UNCLEAR_ANSWER : (unbound.candidates\n          ? BASEBALL_GENIUS_NAME_CANDIDATES_ANSWER(unbound.candidates.map(player =>\n            `${player.name}${player.team ? `(${player.team}${player.backNo ? ` ${player.backNo}번` : \"\"})` : \"\"}`))\n          : NAME_SUGGEST_ANSWER(unbound.suggestion)))",
     to: `        ? NAME_SUGGEST_ANSWER("")`,
     expect: "answer",
   },
