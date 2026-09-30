@@ -1038,6 +1038,31 @@ export function formatEvidenceTimeAnnotation(
   return `${seasonLabel} · ${asOfLabel} · ${currencyLabel}`;
 }
 
+/** Official responses carry typed citation bindings; semantic extraction remains
+ * the model's responsibility and is evaluated separately from schema validity. */
+export const OFFICIAL_RAG_RESPONSE_SCHEMA = {
+  type: "OBJECT",
+  properties: {
+    status: { type: "STRING", enum: [RAG_GROUNDED_SENTINEL, RAG_GENERAL_SENTINEL, RAG_INSUFFICIENT_SENTINEL, "TERM_UNVERIFIED", "TERM_CONTEXTUAL"] },
+    answer: { type: "STRING" },
+    correctsPrevious: { type: "BOOLEAN" },
+    contextMeaning: { type: "STRING" },
+    calendarClaims: {
+      type: "ARRAY",
+      items: {
+        type: "OBJECT",
+        properties: {
+          basis: { type: "STRING", enum: ["current", "question"] },
+          season: { type: "INTEGER", description: "사건의 연도. 문자열이나 연도 접미사 없이 정수로 출력한다." },
+          evidence: { type: "INTEGER", minimum: 1, description: "자료 메타데이터의 evidence 번호. 자료1 같은 문자열이 아닌 1부터 시작하는 정수." },
+        },
+        required: ["basis", "season", "evidence"],
+      },
+    },
+  },
+  required: ["status", "answer", "calendarClaims"],
+};
+
 export function buildRagLlmRequest(
   question: string,
   evidence: RagEvidence[],
@@ -1053,7 +1078,7 @@ export function buildRagLlmRequest(
     .map((row, index) => {
       if (official) {
         return `[자료${index + 1}]\n문서 메타데이터: ${JSON.stringify({
-          documentTitle: row.pageTitle, sectionPath: row.sectionPath,
+          evidence: index + 1, documentTitle: row.pageTitle, sectionPath: row.sectionPath,
           collectedAt: row.asOf || null,
           // Serving data has no per-fact season. Never synthesize it from a title,
           // subtract one from an annual's year, or label mixed history as one season.
@@ -1125,6 +1150,7 @@ export function buildRagLlmRequest(
       // ⚠️ 리터럴 금지 — 문자 상한과 같은 예산에서 파생한다(삼순 2026-08-16 P0).
       maxOutputTokens: BASEBALL_GENIUS_MAX_OUTPUT_TOKENS,
       responseMimeType: "application/json",
+      ...(official ? { responseSchema: OFFICIAL_RAG_RESPONSE_SCHEMA } : {}),
     },
   };
 }

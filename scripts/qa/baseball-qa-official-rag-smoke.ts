@@ -680,6 +680,12 @@ check("공식 일정 계약 — 요청 연도/자료 연도 불일치·미상·�
   assert.equal(validate([{ ...current[0], season: 2025 }], "올해 일정은?").kind, "insufficient");
   assert.equal(validate(past, "2026년 일정은?").kind, "insufficient");
   assert.equal(validate(past, "2025년 일정은?").kind, "grounded");
+  for (const invalid of [
+    { ...past[0], season: "2025" }, { ...past[0], evidence: "1" },
+    { ...past[0], evidence: "자료1" }, { ...past[0], evidence: 0 },
+    { ...past[0], evidence: 1.5 }, { ...past[0], season: 2025.5 },
+    { ...past[0], basis: "unknown" },
+  ]) assert.equal(validate([invalid], "2025년 일정은?").kind, "insufficient");
   assert.equal(validate(past, "올해 일정은?").kind, "insufficient");
   assert.equal(validate(undefined, "올해 일정은?").kind, "insufficient");
   assert.equal(validate([{ ...past[0], evidence: 2 }], "2025년 일정은?").kind, "insufficient");
@@ -697,6 +703,12 @@ checkAsync("순수 요청 빌더 — 공식 기준일 주입과 기본 서버 �
   const fixed = buildRagLlmRequest("올해 일정은?", [OFFICIAL], RAG_OFFICIAL_SYSTEM_PROMPT,
     { referenceTimeMs: Date.parse("2026-12-31T15:00:00Z") });
   assert.ok(fixed.contents[0].parts[0].text.includes("2027-01-01 (Asia/Seoul)"));
+  const schema = fixed.generationConfig.responseSchema!;
+  assert.equal(schema.properties.calendarClaims.items.properties.season.type, "INTEGER");
+  assert.equal(schema.properties.calendarClaims.items.properties.evidence.type, "INTEGER");
+  assert.ok(schema.required.includes("calendarClaims"));
+  assert.ok(fixed.contents[0].parts[0].text.includes('"evidence":1'));
+  assert.equal(buildRagLlmRequest("선수 소개", [OFFICIAL]).generationConfig.responseSchema, undefined);
   const { toKSTDateString } = await import("../../src/lib/utils/date-kst");
   const before = toKSTDateString(new Date().toISOString());
   const liveClock = buildRagLlmRequest("올해 일정은?", [OFFICIAL], RAG_OFFICIAL_SYSTEM_PROMPT);
