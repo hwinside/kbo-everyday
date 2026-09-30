@@ -1,0 +1,66 @@
+[
+  {
+    "id": "clock-alone",
+    "kst": "2026-10-01 00:45:10",
+    "user_id": "qa-1503-clock-alone",
+    "q": "몇 시야?",
+    "a": "",
+    "mp": "ungraded"
+  },
+  {
+    "id": "clock-explicit",
+    "kst": "2026-10-01 00:45:10",
+    "user_id": "qa-1503-clock-explicit",
+    "q": "지금 한국 시간 몇 시야?",
+    "a": "",
+    "mp": "ungraded"
+  },
+  {
+    "id": "shop-hours",
+    "kst": "2026-10-01 00:45:10",
+    "user_id": "qa-1503-shop-hours",
+    "q": "삼성전자 서비스센터 몇 시에 열어?",
+    "a": "",
+    "mp": "ungraded"
+  },
+  {
+    "id": "restaurant",
+    "kst": "2026-10-01 00:45:10",
+    "user_id": "qa-1503-restaurant",
+    "q": "오늘 식당 몇 시에 닫아?",
+    "a": "",
+    "mp": "ungraded"
+  },
+  {
+    "id": "baseball-time",
+    "kst": "2026-10-01 00:45:10",
+    "user_id": "qa-1503-baseball-time",
+    "q": "한화 몇 시에 해?",
+    "a": "",
+    "mp": "ungraded"
+  },
+  {
+    "id": "baseball-start",
+    "kst": "2026-10-01 00:45:10",
+    "user_id": "qa-1503-baseball-start",
+    "q": "오늘 삼성 선발 누구야?",
+    "a": "",
+    "mp": "ungraded"
+  },
+  {
+    "id": "switch-1",
+    "kst": "2026-10-01 00:45:10",
+    "user_id": "qa-1503-switch",
+    "q": "오늘 삼성 일정 알려줘",
+    "a": "",
+    "mp": "ungraded"
+  },
+  {
+    "id": "switch-2",
+    "kst": "2026-10-01 00:45:20",
+    "user_id": "qa-1503-switch",
+    "q": "그건 알겠고 지금 한국 시간 몇 시야?",
+    "a": "",
+    "mp": "ungraded"
+  }
+]

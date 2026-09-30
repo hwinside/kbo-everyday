@@ -6786,7 +6786,8 @@ async function answerQuestionObserved(userId: string, rawQuestion: string, deps:
       const result = await Promise.race([
         (async () => {
           const snapshot = await deps.loadGameConversation!(date);
-          const input: GameConversationInput = { question, context: context ?? undefined, date, nowMs: deps.now?.() ?? Date.now(), ...snapshot,
+          const input: GameConversationInput = { question, context: context ?? undefined, date, nowMs: deps.now?.() ?? Date.now(),
+            games: snapshot.games, favoriteTeam: snapshot.favoriteTeam, appFacts: snapshot.appFacts,
             teamNames: { question: mentionedTeamCanonicals(question),
               context_question: mentionedTeamCanonicals(context?.question ?? ""),
               profile: mentionedTeamCanonicals(snapshot.favoriteTeam ?? "") },

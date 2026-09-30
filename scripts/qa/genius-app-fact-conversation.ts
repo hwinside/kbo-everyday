@@ -43,10 +43,12 @@ export async function checkAppFactConversation() {
       getLlmState: async () => ({ started, result: stored }),
       acquireLlmStart: async () => { if (started) return false; started = true; return true; },
       storeLlm: async (result) => { stored = result; },
-      loadGameConversation: async () => snapshot,
+      loadGameConversation: async () => ({ ...snapshot, date: "1999-01-01", nowMs: 0 }),
       callGameConversation: async (input) => {
-        calls++; assert.deepEqual(input.teamNames.question, c.teams);
-        return { text: JSON.stringify(proposal(c.q, c.kind, c.period, c.teams)), inputTokens: 2, outputTokens: 3 };
+        calls++; assert.equal(input.question, c.q, "snapshot cannot overwrite current question");
+        assert.equal(input.date, "2026-09-30"); assert.equal(input.nowMs, now);
+        assert.deepEqual(input.teamNames.question, c.teams);
+        return { text: JSON.stringify(proposal(c.q, c.kind, c.period, [])), inputTokens: 2, outputTokens: 3 };
       },
       callLlm: async () => { throw new Error("must not generate historical prose"); },
       enableTeamRag: true,
@@ -61,10 +63,12 @@ export async function checkAppFactConversation() {
     assert.equal(replay.answer, first.answer); assert.equal(replay.source, first.source); assert.equal(calls, 1);
     assert.deepEqual(logs, [c.source, c.source]);
   }
+  // App targets come from current resolver entities, not a model's attendance source.
   const q = "내일 케이티 투수 ㄴㄱ?";
   const input = { ...snapshot, question: q, teamNames: { ...snapshot.teamNames, question: ["KT"] } };
   const p = proposal(q, "starters", "tomorrow", ["KT"]);
   const render = (i: GameConversationInput, plan = p) => renderGameConversation(JSON.stringify(plan), i)!;
+  assert.match(render(input, proposal(q, "starters", "tomorrow", [])).answer, /KT 내일KT선발/);
   assert.doesNotMatch(render(input).answer, /오늘KT선발|오늘삼성선발|내일두산선발/);
   for (const [games, pattern] of [[null, /조회하지 못/], [[], /등록된 경기가 없습니다/],
     [[{ ...tomorrowGame, homeStarterName: "" }], /KT 미발표/],
@@ -90,6 +94,12 @@ export async function checkAppFactConversation() {
   assert.doesNotMatch(renderGameConversation(JSON.stringify(proposal(pair.question, "prediction", "today", ["삼성", "두산"])), pair)!.answer, /KT vs 삼성/);
   const dh = { ...snapshot, games: [todayGame, { ...todayGame, time: "20:00" }] };
   assert.match(renderGameConversation(JSON.stringify(proposal(dh.question, "schedule", "today", ["삼성"])), dh)!.answer, /20:00/);
+  const roleInput = { ...snapshot, question: "두산 팬인데 삼성 일정 알려줘", teamNames: { ...snapshot.teamNames, question: ["두산", "삼성"] } };
+  const rolePlan = proposal(roleInput.question, "schedule", "today", ["삼성"]);
+  assert.match(renderGameConversation(JSON.stringify({ ...rolePlan, target: { ...rolePlan.target, backgroundTeams: ["두산"] } }), roleInput)!.answer, /KT vs 삼성/);
+  const exceptInput = { ...snapshot, question: "삼성 말고 오늘 일정 알려줘" };
+  const exceptPlan = proposal(exceptInput.question, "schedule", "today", []);
+  assert.doesNotMatch(renderGameConversation(JSON.stringify({ ...exceptPlan, target: { ...exceptPlan.target, source: "question", quote: exceptInput.question, excludedTeams: ["삼성"] } }), exceptInput)!.answer, /KT vs 삼성/);
   // Real lexical entity resolver remains the authority, not model-proposed team names.
   assert.deepEqual(mentionedTeamCanonicals("내일 케이티 투수 ㄴㄱ?"), ["KT"]);
 }

@@ -13,7 +13,7 @@ appRequest.quote는 현재 발화에서 요청 의도를 드러내는 원문 그
 사실 답변·숫자·경기 인덱스는 생성하지 않습니다. target에는 원문에 결속된 대상 조건만 씁니다. 현재 발화에 팀이 있으면 target.source=question이며 모든 현재 팀을 teams/excludedTeams/backgroundTeams 역할 중 하나에 넣습니다. 배경 팬은 조회 조건이 아닙니다. 대상이 생략된 후속이면 context_question, 그 밖의 대상 생략은 profile을 쓸 수 있습니다. 전체 일정/순위 요청이면 target.source=none, teams=[]입니다.
 두 팀의 맞대결 요청이면 teams에 두 팀을 모두 넣습니다. 자료가 없거나 선발 미발표여도 요청 종류를 바꾸지 않습니다. 코드는 미조회·빈 일정·미발표를 구별합니다.
 lineup은 현재 연결된 데이터에 타순이 없으므로 옛 라인업 대신 확인 불가와 실제 경기만 안내합니다. prediction/postseason은 승패/진출을 단정하지 않고 실제 경기/현재 순위만 안내합니다. 조회 결과가 질문을 바꾸지는 않습니다.
-app_facts에서는 attendanceEvidence="", evidenceSource=none입니다. 기존 관람 계획은 원래 match/clarify/other 계약을 유지합니다. 행사 정보 요청을 관람 계획으로 간주하지 않습니다. app_facts가 아니면 appRequest={kind:"none",period:"unsupported",quote:""}입니다.`;
+app_facts에서는 attendanceEvidence="", evidenceSource=none입니다. 이 evidenceSource는 관람 근거만 뜻하며 target.source와 무관합니다. 현재 질문의 teamNames.question은 코드가 조회 대상으로 사용합니다. 모델은 제외·배경 역할을 원문에 근거해 구분하며, evidenceSource=none 때문에 target을 비우지 않습니다. 현재 시각·영업시간 등 야구와 무관한 시간 질문은 other이며, 앱 일정이나 프로필을 보고 야구 질문으로 바꾸지 않습니다. 기존 관람 계획은 원래 match/clarify/other 계약을 유지합니다. 행사 정보 요청을 관람 계획으로 간주하지 않습니다. app_facts가 아니면 appRequest={kind:"none",period:"unsupported",quote:""}입니다.`;
 
 export const APP_REQUEST_SCHEMA = { type: "OBJECT", properties: {
   kind: { type: "STRING", enum: ["schedule", "starters", "standings", "postseason", "lineup", "prediction", "none"] },
@@ -35,20 +35,23 @@ export function renderAppFacts(value: Record<string, unknown>, input: GameConver
   if (req.period === "unsupported") return hold("현재 이 대화에서 확인할 수 있는 범위는 오늘·내일 경기와 현재 순위입니다. 요청하신 기간을 이 범위로 바꾸어 답하지 않겠습니다.");
   const source = target.source;
   if (!["question", "context_question", "profile", "none"].includes(String(source)) || typeof target.quote !== "string") return null;
-  const sourceText = source === "question" ? input.question : source === "context_question" ? input.context?.question : source === "profile" ? input.favoriteTeam : "";
-  if (source !== "none" && (!target.quote.trim() || !sourceText?.includes(target.quote))) return null;
+  const hasCurrentTeams = input.teamNames.question.length > 0;
+  const sourceText = hasCurrentTeams || source === "question" ? input.question : source === "context_question" ? input.context?.question : source === "profile" ? input.favoriteTeam : "";
+  if (!hasCurrentTeams && source !== "none" && (!target.quote.trim() || !sourceText?.includes(target.quote))) return null;
   for (const key of ["teams", "excludedTeams", "backgroundTeams", "excludedStadiums"]) {
     if (!Array.isArray(target[key]) || !(target[key] as unknown[]).every((x) => typeof x === "string")) return null;
   }
   if (typeof target.stadium !== "string") return null;
-  const teams = target.teams as string[], excluded = target.excludedTeams as string[], background = target.backgroundTeams as string[];
-  const names = source === "none" ? [] : input.teamNames[source as keyof typeof input.teamNames];
-  if ([...teams, ...excluded, ...background].some((t) => !names.includes(t))) return clarify();
-  if (input.teamNames.question.length && (source !== "question"
-    || input.teamNames.question.some((t) => ![...teams, ...excluded, ...background].includes(t)))) return clarify();
-  if (teams.some((t) => excluded.includes(t) || background.includes(t)) || excluded.some((t) => background.includes(t))) return clarify();
+  const proposedTeams = target.teams as string[], excluded = target.excludedTeams as string[], background = target.backgroundTeams as string[];
+  const names = hasCurrentTeams ? input.teamNames.question : source === "none" ? [] : input.teamNames[source as keyof typeof input.teamNames];
+  if ([...proposedTeams, ...excluded, ...background].some((t) => !names.includes(t))) return clarify();
+  if ((excluded.length || background.length) && (!target.quote.trim() || !sourceText?.includes(target.quote))) return clarify();
+  if (proposedTeams.some((t) => excluded.includes(t) || background.includes(t)) || excluded.some((t) => background.includes(t))) return clarify();
+  // Current lexical entities own the lookup even when the model omits target.
+  // Only grounded exclusion/background roles may subtract them.
+  const teams = hasCurrentTeams ? names.filter((t) => !excluded.includes(t) && !background.includes(t)) : proposedTeams;
   // Do not turn an unsupported model entity into a lookup of every game.
-  if (source !== "none" && !teams.length && !excluded.length && !target.stadium) return clarify();
+  if ((hasCurrentTeams || source !== "none") && !teams.length && !excluded.length && !target.stadium) return clarify();
   const stadium = target.stadium;
   const excludedStadiums = target.excludedStadiums as string[];
   if ((stadium && !sourceText?.includes(stadium)) || excludedStadiums.some((s) => !s.trim() || !sourceText?.includes(s))) return clarify();
