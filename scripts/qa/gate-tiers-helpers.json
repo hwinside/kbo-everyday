@@ -282,6 +282,7 @@
     "qa:widget-fast",
     "qa:widget-tap-mode",
     "qa:youtube-quota",
-    "qa:chat-profanity:selftest"
+    "qa:chat-profanity:selftest",
+    "qa:la-recovery-card-policy"
   ]
 }
