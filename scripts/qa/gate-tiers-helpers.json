@@ -77,7 +77,6 @@
     "qa:genius-glossary-map-live",
     "qa:genius-mascot-assets:mutations:full",
     "qa:genius-correction-corpus-replay",
-    "qa:genius-normalize-latency",
     "qa:genius-question-normalize-live",
     "qa:genius-rag-match-path",
     "qa:genius-rag-real-corpus",
