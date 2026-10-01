@@ -5879,10 +5879,14 @@ export function evaluateNormalizedCandidate(
  *    (숫자 보존·길이 상한·착지 allowlist SSOT)가 다시 판정한다. 자동 수용 경로는 없다.
  */
 export function repairGlossaryTermTypo(text: string, glossary: GlossaryEntry[]): string | null {
+  if (matchGlossary(glossary, text)) return null; // exact original SSOT identity is not a typo
   const source = text.normalize("NFKC");
   const repaired = new Set<string>();
   for (const entry of glossary) {
-    const term = entry.term.normalize("NFKC");
+    // Spacing variants already belong to the SSOT; do not invent aliases.
+    const forms = new Set([entry.term, ...entry.aliases.filter(alias => /^[가-힣\s]+$/u.test(alias))]);
+    for (const form of forms) {
+    const term = form.normalize("NFKC");
     if (term.length < 2) continue;
     for (let i = 0; i + term.length <= source.length; i++) {
       const window = source.slice(i, i + term.length);
@@ -5918,14 +5922,15 @@ export function repairGlossaryTermTypo(text: string, glossary: GlossaryEntry[]):
       if (normalizeQuestion(restored) !== normalizeKey(term)) continue;
       repaired.add(restored);
     }
+    }
   }
   if (repaired.size !== 1) return null;
   return [...repaired].at(0) ?? null;
 }
 
 /** Final spelling decision shared by serving and live gates. Model spelling
- * evidence governs model proposals only; the unique, definition-only glossary
- * repair is independent evidence and still requires the destination SSOT.
+ * evidence gates model proposals AND glossary repair. Definition intent alone
+ * cannot bypass original validity; destination SSOT remains mandatory.
  * No lexical candidate is applied before the user selects its correction card. */
 export function resolveQuestionNormalization(
   question: string,
@@ -5964,11 +5969,13 @@ export function resolveQuestionNormalization(
       && routeQuestion(candidate, glossary, players, false) === "llm_scope_gate";
     if (!suggested && (!accepted || acceptedStillResidual)
         && permitsGlossaryRepair(question, norm?.originalSpelling)) {
-      // Only surface-equivalent model text may supply spacing. Lexical rewrites
-      // cannot erase the original typo or become evidence for a second rewrite.
-      const repairBase = candidate.length > 0 && normalizeKey(candidate) === normalizeKey(question)
+      // A partial spelling fix can restore the question ending (모야 → 뭐야).
+      // It must keep term identity and stay inside the attested original span.
+      const repairBase = candidate.length > 0 && preservesCorrectionTermIdentity(question, candidate, glossary)
+        && (normalizeKey(candidate) === normalizeKey(question)
+          || permitsLexicalCorrection(question, norm?.originalSpelling, candidate))
         ? candidate : question;
-      const repaired = repairGlossaryTermTypo(repairBase, glossary);
+      const repaired = repairGlossaryTermTypo(repairBase, glossary) ?? repairGlossaryTermTypo(question, glossary);
       if (repaired !== null
           && permitsGlossaryRepair(question, norm?.originalSpelling, repaired)
           && classifyQuestionCorrectionCandidate(question, repaired, glossary, players) === "suggest") {

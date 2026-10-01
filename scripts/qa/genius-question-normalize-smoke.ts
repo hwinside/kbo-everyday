@@ -243,8 +243,7 @@ async function main() {
     assert.deepEqual(r.correctionOptions, ["보크가 뭐야"]);
   }
 
-  // Closed-glossary evidence is independent of the model spelling assessment.
-  // A valid/unknown model verdict must not veto a unique definition-only repair.
+  // Even definition intent cannot override a valid/unknown original spelling.
   for (const status of [undefined, "valid", "unknown"] as const) {
     const state = freshState({ normReply: null });
     const deps = makeDeps(state);
@@ -252,18 +251,23 @@ async function main() {
       ...(status ? { originalSpelling: { status, quote: "", intent: "definition" as const } } : {}),
     });
     const result = await answerQuestion("u1", "보끄가 뭐야", deps);
-    assert.equal(result.source, "question_correction");
-    assert.deepEqual(result.correctionOptions, ["보크가 뭐야"]);
+    if (status === undefined) {
+      assert.equal(result.source, "question_correction");
+      assert.deepEqual(result.correctionOptions, ["보크가 뭐야"]);
+    } else {
+      assert.notEqual(result.source, "question_correction", `${status} vetoes even definition intent`);
+    }
   }
 
-  // R2: original-source unique repairs survive a valid verdict and a partial
-  // lexical rewrite; phrases with remaining meaning cannot become definition cards.
+  // R3: attested typo spans may use a partial lexical rewrite or original-source
+  // repair; valid verdicts and phrases with remaining meaning stay protected.
   {
     const terms: GlossaryEntry[] = [
       ...glossary,
       { term: "와인드업", aliases: [], answer: "투구 동작" },
       { term: "폭투", aliases: [], answer: "투구 기록" },
-      { term: "사이클링 히트", aliases: [], answer: "타격 기록" },
+      { term: "사이클링히트", aliases: ["사이클링 히트"], answer: "타격 기록" },
+      { term: "히트", aliases: [], answer: "안타" },
       { term: "스트라이크", aliases: [], answer: "투구 판정" },
       { term: "스트라이크존", aliases: [], answer: "판정 구역" },
     ];
@@ -275,9 +279,28 @@ async function main() {
       ["오늘 폭추 몇개", null, null],
       ["야구 전광판 보는 법 알려줘", null, null],
     ] as const) {
-      const decision = resolveQuestionNormalization(q, { text, originalSpelling: { status: "valid", quote: "", intent: "definition" } }, terms, players);
+      const decision = resolveQuestionNormalization(q, { text, originalSpelling: { status: "typo", quote: q, intent: "definition" } }, terms, players);
       assert.equal(decision.suggestionText, expected, q);
       assert.equal(decision.accepted, false, "lexical repair is never auto-applied");
+    }
+    // R2 corpus regressions: valid ordinary words stay valid even with a
+    // definition intent and a tempting unique destination.
+    const ordinaryTerms = [...terms,
+      { term: "홀드", aliases: [], answer: "투수 기록" },
+      { term: "이닝", aliases: [], answer: "경기 단위" },
+      { term: "삼진", aliases: [], answer: "아웃 기록" },
+      { term: "투심", aliases: [], answer: "구종" },
+      { term: "승률", aliases: [], answer: "승리 비율" },
+      { term: "커터", aliases: [], answer: "구종" },
+      { term: "완투", aliases: [], answer: "투수 기록" },
+      { term: "포일", aliases: [], answer: "포수 기록" },
+    ];
+    for (const q of ["콜드", "위닝", "삼성", "투구", "스윙", "승차가 뭐야", "쿼터", "질투가 뭐야", "네일", "이예은", "빅볼", "리드가 뭐야", "태그가 뭐야", "볼이 머야?"]) {
+      const result = resolveQuestionNormalization(q, {
+        text: repairGlossaryTermTypo(q, ordinaryTerms),
+        originalSpelling: { status: "valid", quote: "", intent: "definition" },
+      }, ordinaryTerms, players);
+      assert.equal(result.suggested, false, `valid corpus input: ${q}`);
     }
     for (const intent of ["other", "unknown"] as const) {
       const decision = resolveQuestionNormalization("내일은?", {

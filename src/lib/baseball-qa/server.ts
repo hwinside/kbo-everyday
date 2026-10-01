@@ -295,18 +295,18 @@ export async function normalizeQuestionLlm(
     "너는 KBO 야구 서비스에 들어온 사용자 질문의 표기 교정기다.",
     "질문의 의미는 절대 바꾸지 말고 **표기만** 교정한다: 띄어쓰기, 명백한 오탈자, 붙여 쓴 단어 분리.",
     "다음은 금지다:",
-    "· 단어 추가·삭제·다른 단어로 대체 (표기 교정이 아닌 바꿔쓰기)",
+    "· 단어 추가·삭제·다른 단어로 대체 (표기 교정이 아닌 바꿔쓰기). 생략된 단어나 반복 명사를 보충하지 않는다. 공백만으로 읽을 수 있으면 문자 구성은 그대로 둔다.",
     "· 숫자 변경",
     "· 질문을 답변이나 설명으로 바꾸는 것",
     "· 확신 없는 사람 이름 교정 — 이름은 명백한 오타일 때만 고친다",
     "교정할 것이 없거나 확신이 없으면 null 을 준다 — 잘못 고치는 쪽이 안 고치는 쪽보다 나쁘다.",
     "후보를 만들기 전에 원문 자체의 표기가 유효한지 판정한다. 정상 단어·엔티티·반응·생략된 후속 질문은 valid이다. 문맥이 없어 답할 수 없다는 것은 오타가 아니다. 낯선 단어를 야구 용어와 비슷하다는 이유로 typo로 판단하지 않는다. 확실하지 않으면 unknown이다.",
     "originalSpelling.status=typo는 원문에 명백한 철자 오류가 있을 때만 가능하며 quote에는 그 원문 오류 부분을 정확히 복사한다. valid/unknown이면 quote는 빈 문자열이다. 후보가 유효한 야구 용어라는 사실은 원문이 오타라는 근거가 아니다.",
-    "originalSpelling.intent는 교정 후보와 독립적으로 원문의 요청 기능을 판정한다: definition=단독 용어 또는 그 뜻·정의를 묻는 요청, other=평가·감상·일정·기간 후속·조회·반응 등 다른 기능, unknown=기능도 불명확. 철자가 유효하다고 판단해도 용어 정의 요청이면 definition이다. 용어가 포함됐다는 이유만으로 평가나 후속 질문을 definition으로 바꾸지 않는다.",
     "참고 사전은 서버의 검수 용어·별칭이다. 원문에 등장하거나 기존 폐쇄집합 복원기가 찾은 참고 자료일 뿐 정답이나 교정 명령이 아니다. 원문 전체와 문장 내 역할이 그 용어를 유일하게 지지하는 경우에만 오타 후보로 쓸 수 있다.",
+    "valid는 원문 표기 자체가 실제 일반어·용어·고유명으로 유효하다는 뜻이다. 의도한 용어를 알아볼 수 있다는 뜻이 아니다. 원문 그대로의 단어에 독립된 뜻이나 이름 근거가 있으면 다른 용어와 가깝더라도 valid다. 뜻을 추정하기 위해 철자를 바꿔야 하고 원문 표기 자체에는 유효한 해석이 없을 때만 typo다. 두 가능성이 있으면 unknown으로 기권한다.",
     "오타 여부는 단어 전체와 문장 내 역할로 판정한다. 단어 일부가 일반어와 겹친다는 이유만으로 유효한 표기라고 보지 않는다. 정의 요청의 대상이나 단독 용어가 사전 근거의 한 용어로 유일하게 복원되며 다른 자연스러운 전체 해석이 없다면 typo를 허용한다. 완전한 일반어 해석이 실제로 경쟁하면 unknown이다.",
-    "교정 후에도 원문의 질문 기능과 서술어를 보존한다. 일반어의 구어체·축약된 서술어를 비슷한 야구 명사로 바꾸지 않는다. 평가·감상 질문을 용어 정의 질문으로 바꾸거나 서술어를 명사+조사로 바꾸는 후보는 거절한다. 후보 문장이 문법적으로 성립하지 않으면 제안하지 않는다.",
-    '반드시 JSON 하나만 출력한다: {"originalSpelling":{"status":"valid|typo|unknown","quote":"원문 오류 부분 또는 빈 문자열","intent":"definition|other|unknown"},"normalized":"교정한 질문 또는 null"}',
+    "교정 후에도 원문의 질문 기능과 서술어를 보존한다. 일반어의 구어체·축약된 서술어를 비슷한 야구 명사로 바꾸지 않는다. 평가·감상 질문을 용어 정의 질문으로 바꾸거나 서술어를 명사+조사로 바꾸는 후보는 거절한다. 명사 오타에 붙은 잘못된 조사도 고쳐 정의 질문이 성립하게 할 수 있다. 이때 quote는 조사까지 포함해 실제 변경 부분 전체를 인용한다. 후보 문장이 문법적으로 성립하지 않으면 제안하지 않는다.",
+    '반드시 JSON 하나만 출력한다: {"originalSpelling":{"status":"valid|typo|unknown","quote":"원문 오류 부분 또는 빈 문자열"},"normalized":"교정한 질문 또는 null"}',
   ].join("\n");
   const res = await fetch(GEMINI_URL, {
     method: "POST",
@@ -341,8 +341,6 @@ export async function normalizeQuestionLlm(
     && typeof assessment.quote === "string" ? {
       status: assessment.status,
       quote: assessment.quote,
-      intent: assessment.intent === "definition" || assessment.intent === "other"
-        ? assessment.intent : "unknown" as const,
     } : undefined;
   return {
     text: typeof normalized === "string" && normalized.trim().length > 0 ? normalized.trim() : null,

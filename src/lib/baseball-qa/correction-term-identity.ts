@@ -22,13 +22,11 @@ export function permitsLexicalCorrection(question: string, assessment?: Original
     && proposed.startsWith(prefix) && proposed.endsWith(suffix);
 }
 
-/** A spelling verdict cannot veto independent, unique glossary evidence when
- * the ORIGINAL request is a definition. Follow-ups/evaluations still veto it.
- * Missing provider evidence retains the existing outage fail-open contract;
- * legacy fixtures retain their exact-span policy. This is only a prerequisite:
- * callers must generate from original/surface text and recheck destination SSOT. */
+/** Intent never proves misspelling. An explicit valid/unknown verdict vetoes
+ * deterministic repair as well as model correction. Provider outage retains
+ * the existing fail-open contract, not a successful-provider override. */
 export function permitsGlossaryRepair(question: string, assessment?: OriginalSpellingAssessment, candidate?: string): boolean {
-  if (assessment?.intent !== undefined) return assessment.intent === "definition";
+  if (assessment?.intent === "other" || assessment?.intent === "unknown") return false;
   return assessment === undefined || permitsLexicalCorrection(question, assessment, candidate);
 }
 
@@ -86,7 +84,7 @@ export function preservesCorrectionTermIdentity(question: string, candidate: str
   // Whitespace alone remains Tier A; this only vetoes lexical identity expansion.
   const sourceWords = question.normalize("NFKC").split(/\s+/u).map(normalizeKey);
   if (introduced.some(entry => entry.keys.some(key => existing.some(known =>
-    known.keys.some(anchor => sourceWords.includes(anchor) && key !== anchor && key.includes(anchor)),
+    known.keys.some(anchor => sourceWords.includes(anchor) && key !== anchor && key.startsWith(anchor)),
   )))) return false;
   // Check only identities actually introduced by this candidate. Unchanged
   // question endings and other glossary entries cannot make a repair ambiguous.
