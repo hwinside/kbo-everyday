@@ -1,3 +1,4 @@
+import { CORRECTION_LEXICON } from "./correction-lexicon";
 import { normalizeKey } from "./normalize";
 
 /** Evidence from the spelling provider, independent of a proposed destination.
@@ -93,7 +94,7 @@ export function preservesCorrectionTermIdentity(question: string, candidate: str
   // Conservatively preserve standalone words from reviewed multiword names.
   // These are SSOT components, not fuzzy prefixes or a hand-written exception list.
   // They only veto a lexical edit; they never authorize a definition or correction.
-  const reviewedWords = entries.flatMap(entry => [entry.term, ...entry.aliases])
+  const reviewedWords = [...entries, ...CORRECTION_LEXICON].flatMap(entry => [entry.term, ...entry.aliases])
     .flatMap(name => name.normalize("NFKC").trim().split(/\s+/u))
     .map(normalizeKey).filter(word => word.length >= 2);
   if (reviewedWords.some(word => sourceWords.includes(word) && !proposed.includes(word))) return false;
