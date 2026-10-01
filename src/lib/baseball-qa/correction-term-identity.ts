@@ -1,5 +1,12 @@
 import { normalizeKey } from "./normalize";
 
+/** Complete, correctly spelled period-only utterances are not glossary typos.
+ * This suppresses spelling correction only; it supplies neither intent, team,
+ * context eligibility nor a supported date to the downstream answer path. */
+export function isTemporalOnlyUtterance(question: string): boolean {
+  return /^(?:(?:그럼|그러면|아니)\s*)?(?:오늘|내일|모레|어제|그제|올해|내년|작년|(?:이번|다음|지난)\s*(?:주|달|시즌))(?:은|는|도)?(?:요)?[\s?!,.…~]*$/u.test(question.normalize("NFKC").trim());
+}
+
 type TermEntry = { term: string; aliases: string[] };
 
 // Align the proposed spelling to the original question. A destination term

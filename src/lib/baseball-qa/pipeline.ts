@@ -3,7 +3,7 @@ import { renderRagHold } from "./rag/hold-answer";
 import { renderGameConversation, type GameConversationInput, type GameConversationResult } from "./game-conversation";
 import { selectOriginContextTurn } from "./context";
 import { resolveTermOrigin, VERIFIED_TERM_ORIGINS } from "./term-origin";
-import { preservesCorrectionTermIdentity } from "./correction-term-identity";
+import { isTemporalOnlyUtterance, preservesCorrectionTermIdentity } from "./correction-term-identity";
 import { leaderboardGuide } from "./stats/leaderboard-guide";
 import { liveScoreGuide } from "./stats/live-score-guide";
 import { fallbackEligible, primaryNewsDateSupported, type FallbackAnswer } from "./agent/fallback";
@@ -5835,6 +5835,7 @@ export function classifyQuestionCorrectionCandidate(
   // Tier A(표기만 변경)는 #1151 계약 그대로 자동 수용한다 — 문자 구성이 같아 의미 드리프트가
   // 구조적으로 불가능하고, 재라우팅 결과가 residual 이어도 종전 동작과 동일하다.
   if (normalizeKey(candidate) === normalizeKey(question)) return "accepted_surface";
+  if (isTemporalOnlyUtterance(question)) return "rejected";
   if (!preservesCorrectionTermIdentity(question, candidate, glossary)) return "rejected";
   // Tier B(문자 구성 변경)는 **답변 가능 폐쇄 allowlist 에 착지했을 때만** 제안한다.
   return CORRECTION_SUGGESTABLE_ROUTES.includes(candidateRoute) ? "suggest" : "rejected";
@@ -6026,7 +6027,8 @@ async function answerQuestionObserved(userId: string, rawQuestion: string, deps:
       // an optional LLM spelling rewrite (키움vs롯데 → 키움 대 롯데) interpose a card.
       // This skips correction only: context/entity/safety guards and durable
       // settlement below still run. Tier B candidate acceptance is unchanged.
-      && !liveScoreGuideForQuestion(question) && !isTermOriginQuestion(question)) {
+      && !liveScoreGuideForQuestion(question) && !isTermOriginQuestion(question)
+      && !isTemporalOnlyUtterance(question)) {
     let norm: { text: string | null; inputTokens: number | null; outputTokens: number | null } | null = null;
     try {
       norm = await deps.normalizeQuestionLlm(question);
