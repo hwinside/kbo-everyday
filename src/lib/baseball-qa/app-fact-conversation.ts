@@ -57,8 +57,17 @@ export function renderAppFacts(value: Record<string, unknown>, input: GameConver
   if (req.period === "unsupported") return hold("현재 이 대화에서 확인할 수 있는 범위는 오늘·내일 경기와 현재 순위입니다. 요청하신 기간을 이 범위로 바꾸어 답하지 않겠습니다.");
   const source = target.source;
   if (!["question", "context_question", "profile", "none"].includes(String(source)) || typeof target.quote !== "string") return null;
+  for (const key of ["teams", "excludedTeams", "backgroundTeams", "excludedStadiums"]) {
+    if (!Array.isArray(target[key]) || !(target[key] as unknown[]).every((x) => typeof x === "string")) return null;
+  }
+  if (typeof target.stadium !== "string") return null;
+  const proposedTeams = target.teams as string[], excluded = target.excludedTeams as string[], background = target.backgroundTeams as string[];
+  // Current resolver evidence keeps precedence independently of mention quality.
+  const bindingSource = input.teamNames.question.length ? "question" : source;
+  const lexicalNames = bindingSource === "none" ? [] : input.teamNames[bindingSource as keyof typeof input.teamNames];
   const bound = bindConversationTeamCandidates(input.teamCandidates ?? [], target.mentions,
-    input.question, input.context?.question, source);
+    input.question, input.context?.question, bindingSource, lexicalNames,
+    { target: proposedTeams, excluded, background });
   if (!bound) return clarify();
   const teamNames = { ...input.teamNames,
     question: [...new Set([...input.teamNames.question, ...bound.question])],
@@ -68,11 +77,6 @@ export function renderAppFacts(value: Record<string, unknown>, input: GameConver
   const hasCurrentTeams = teamNames.question.length > 0;
   const sourceText = hasCurrentTeams || source === "question" ? input.question : source === "context_question" ? input.context?.question : source === "profile" ? input.favoriteTeam : "";
   if (!hasCurrentTeams && !candidateBound && source !== "none" && (!target.quote.trim() || !sourceText?.includes(target.quote))) return null;
-  for (const key of ["teams", "excludedTeams", "backgroundTeams", "excludedStadiums"]) {
-    if (!Array.isArray(target[key]) || !(target[key] as unknown[]).every((x) => typeof x === "string")) return null;
-  }
-  if (typeof target.stadium !== "string") return null;
-  const proposedTeams = target.teams as string[], excluded = target.excludedTeams as string[], background = target.backgroundTeams as string[];
   const names = hasCurrentTeams ? teamNames.question : source === "none" ? [] : teamNames[source as keyof typeof teamNames];
   for (const [role, selected] of [["target", proposedTeams], ["excluded", excluded], ["background", background]] as const) {
     if (bound.roles[role].some((team) => !selected.includes(team))) return clarify();

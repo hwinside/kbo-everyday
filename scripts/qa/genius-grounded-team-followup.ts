@@ -59,6 +59,33 @@ for (const q of ["LG 타자들은?", "LG경기 타자들은?"]) {
   assert.match(render(p, i)!.answer, /LG vs KT/);
   assert.doesNotMatch(render(p, i)!.answer, /한화 vs 삼성/);
 }
+// Missing/invented/irrelevant mention rows never veto resolver or source=none.
+const noisyMentions = [undefined, [], [{ id: "LG", referent: "baseball_team", role: "target" }],
+  [{ id: "invented", referent: "unknown", role: "target" }], [...good.target.mentions, ...good.target.mentions]];
+for (const mentions of noisyMentions) {
+  for (const q of ["LG 타자들은?", "삼성 타자들은?", "오늘 한화 경기 선발 누구야?"]) {
+    const i = inputFor(prior, q);
+    const p = proposal(i, "question", i.teamNames.question);
+    assert.notEqual(render({ ...p, target: { ...p.target, mentions } }, i)?.source, "context_missing");
+    assert.equal(render({ ...p, target: { ...p.target, mentions } }, i)?.source, "history_hold");
+  }
+  for (const company of ["한화생명", "두산에너빌리티", "LG전자", "KT클라우드", "NC소프트", "KTX"]) {
+    const i = inputFor(`${company} 영업시간`, "오늘 경기 선수 누구누구였어?");
+    const p = proposal(i, "none", []);
+    assert.equal(render({ ...p, target: { ...p.target, mentions } }, i)?.source, "history_hold");
+  }
+}
+// Zero candidates do not make invented IDs meaningful.
+const lexical = inputFor("안녕", "오늘 한화 경기 선발 누구야?");
+assert.equal(lexical.teamCandidates!.length, 0);
+const lexicalPlan = proposal(lexical, "question");
+assert.equal(render({ ...lexicalPlan, target: { ...lexicalPlan.target,
+  mentions: [{ id: "한화", referent: "baseball_team", role: "target" }] } }, lexical)?.source, "history_hold");
+// Candidate-dependent teams still require the exact role; unrelated IDs are ignored.
+assert.equal(render({ ...good, target: { ...good.target,
+  mentions: [...good.target.mentions, { id: "invented", referent: "unknown", role: "unused" }] } })?.source, "history_hold");
+assert.equal(render({ ...good, target: { ...good.target,
+  mentions: good.target.mentions.map((m) => ({ ...m, role: "background" })) } })?.source, "context_missing");
 const mixed = inputFor(prior, "LG경기 말고 한화경기 타자들은?");
 const excluded = proposal(mixed, "question");
 excluded.target.excludedTeams = ["LG"];
