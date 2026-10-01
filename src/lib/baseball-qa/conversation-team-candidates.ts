@@ -23,8 +23,16 @@ export function collectConversationTeamCandidates(
   for (const source of ["question", "context_question"] as const) {
     const text = source === "question" ? question : contextQuestion;
     if (!text) continue;
-    for (const { segment: token, index: start, isWordLike } of segmenter.segment(text)) {
-      if (!isWordLike) continue;
+    // ICU splits Latin/Korean script boundaries (LG + 전자) without a space.
+    // Rejoin adjacent word segments so a company can never lose its suffix.
+    const words: { token: string; start: number }[] = [];
+    for (const part of segmenter.segment(text)) {
+      if (!part.isWordLike) continue;
+      const previous = words.at(-1);
+      if (previous && previous.start + previous.token.length === part.index) previous.token += part.segment;
+      else words.push({ token: part.segment, start: part.index });
+    }
+    for (const { token, start } of words) {
       const known = resolve(token);
       const normalized = token.normalize("NFKC").toLowerCase();
       for (const { canonical, shorts, nicks } of aliases) {
