@@ -22,6 +22,23 @@ const aliasPlan = { ...plan, attendanceEvidence: aliasInput.question, action: "m
   target: { ...plan.target, quote: "사직야구장", stadium: "사직야구장" } };
 assert.match(renderGameConversation(JSON.stringify(aliasPlan), aliasInput)!.answer, /키움 vs 롯데.*사직/);
 assert.equal(renderGameConversation(JSON.stringify({ ...aliasPlan, target: { ...aliasPlan.target, stadium: "잠실야구장" } }), aliasInput)?.source, "context_missing", "unquoted venue cannot be authorized by normalization");
+// R3: selector quotes the short venue from context but emits its full alias.
+const contextAliasPlan = { ...aliasPlan, evidenceSource: "context_question", attendanceEvidence: "나 오늘 사직 가",
+  target: { ...aliasPlan.target, source: "context_question", quote: "사직" } };
+assert.match(renderGameConversation(JSON.stringify(contextAliasPlan), aliasInput)!.answer, /키움 vs 롯데/);
+assert.equal(renderGameConversation(JSON.stringify(contextAliasPlan), { ...aliasInput, games: [] })?.source, "kbo_structured");
+assert.equal(renderGameConversation(JSON.stringify(contextAliasPlan), { ...aliasInput, games: null })?.source, "history_hold");
+assert.equal(renderGameConversation(JSON.stringify({ ...contextAliasPlan,
+  target: { ...contextAliasPlan.target, stadium: "잠실야구장" } }), aliasInput)?.source, "context_missing");
+const noVenueInput = { ...input, question: "오늘 보러 가", favoriteTeam: null, teamNames: { question: [], context_question: [], profile: [] } };
+assert.equal(renderGameConversation(JSON.stringify({ ...aliasPlan, attendanceEvidence: noVenueInput.question,
+  target: { ...aliasPlan.target, quote: noVenueInput.question } }), noVenueInput)?.source, "context_missing");
+// Both venue aliases must bind, not just the first match in the SSOT list.
+const multiVenueQuestion = "사직 말고 문학 가";
+assert.match(renderGameConversation(JSON.stringify({ ...aliasPlan, attendanceEvidence: multiVenueQuestion,
+  target: { ...aliasPlan.target, quote: multiVenueQuestion, stadium: "인천SSG랜더스필드", excludedStadiums: ["사직야구장"] } }),
+  { ...input, question: multiVenueQuestion, games: [...input.games!, { ...input.games![0], stadium: "문학" }] })!.answer, /문학/);
+assert.equal(renderGameConversation(JSON.stringify(contextAliasPlan), { ...aliasInput, question: "문학 간다고" })?.source, "context_missing");
 const excludeAlias = { ...aliasPlan, attendanceEvidence: "사직야구장 말고 잠실야구장 가", target: {
   ...aliasPlan.target, quote: "사직야구장 말고 잠실야구장", stadium: "잠실야구장", excludedStadiums: ["사직야구장"],
 } };

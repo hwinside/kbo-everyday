@@ -104,8 +104,8 @@ const mutations = [
   {
     // 복원 후보도 SSOT 착지 재판정을 통과해야 한다 — 빼면 allowlist 밖 후보가 제안된다.
     name: "M24 복원 후보의 SSOT 재판정 제거",
-    find: '      if (repaired !== null\n          && permitsLexicalCorrection(question, norm?.originalSpelling, repaired)\n          && classifyQuestionCorrectionCandidate(question, repaired, glossary, players) === "suggest") {',
-    replace: '      if (repaired !== null && permitsLexicalCorrection(question, norm?.originalSpelling, repaired)) {',
+    find: '      if (repaired !== null\n          && permitsGlossaryRepair(question, norm?.originalSpelling, repaired)\n          && classifyQuestionCorrectionCandidate(question, repaired, glossary, players) === "suggest") {',
+    replace: '      if (repaired !== null && permitsGlossaryRepair(question, norm?.originalSpelling, repaired)) {',
   },
   {
     // 삼순 ③ 취소 종결: 거절을 무시하면 정규화가 다시 돌아 같은 제안이 무한 반복된다.

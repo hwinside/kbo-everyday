@@ -1,4 +1,4 @@
-import { resolveStadiumByName } from "../venue-stories/stadiums";
+import { resolveStadiumByName, resolveStadiumsInText } from "../venue-stories/stadiums";
 import { TEAM_CANDIDATE_PROMPT, TEAM_MENTIONS_SCHEMA, type ConversationTeamCandidate } from "./conversation-team-candidates";
 import { APP_FACT_PROMPT, APP_REQUEST_SCHEMA, renderAppFacts, type AppFactSnapshot } from "./app-fact-conversation";
 import type { ContextTurn } from "./context";
@@ -157,17 +157,23 @@ export function renderGameConversation(text: string, input: GameConversationInpu
     || !input.teamNames.question.every((t) => teams.includes(t) || excluded.includes(t) || background.includes(t)))) return clarify();
   if (teams.some((t) => excluded.includes(t) || background.includes(t))
     || excluded.some((t) => background.includes(t))) return clarify();
-  // Verify the verbatim source first, then resolve both constraints and app
-  // facts through the existing server stadium alias SSOT (not model aliases).
+  // The quote must remain verbatim; a proposed venue may use another SSOT
+  // alias only when that same venue is actually present in the source text.
   const venueKey = (name: string) => resolveStadiumByName(name)?.name ?? name;
-  const stadium = target.stadium && sourceText.includes(target.stadium) ? venueKey(target.stadium) : "";
+  const sourceVenues = new Set(resolveStadiumsInText(sourceText).map((s) => s.name));
+  const isGroundedVenue = (name: string) => Boolean(name.trim())
+    && (sourceText.includes(name) || sourceVenues.has(venueKey(name)));
+  const stadium = isGroundedVenue(target.stadium) ? venueKey(target.stadium) : "";
   const excludedStadiums = (target.excludedStadiums as string[])
-    .filter((s) => s.trim() && sourceText.includes(s)).map(venueKey);
+    .filter(isGroundedVenue).map(venueKey);
   if (stadium && excludedStadiums.includes(stadium)) return clarify();
-  // As with teams, a current venue cannot silently disappear into old context.
-  // Use app venue names, not a new expression-specific language heuristic.
-  const currentVenues = [...new Set((input.games ?? []).map((g) => g.stadium))]
-    .filter((s) => s && input.question.includes(s)).map(venueKey);
+  // Current aliases cannot silently disappear into an old context, even if
+  // today's schedule has no game at that venue. Preserve exact unknown names.
+  const currentVenues = [...new Set([
+    ...resolveStadiumsInText(input.question).map((s) => s.name),
+    ...(input.games ?? []).map((g) => g.stadium)
+      .filter((s) => s && input.question.includes(s)).map(venueKey),
+  ])];
   if (!currentVenues.every((s) => s === stadium || excludedStadiums.includes(s))) return clarify();
   if (!teams.length && !excluded.length && !stadium && !excludedStadiums.length) return clarify();
   // Missing app data is not an empty schedule, irrespective of model action.
