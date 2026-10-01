@@ -38,7 +38,22 @@ const multiVenueQuestion = "사직 말고 문학 가";
 assert.match(renderGameConversation(JSON.stringify({ ...aliasPlan, attendanceEvidence: multiVenueQuestion,
   target: { ...aliasPlan.target, quote: multiVenueQuestion, stadium: "인천SSG랜더스필드", excludedStadiums: ["사직야구장"] } }),
   { ...input, question: multiVenueQuestion, games: [...input.games!, { ...input.games![0], stadium: "문학" }] })!.answer, /문학/);
-assert.equal(renderGameConversation(JSON.stringify(contextAliasPlan), { ...aliasInput, question: "문학 간다고" })?.source, "context_missing");
+assert.equal(renderGameConversation(JSON.stringify(contextAliasPlan), { ...aliasInput, question: "문학 간다고", games: [...input.games!, { ...input.games![0], stadium: "문학" }] })?.source, "context_missing");
+// R4: background city aliases are not additional attendance constraints.
+// Include games at both background venues so this is not an absent-game shortcut.
+for (const question of ["부산 사는데 오늘 잠실 가", "인천 출장 왔는데 오늘 잠실 직관 가"]) {
+  const cityInput = { ...input, question, games: [...input.games!,
+    { ...input.games![0], stadium: "문학" },
+    { ...input.games![0], stadium: "잠실", awayName: "NC", homeName: "두산" }] };
+  const cityPlan = { ...aliasPlan, attendanceEvidence: question,
+    target: { ...aliasPlan.target, quote: "잠실", stadium: "잠실야구장" } };
+  const cityResult = renderGameConversation(JSON.stringify(cityPlan), cityInput)!;
+  assert.equal(cityResult.source, "kbo_structured");
+  assert.match(cityResult.answer, /NC vs 두산.*잠실/);
+  assert.doesNotMatch(cityResult.answer, /사직|문학/);
+  assert.equal(renderGameConversation(JSON.stringify({ ...cityPlan,
+    target: { ...cityPlan.target, stadium: "대구삼성라이온즈파크" } }), cityInput)?.source, "context_missing");
+}
 const excludeAlias = { ...aliasPlan, attendanceEvidence: "사직야구장 말고 잠실야구장 가", target: {
   ...aliasPlan.target, quote: "사직야구장 말고 잠실야구장", stadium: "잠실야구장", excludedStadiums: ["사직야구장"],
 } };

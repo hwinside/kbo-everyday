@@ -167,13 +167,11 @@ export function renderGameConversation(text: string, input: GameConversationInpu
   const excludedStadiums = (target.excludedStadiums as string[])
     .filter(isGroundedVenue).map(venueKey);
   if (stadium && excludedStadiums.includes(stadium)) return clarify();
-  // Current aliases cannot silently disappear into an old context, even if
-  // today's schedule has no game at that venue. Preserve exact unknown names.
-  const currentVenues = [...new Set([
-    ...resolveStadiumsInText(input.question).map((s) => s.name),
-    ...(input.games ?? []).map((g) => g.stadium)
-      .filter((s) => s && input.question.includes(s)).map(venueKey),
-  ])];
+  // Preserve the existing current app-venue guard. SSOT aliases ground a
+  // proposed target above; enumerating all aliases here would incorrectly
+  // force background cities (e.g. residence/business travel) into that target.
+  const currentVenues = [...new Set((input.games ?? []).map((g) => g.stadium))]
+    .filter((s) => s && input.question.includes(s)).map(venueKey);
   if (!currentVenues.every((s) => s === stadium || excludedStadiums.includes(s))) return clarify();
   if (!teams.length && !excluded.length && !stadium && !excludedStadiums.length) return clarify();
   // Missing app data is not an empty schedule, irrespective of model action.
