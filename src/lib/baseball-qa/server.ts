@@ -286,8 +286,8 @@ async function assessOriginalSpelling(question: string): Promise<{
       body: JSON.stringify({
         systemInstruction: { parts: [{ text: [
           "사용자 원문 자체의 표기 유효성만 판정한다. 교정 후보를 생성하거나 추측하지 않는다.",
-          "원문의 단어 전체가 실제 일반어·야구 용어·고유명·관용적 구어 표기로 독립된 뜻이 있으면 valid다. 사전의 표제어가 아니어도 현장에서 쓰이는 말과 구어 표기는 유효하다.",
-          "전체 단어에 독립된 해석이 없고 명백한 철자 오류일 때만 typo다. 일부 음절이 일반어인 것은 전체 단어가 유효하다는 근거가 아니다. 뜻을 짐작할 수 있다는 이유만으로 잘못된 표기를 valid로 보지 않는다.",
+          "원문의 단어 전체가 실제 일반어·야구 용어·고유명으로 독립된 뜻을 가지면 valid다. 다른 용어를 뜻하도록 고치는 것과, 같은 용어의 잘못된 표기를 바로잡는 것을 구분한다.",
+          "같은 전문 용어를 가리키더라도 외래어 음역·된소리·모음·자음의 오기나 음절 누락으로 표준 표기와 다른 경우 typo다. 흔히 보이는 표기이거나 뜻을 알아볼 수 있다는 이유만으로 valid로 보지 않는다. 다만 독립된 개념의 명칭·약칭·관용 표현을 다른 전문 용어로 대체해서는 안 된다. 일부 음절이 일반어인 것은 전체 단어가 유효하다는 근거가 아니다.",
           "정의 질문인지, 답할 수 있는지는 판정 대상이 아니다. 정상 서술어·반응·생략 후속은 valid다. 실제 쓰이는 말인지 확신이 없으면 unknown이다.",
           'JSON 하나만 출력: {"status":"valid|typo|unknown"}',
         ].join("\n") }] },
@@ -350,7 +350,8 @@ export async function normalizeQuestionLlm(
     "교정 후에도 원문의 질문 기능과 서술어를 보존한다. 일반어의 구어체·축약된 서술어를 비슷한 야구 명사로 바꾸지 않는다. 평가·감상 질문을 용어 정의 질문으로 바꾸거나 서술어를 명사+조사로 바꾸는 후보는 거절한다. 명사 오타에 붙은 잘못된 조사도 고쳐 정의 질문이 성립하게 할 수 있다. 이때 quote는 조사까지 포함해 실제 변경 부분 전체를 인용한다. 후보 문장이 문법적으로 성립하지 않으면 제안하지 않는다.",
     '반드시 JSON 하나만 출력한다: {"originalSpelling":{"status":"valid|typo|unknown","quote":"원문 오류 부분 또는 빈 문자열"},"normalized":"교정한 질문 또는 null"}',
   ].join("\n");
-  const res = await fetch(GEMINI_URL, {
+  // Start both independent reads together: no second model round-trip on the critical path.
+  const [res, independent] = await Promise.all([fetch(GEMINI_URL, {
     method: "POST",
     headers: { "Content-Type": "application/json" },
     body: JSON.stringify({
@@ -363,11 +364,11 @@ export async function normalizeQuestionLlm(
       },
     }),
     signal: AbortSignal.timeout(8000),
-  });
+  }), assessOriginalSpelling(question)]);
   if (!res.ok) throw new Error(`Gemini API failed: ${res.status}`);
   const data = await res.json();
-  let inputTokens: number | null = data.usageMetadata?.promptTokenCount ?? null;
-  let outputTokens: number | null = data.usageMetadata?.candidatesTokenCount ?? null;
+  const inputTokens = (data.usageMetadata?.promptTokenCount ?? 0) + independent.inputTokens;
+  const outputTokens = (data.usageMetadata?.candidatesTokenCount ?? 0) + independent.outputTokens;
   const text: string =
     data.candidates?.[0]?.content?.parts?.find((part: { text?: string }) => part.text)?.text ?? "";
   let parsed: unknown;
@@ -385,9 +386,6 @@ export async function normalizeQuestionLlm(
       quote: assessment.quote,
     } : undefined;
   if (originalSpelling?.status === "typo") {
-    const independent = await assessOriginalSpelling(question);
-    inputTokens = (inputTokens ?? 0) + independent.inputTokens;
-    outputTokens = (outputTokens ?? 0) + independent.outputTokens;
     if (independent.status !== "typo") {
       originalSpelling = { status: independent.status, quote: "" };
       // Do not leave a lexical candidate available to downstream fallback routes.

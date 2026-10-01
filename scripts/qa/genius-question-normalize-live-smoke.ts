@@ -78,6 +78,39 @@ async function main() {
       assert.equal(out.inputTokens, status === "unavailable" ? 10 : 20);
       assert.equal(out.outputTokens, status === "unavailable" ? 2 : 4);
     }
+    // A proposal response is deliberately held until the blind read starts.
+    // Sequential execution must fail instead of silently reintroducing a round-trip.
+    let releaseProposal: () => void = () => {};
+    const blindStarted = new Promise<void>(resolve => { releaseProposal = resolve; });
+    const timer = setTimeout(releaseProposal, 1000);
+    let blindWasStarted = false;
+    let proposalObservedBlind = false;
+    globalThis.fetch = async (_url, init) => {
+      const body = JSON.parse(String(init?.body));
+      const input = JSON.parse(body.contents[0].parts[0].text);
+      const proposal = "spellingCandidates" in input;
+      if (proposal) {
+        await blindStarted;
+        proposalObservedBlind = blindWasStarted;
+      } else {
+        blindWasStarted = true;
+        releaseProposal();
+      }
+      return new Response(JSON.stringify({
+        candidates: [{ content: { parts: [{ text: JSON.stringify(proposal
+          ? { originalSpelling: { status: "valid", quote: "" }, normalized: null }
+          : { status: "valid" }) }] } }],
+        usageMetadata: { promptTokenCount: 10, candidatesTokenCount: 2 },
+      }), { status: 200 });
+    };
+    try {
+      const out = await normalizeQuestionLlm("콜드", glossary);
+      assert.ok(proposalObservedBlind, "blind read must start before proposal completes");
+      assert.equal(out.inputTokens, 20, "count both calls even when no correction is proposed");
+      assert.equal(out.outputTokens, 4);
+    } finally {
+      clearTimeout(timer);
+    }
   } finally {
     globalThis.fetch = realFetch;
   }
@@ -156,6 +189,9 @@ async function main() {
     ["와일드업에 뭐야?", "와인드업이 뭐야?"],
     ["폭추", "폭투"],
     ["싸이클링 히트", "사이클링 히트"],
+    ["싸이클링 히트가 뭐야?", "사이클링 히트가 뭐야?"],
+    ["인플드플라이가 정확히 뭐야?", "인필드플라이가 정확히 뭐야?"],
+    ["퓨쳐스리그", "퓨처스리그"],
     ["스트라이크 조은가?", null],
     ["쿼터가 뭐야?", null], ["워닝", null], ["세잎은?", null],
     ["삼성?", null], ["콜드", null], ["아하", null], ["내일은?", null],
