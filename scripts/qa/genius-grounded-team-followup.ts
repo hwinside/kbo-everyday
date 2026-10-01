@@ -36,7 +36,7 @@ for (const mentions of [undefined, [], [...good.target.mentions, ...good.target.
   [{ ...good.target.mentions[0], referent: "non_team" }]]) {
   assert.equal(render({ ...good, target: { ...good.target, mentions } })?.source, "context_missing");
 }
-assert.equal(render(good, { ...input, context: undefined })?.source, "context_missing");
+assert.equal(render(good, { ...input, context: undefined }), null); // preserve missing-context fallback
 assert.equal(render(good, { ...input, context: { question: "한화생명", answer: "" } })?.source, "context_missing");
 assert.equal(render({ ...good, target: { ...good.target, source: "question" } })?.source, "context_missing");
 assert.equal(render({ ...good, target: { ...good.target, teams: ["LG"] } })?.source, "context_missing");

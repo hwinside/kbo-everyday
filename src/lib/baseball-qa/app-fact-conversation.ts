@@ -64,6 +64,8 @@ export function renderAppFacts(value: Record<string, unknown>, input: GameConver
   const proposedTeams = target.teams as string[], excluded = target.excludedTeams as string[], background = target.backgroundTeams as string[];
   // Current resolver evidence keeps precedence independently of mention quality.
   const bindingSource = input.teamNames.question.length ? "question" : source;
+  // Missing prior context yields to the general path, before candidate binding.
+  if (bindingSource === "context_question" && !input.context?.question) return null;
   const lexicalNames = bindingSource === "none" ? [] : input.teamNames[bindingSource as keyof typeof input.teamNames];
   const bound = bindConversationTeamCandidates(input.teamCandidates ?? [], target.mentions,
     input.question, input.context?.question, bindingSource, lexicalNames,
