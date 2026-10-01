@@ -206,5 +206,21 @@
     "q": "그럼 거기 선발은?",
     "a": "",
     "mp": "ungraded"
+  },
+  {
+    "id": "attendance-alias-1",
+    "kst": "2026-10-01 19:15:10",
+    "user_id": "qa-attendance-alias",
+    "q": "나 오늘 사직 가",
+    "a": "",
+    "mp": "ungraded"
+  },
+  {
+    "id": "attendance-alias-2",
+    "kst": "2026-10-01 19:15:20",
+    "user_id": "qa-attendance-alias",
+    "q": "사직야구장 간다고",
+    "a": "",
+    "mp": "ungraded"
   }
 ]

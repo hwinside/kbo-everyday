@@ -3,7 +3,7 @@ import { renderRagHold } from "./rag/hold-answer";
 import { renderGameConversation, type GameConversationInput, type GameConversationResult } from "./game-conversation";
 import { selectOriginContextTurn } from "./context";
 import { resolveTermOrigin, VERIFIED_TERM_ORIGINS } from "./term-origin";
-import { permitsLexicalCorrection, preservesCorrectionTermIdentity, type OriginalSpellingAssessment } from "./correction-term-identity";
+import { permitsGlossaryRepair, permitsLexicalCorrection, preservesCorrectionTermIdentity, type OriginalSpellingAssessment } from "./correction-term-identity";
 import { leaderboardGuide } from "./stats/leaderboard-guide";
 import { liveScoreGuide } from "./stats/live-score-guide";
 import { fallbackEligible, primaryNewsDateSupported, type FallbackAnswer } from "./agent/fallback";
@@ -6063,12 +6063,12 @@ async function answerQuestionObserved(userId: string, rawQuestion: string, deps:
     const acceptedStillResidual = accepted
       && routeQuestion(candidate, glossary, players, false) === "llm_scope_gate";
     if (!suggested && (!accepted || acceptedStillResidual)
-        && permitsLexicalCorrection(question, norm?.originalSpelling)) {
+        && permitsGlossaryRepair(question, norm?.originalSpelling)) {
       const repairBase = candidate.length > 0 && preservesCorrectionTermIdentity(question, candidate, glossary)
         ? candidate : question;
       const repaired = repairGlossaryTermTypo(repairBase, glossary);
       if (repaired !== null
-          && permitsLexicalCorrection(question, norm?.originalSpelling, repaired)
+          && permitsGlossaryRepair(question, norm?.originalSpelling, repaired)
           && classifyQuestionCorrectionCandidate(question, repaired, glossary, players) === "suggest") {
         suggested = true;
         accepted = false;

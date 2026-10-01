@@ -1,8 +1,14 @@
 /** Reviewer-run deterministic contract; semantic correctness needs live base/head replay. */
 import assert from "node:assert/strict";
 import { answerQuestion, classifyQuestionCorrectionCandidate, conversationTeamCandidates, mentionedTeamCanonicals, isBareTeamName, type QaDeps, type LlmResult } from "../../src/lib/baseball-qa/pipeline";
-import { permitsLexicalCorrection } from "../../src/lib/baseball-qa/correction-term-identity";
+import { permitsGlossaryRepair, permitsLexicalCorrection } from "../../src/lib/baseball-qa/correction-term-identity";
 import { gameConversationRequest, renderGameConversation, type GameConversationInput } from "../../src/lib/baseball-qa/game-conversation";
+
+assert.equal(permitsGlossaryRepair("보끄가 뭐야?"), true, "provider outage/missing assessment preserves closed-glossary repair");
+for (const status of ["valid", "unknown"] as const) {
+  assert.equal(permitsGlossaryRepair("내일은?", { status, quote: "" }, "포일은?"), false);
+}
+assert.equal(permitsGlossaryRepair("보끄와 콜드", { status: "typo", quote: "보끄" }, "보크와 홀드"), false);
 
 const glossary = [{ term: "포일", aliases: [], answer: "포수가 잡을 수 있는 공을 놓치는 것입니다." }];
 for (const q of ["내일은?", "그럼 내일은요?", "위닝", "콜드", "아하", "삼성", "새로운 정상 단어"]) {

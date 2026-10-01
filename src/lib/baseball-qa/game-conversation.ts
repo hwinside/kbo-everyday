@@ -1,3 +1,4 @@
+import { resolveStadiumByName } from "../venue-stories/stadiums";
 import { TEAM_CANDIDATE_PROMPT, TEAM_MENTIONS_SCHEMA, type ConversationTeamCandidate } from "./conversation-team-candidates";
 import { APP_FACT_PROMPT, APP_REQUEST_SCHEMA, renderAppFacts, type AppFactSnapshot } from "./app-fact-conversation";
 import type { ContextTurn } from "./context";
@@ -156,14 +157,17 @@ export function renderGameConversation(text: string, input: GameConversationInpu
     || !input.teamNames.question.every((t) => teams.includes(t) || excluded.includes(t) || background.includes(t)))) return clarify();
   if (teams.some((t) => excluded.includes(t) || background.includes(t))
     || excluded.some((t) => background.includes(t))) return clarify();
-  const stadium = target.stadium && sourceText.includes(target.stadium) ? target.stadium : "";
+  // Verify the verbatim source first, then resolve both constraints and app
+  // facts through the existing server stadium alias SSOT (not model aliases).
+  const venueKey = (name: string) => resolveStadiumByName(name)?.name ?? name;
+  const stadium = target.stadium && sourceText.includes(target.stadium) ? venueKey(target.stadium) : "";
   const excludedStadiums = (target.excludedStadiums as string[])
-    .filter((s) => s.trim() && sourceText.includes(s));
+    .filter((s) => s.trim() && sourceText.includes(s)).map(venueKey);
   if (stadium && excludedStadiums.includes(stadium)) return clarify();
   // As with teams, a current venue cannot silently disappear into old context.
   // Use app venue names, not a new expression-specific language heuristic.
   const currentVenues = [...new Set((input.games ?? []).map((g) => g.stadium))]
-    .filter((s) => s && input.question.includes(s));
+    .filter((s) => s && input.question.includes(s)).map(venueKey);
   if (!currentVenues.every((s) => s === stadium || excludedStadiums.includes(s))) return clarify();
   if (!teams.length && !excluded.length && !stadium && !excludedStadiums.length) return clarify();
   // Missing app data is not an empty schedule, irrespective of model action.
@@ -175,8 +179,8 @@ export function renderGameConversation(text: string, input: GameConversationInpu
   const games = input.games.filter((g) =>
     (!teams.length || teams.some((t) => g.awayName === t || g.homeName === t))
     && !excluded.some((t) => g.awayName === t || g.homeName === t)
-    && (!stadium || g.stadium === stadium)
-    && !excludedStadiums.includes(g.stadium));
+    && (!stadium || venueKey(g.stadium) === stadium)
+    && !excludedStadiums.includes(venueKey(g.stadium)));
   if (!games.length) return {
     answer: input.games.length === 0
       ? `오늘(${input.date}) 등록된 KBO 경기가 없습니다.`
