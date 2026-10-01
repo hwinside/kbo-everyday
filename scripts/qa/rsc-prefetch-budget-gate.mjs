@@ -205,16 +205,26 @@ async function measure(chromium) {
     // to increment refreshNonce and install the browser fixture in either case.
     // Dispatch only the input gesture, never React state or router.prefetch.
     await page.evaluate(() => window.scrollTo(0, 0));
-    await gamesHeading.dispatchEvent("touchstart", { touches: [{ clientY: 100 }] });
-    await gamesHeading.dispatchEvent("touchmove", { touches: [{ clientY: 300 }] });
+    const rscBeforeRefresh = rsc.length;
+    const dispatchPullTouch = (type, clientY) => gamesHeading.evaluate((target, { type, clientY }) => {
+      const touch = new Touch({ identifier: 1, target, clientX: 100, clientY });
+      const touches = type === "touchend" ? [] : [touch];
+      target.dispatchEvent(new TouchEvent(type, {
+        bubbles: true, cancelable: true, touches, targetTouches: touches,
+        changedTouches: [touch],
+      }));
+    }, { type, clientY });
+    await dispatchPullTouch("touchstart", 100);
+    await dispatchPullTouch("touchmove", 300);
     await page.getByText("놓으면 새로고침", { exact: true }).waitFor({ state: "visible", timeout: 5000 });
     const fixtureResponse = page.waitForResponse((response) => {
       const url = new URL(response.url());
       return url.origin === base && url.pathname === "/api/games" && response.ok();
     }, { timeout: 15000 });
-    await gamesHeading.dispatchEvent("touchend", { touches: [] });
+    await dispatchPullTouch("touchend", 300);
     await fixtureResponse;
     await gamesSection.locator(`a[href="/games/${gameIds[0]}"]`).waitFor({ state: "attached", timeout: 15000 });
+    log(`  새로고침 RSC: before=${rscBeforeRefresh}, after=${rsc.length}, delta=${rsc.length - rscBeforeRefresh} (누적 예산에 포함)`);
     log(`  경기 카드 새로고침 후: fixtureRequests=${gameFixtureRequests}, links=${JSON.stringify(await cardSnapshot())}`);
     // Mount is not exposure: a card below the viewport never triggers Next Link's
     // IntersectionObserver. Expose every exact fixture target before counting.
