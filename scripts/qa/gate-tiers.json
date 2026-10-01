@@ -1020,6 +1020,10 @@
       "tier": "deploy"
     },
     {
+      "name": "qa:next-game-scan",
+      "tier": "ci"
+    },
+    {
       "name": "qa:home-next-game-poller",
       "tier": "ci"
     },
