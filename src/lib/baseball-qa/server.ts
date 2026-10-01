@@ -1,3 +1,4 @@
+import { normalizeKey } from "./normalize";
 import type { OriginalSpellingAssessment } from "./correction-term-identity";
 import { renderTeamCorrection } from "./rag/correction";
 import { gameConversationRequest, type GameConversationInput, type GameConversationResult } from "./game-conversation";
@@ -263,11 +264,48 @@ export async function mapGlossaryDefinition(
     return { term: null, inputTokens, outputTokens };
   }
   const term = (parsed as { term?: unknown })?.term;
+  const scope = (parsed as { scope?: unknown })?.scope;
   return {
-    term: typeof term === "string" && term.length > 0 ? term : null,
+    term: scope === "baseball" && typeof term === "string" && term.length > 0 ? term : null,
     inputTokens,
     outputTokens,
   };
+}
+
+/** Candidate-blind veto: repair suggestions must never be evidence that the source is invalid.
+ * A failed veto call abstains locally; it must not throw into dictionary fail-open repair. */
+async function assessOriginalSpelling(question: string): Promise<{
+  status: "valid" | "typo" | "unknown"; inputTokens: number; outputTokens: number;
+}> {
+  let inputTokens = 0;
+  let outputTokens = 0;
+  try {
+    const res = await fetch(GEMINI_URL, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        systemInstruction: { parts: [{ text: [
+          "사용자 원문 자체의 표기 유효성만 판정한다. 교정 후보를 생성하거나 추측하지 않는다.",
+          "원문의 단어 전체가 실제 일반어·야구 용어·고유명·관용적 구어 표기로 독립된 뜻이 있으면 valid다. 사전의 표제어가 아니어도 현장에서 쓰이는 말과 구어 표기는 유효하다.",
+          "전체 단어에 독립된 해석이 없고 명백한 철자 오류일 때만 typo다. 일부 음절이 일반어인 것은 전체 단어가 유효하다는 근거가 아니다. 뜻을 짐작할 수 있다는 이유만으로 잘못된 표기를 valid로 보지 않는다.",
+          "정의 질문인지, 답할 수 있는지는 판정 대상이 아니다. 정상 서술어·반응·생략 후속은 valid다. 실제 쓰이는 말인지 확신이 없으면 unknown이다.",
+          'JSON 하나만 출력: {"status":"valid|typo|unknown"}',
+        ].join("\n") }] },
+        contents: [{ role: "user", parts: [{ text: JSON.stringify({ question }) }] }],
+        generationConfig: { temperature: 0, maxOutputTokens: 64, responseMimeType: "application/json" },
+      }),
+      signal: AbortSignal.timeout(8000),
+    });
+    if (!res.ok) return { status: "unknown", inputTokens, outputTokens };
+    const data = await res.json();
+    inputTokens = data.usageMetadata?.promptTokenCount ?? 0;
+    outputTokens = data.usageMetadata?.candidatesTokenCount ?? 0;
+    const text = data.candidates?.[0]?.content?.parts?.find((part: { text?: string }) => part.text)?.text ?? "";
+    const status = JSON.parse(text)?.status;
+    return { status: ["valid", "typo", "unknown"].includes(status) ? status : "unknown", inputTokens, outputTokens };
+  } catch {
+    return { status: "unknown", inputTokens, outputTokens };
+  }
 }
 
 /**
@@ -328,8 +366,8 @@ export async function normalizeQuestionLlm(
   });
   if (!res.ok) throw new Error(`Gemini API failed: ${res.status}`);
   const data = await res.json();
-  const inputTokens: number | null = data.usageMetadata?.promptTokenCount ?? null;
-  const outputTokens: number | null = data.usageMetadata?.candidatesTokenCount ?? null;
+  let inputTokens: number | null = data.usageMetadata?.promptTokenCount ?? null;
+  let outputTokens: number | null = data.usageMetadata?.candidatesTokenCount ?? null;
   const text: string =
     data.candidates?.[0]?.content?.parts?.find((part: { text?: string }) => part.text)?.text ?? "";
   let parsed: unknown;
@@ -341,11 +379,22 @@ export async function normalizeQuestionLlm(
   }
   const normalized = (parsed as { normalized?: unknown })?.normalized;
   const assessment = (parsed as { originalSpelling?: OriginalSpellingAssessment })?.originalSpelling;
-  const originalSpelling = assessment && ["valid", "typo", "unknown"].includes(assessment.status)
+  let originalSpelling = assessment && ["valid", "typo", "unknown"].includes(assessment.status)
     && typeof assessment.quote === "string" ? {
       status: assessment.status,
       quote: assessment.quote,
     } : undefined;
+  if (originalSpelling?.status === "typo") {
+    const independent = await assessOriginalSpelling(question);
+    inputTokens = (inputTokens ?? 0) + independent.inputTokens;
+    outputTokens = (outputTokens ?? 0) + independent.outputTokens;
+    if (independent.status !== "typo") {
+      originalSpelling = { status: independent.status, quote: "" };
+      // Do not leave a lexical candidate available to downstream fallback routes.
+      const surfaceOnly = typeof normalized === "string" && normalizeKey(normalized) === normalizeKey(question);
+      return { text: surfaceOnly ? normalized.trim() : null, originalSpelling, inputTokens, outputTokens };
+    }
+  }
   return {
     text: typeof normalized === "string" && normalized.trim().length > 0 ? normalized.trim() : null,
     originalSpelling,

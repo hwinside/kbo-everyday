@@ -52,6 +52,36 @@ async function main() {
   assert.ok(glossary.length >= 100, `사전 로드 실패: ${glossary.length}`);
   assert.ok(players.length >= 500, `로스터 로드 실패: ${players.length}`);
 
+  // Production provider boundary: a biased proposal must not contaminate the veto input.
+  // Execute with mocked transport, then restore it before the real-provider matrix.
+  const realFetch = globalThis.fetch;
+  try {
+    for (const status of ["valid", "unknown", "typo", "malformed", "unavailable"] as const) {
+      const requests: Array<Record<string, unknown>> = [];
+      globalThis.fetch = async (_url, init) => {
+        const body = JSON.parse(String(init?.body));
+        requests.push(JSON.parse(body.contents[0].parts[0].text));
+        if (requests.length === 2 && status === "unavailable") throw new Error("fixture unavailable");
+        const reply = requests.length === 1
+          ? { originalSpelling: { status: "typo", quote: "쿼터" }, normalized: "커터가 뭐야?" }
+          : { status };
+        return new Response(JSON.stringify({
+          candidates: [{ content: { parts: [{ text: JSON.stringify(reply) }] } }],
+          usageMetadata: { promptTokenCount: 10, candidatesTokenCount: 2 },
+        }), { status: 200 });
+      };
+      const out = await normalizeQuestionLlm("쿼터가 뭐야?", glossary);
+      assert.equal(requests.length, 2, "lexical assessment requires independent source check");
+      assert.deepEqual(requests[1], { question: "쿼터가 뭐야?" }, "veto must never see candidates/evidence");
+      assert.equal(out.text, status === "typo" ? "커터가 뭐야?" : null);
+      assert.equal(out.originalSpelling?.status, status === "typo" || status === "valid" ? status : "unknown");
+      assert.equal(out.inputTokens, status === "unavailable" ? 10 : 20);
+      assert.equal(out.outputTokens, status === "unavailable" ? 2 : 4);
+    }
+  } finally {
+    globalThis.fetch = realFetch;
+  }
+
   /** 배포 SSOT 판정 그대로 — 재구현 금지(검증기가 대상과 갈라지면 false-green). */
   function verdictOf(question: string, text: string | null) {
     const candidate = typeof text === "string" ? text.trim() : "";
@@ -127,6 +157,7 @@ async function main() {
     ["폭추", "폭투"],
     ["싸이클링 히트", "사이클링 히트"],
     ["스트라이크 조은가?", null],
+    ["쿼터가 뭐야?", null], ["워닝", null], ["세잎은?", null],
     ["삼성?", null], ["콜드", null], ["아하", null], ["내일은?", null],
   ] as const) {
     for (let round = 0; round < 3; round++) {
