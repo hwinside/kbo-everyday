@@ -7,7 +7,7 @@ import type { KboRawGame } from "@/types/api";
 
 const gameId = "20261001LGSK0";
 const now = Date.now();
-let claimed = false;
+const persisted: Record<string, unknown> = {};
 let acknowledged = false;
 let failClaim = false;
 let sends = 0;
@@ -21,8 +21,12 @@ const started = {
 const channel = { game_id: gameId, environment: "production", channel_id: "qa-channel", created_at: started.created_at };
 function query(table: string) {
   let patch: Record<string, unknown> | undefined;
+  const predicates: Array<(row: Record<string, unknown>) => boolean> = [];
   const q = {
-    select: () => q, eq: () => q, in: () => q, is: () => q,
+    select: () => q,
+    eq: (key: string, value: unknown) => { predicates.push(row => row[key] === value); return q; },
+    in: (key: string, values: unknown[]) => { predicates.push(row => values.includes(row[key])); return q; },
+    is: (key: string, value: unknown) => { predicates.push(row => row[key] === value); return q; },
     order: () => q, limit: () => q, gt: () => q,
     update: (v: Record<string, unknown>) => { patch = v; return q; },
     then: (resolve: (v: unknown) => unknown, reject?: (e: unknown) => unknown) => {
@@ -32,7 +36,12 @@ function query(table: string) {
         if (patch.ack_recovery_attempted_at) {
           mutations++;
           if (failClaim) error = { message: "injected claim failure" };
-          else if (!claimed) { claimed = true; data = [{ user_id: started.user_id }]; }
+          else if (predicates.every(predicate => predicate(persisted))) {
+            // Evaluate WHERE against the latest persisted row, then apply UPDATE atomically.
+            // Without the production IS NULL predicate both stale workers succeed.
+            Object.assign(persisted, patch);
+            data = [{ user_id: persisted.user_id }];
+          }
         }
       } else if (table === "live_activity_started_users") {
         // Deliberately stale reads for both concurrent workers. CAS must arbitrate.
@@ -57,14 +66,30 @@ loader._load = function (id, ...args) {
   return original.call(this, id, ...args);
 };
 async function main() {
+  const realNow = Date.now;
+  Date.now = () => now;
   try {
     const { pushLiveActivitySilentWakes } = await import("@/lib/notifications/live-activity");
     const games = [{ G_ID: gameId, GAME_STATE_SC: "1", CANCEL_SC_ID: "0" }] as KboRawGame[];
+    // Literal contract boundaries: do not derive expectations from the production constant.
+    for (const age of [0, 119_999, 120_000, 120_001]) {
+      started.created_at = new Date(now - age).toISOString();
+      Object.assign(persisted, started);
+      sends = 0; mutations = 0;
+      await pushLiveActivitySilentWakes(games);
+      const expected = age >= 120_000 ? 1 : 0;
+      assert.equal(sends, expected, `recovery wake at age ${age}ms`);
+      assert.equal(mutations, expected, `claim at age ${age}ms`);
+    }
+    started.created_at = new Date(now - 180_000).toISOString();
+    Object.assign(persisted, started);
+    sends = 0; mutations = 0;
     await Promise.all([pushLiveActivitySilentWakes(games), pushLiveActivitySilentWakes(games)]);
+    assert.equal(mutations, 2, "both stale readers must attempt the conditional UPDATE");
     assert.equal(sends, 1, "two stale readers must emit only one recovery wake");
     await pushLiveActivitySilentWakes(games);
     assert.equal(sends, 1, "persisted claim caps later ticks");
-    claimed = false; acknowledged = true; mutations = 0;
+    Object.assign(persisted, started); acknowledged = true; mutations = 0;
     await pushLiveActivitySilentWakes(games);
     assert.equal(mutations, 0, "ACK must stop recovery before claim");
     assert.equal(sends, 1);
@@ -72,7 +97,7 @@ async function main() {
     const result = await pushLiveActivitySilentWakes(games);
     assert.ok("error" in result, "claim failure must be observable");
     assert.equal(sends, 1, "claim failure must not send");
-    console.log("PASS: real wake entrypoint concurrent stale reads, cap, ACK stop, claim failure (mock adapters)");
-  } finally { loader._load = original; }
+    console.log("PASS: real wake entrypoint grace boundaries, predicate-aware stale-reader CAS, cap, ACK stop, claim failure (mock adapters)");
+  } finally { loader._load = original; Date.now = realNow; }
 }
 main().catch((error) => { console.error(error); process.exitCode = 1; });
