@@ -5128,6 +5128,7 @@ async function answerOfficialDocumentQuestion(
   context?: ContextTurn | null,
   recordbookRequest = false,
 ): Promise<QaResult | null> {
+  const explicitRecordbookRequest = recordbookRequest;
   let evidence: RagEvidence[];
   const referenceTimeMs = (deps.now ?? Date.now)();
   const requiredRule = !recordbookRequest && !definition ? requiredRuleEvidence(question, (deps.now ?? Date.now)()) : null;
@@ -5291,7 +5292,7 @@ async function answerOfficialDocumentQuestion(
     return { status: 200, answer: validated.answer, source: "llm", remaining };
   }
   if (validated.kind !== "grounded") {
-    if (recordbookRequest) {
+    if (explicitRecordbookRequest) {
       const answer = resolveHoldAnswer(question);
       const observation = ragObservation("official", question, validated, evidence);
       if (deps.storeLlm) await deps.storeLlm(packStoredQaFinal({ answer, source: "history_hold", ...observation }, llm));
