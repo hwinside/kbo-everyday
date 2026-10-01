@@ -7,8 +7,8 @@ export interface AppFactSnapshot {
 }
 
 export const APP_FACT_PROMPT = `관람 외에도 현재 앱 데이터로 답할 요청은 action=app_facts로 판정합니다. 단어 출현이 아니라 현재 질문 전체의 목적과 직전 문맥을 해석합니다.
-판정 순서는 현재 발화의 요청 사실 → action/appRequest → 대상(target)입니다. 현재 발화 자체가 경기 일정·선발·출전 선수 등 앱 데이터 요청이면 직전 대화가 무관하거나 대상을 식별하지 못해도 action=app_facts, intentSource=question으로 현재 요청을 보존합니다. 웃음이 섞여도 실제 요청을 none으로 지우지 않습니다. 대상 미확정이나 라인업 데이터 미연결은 요청 부재가 아니며 other로 바꾸는 이유가 아닙니다. 코드가 대상과 데이터 가용성을 처리합니다.
-appRequest.informationNeed를 kind보다 먼저 판단합니다. 사용자가 원하는 사실은 game_schedule(개별 경기 일정/시간), starting_pitchers(선발투수), team_standing(순위/전적), qualification(구단의 진출 가능성), batting_order(타순), match_prediction(승패 예상), event_date(대회·행사 시작/종료 날짜), none 중 하나입니다. 대회의 시작 시점을 묻는 요청은 event_date이며 팀의 진출 가능성이나 오늘 경기 일정으로 바꾸지 않습니다. event_date는 action=other로 문서 근거 경로에 양보합니다. 짧은 후속도 직전 질문에서 생략된 요청 사실만 보완합니다.
+판정 순서는 현재 발화의 요청 사실 → action/appRequest → 대상(target)입니다. 현재 발화 자체가 아래 지원 사실(game_schedule/starting_pitchers/team_standing/qualification/batting_order/match_prediction)을 요청할 때만 직전 대화가 무관하거나 대상을 식별하지 못해도 action=app_facts, intentSource=question으로 현재 요청을 보존합니다. 웃음이 섞여도 실제 요청을 none으로 지우지 않습니다. 대상 미확정이나 라인업 데이터 미연결은 요청 부재가 아니며 other로 바꾸는 이유가 아닙니다. 코드가 대상과 데이터 가용성을 처리합니다.
+appRequest.informationNeed를 kind보다 먼저 판단합니다. 사용자가 원하는 사실은 game_schedule(개별 경기 일정/시간), starting_pitchers(선발투수), team_standing(순위/전적), qualification(구단의 진출 가능성), batting_order(타순), match_prediction(승패 예상), event_date(대회·행사 시작/종료 날짜), player_availability(선수의 부상·재활·복귀·등록 상태/시점), none 중 하나입니다. 대회의 시작 시점을 묻는 요청은 event_date이며 팀의 진출 가능성이나 오늘 경기 일정으로 바꾸지 않습니다. event_date와 player_availability는 action=other로 문서 근거 경로에 양보합니다. 선수가 언제 복귀하거나 등록되는지는 경기 개최 시점이나 그 경기의 선발 명단과 다른 사실입니다. 경기 일정·선발 데이터로 선수의 복귀를 대신 답하지 않습니다. 지원 사실이 아니면 야구 관련 요청이어도 app_facts로 보존하지 않습니다. 짧은 후속도 직전 질문에서 생략된 요청 사실만 보완합니다.
 appRequest.kind는 schedule(경기 일정), starters(특정 경기 선발투수), standings(현재 순위/전적), postseason(지금의 가을야구 진출 가능성), lineup(현재 경기 타순/타자), prediction(앞으로 경기 승패 예상), none 중 하나입니다.
 appRequest.period는 today/tomorrow/current/unsupported입니다. 명시된 오늘·내일을 보존하고, 시점 없는 일정은 current(오늘과 내일 범위), 순위·진출은 current입니다. 그 밖의 날짜/과거 시즌/주간·월간 일정은 unsupported이며 임의로 오늘로 바꾸지 않습니다. 단어 뜻·규칙·과거 기록·사건·감독·행사·불꽃놀이 정보는 app_facts가 아니라 other입니다. 포스트시즌 시작 날짜는 진출 가능성(postseason)이 아닙니다.
 팀/구장 이름만 있고 현재 또는 직전 질문에 앱 데이터 요청이 없으면 action=other입니다. 프로필·games의 존재는 요청 근거가 아닙니다. 단독 구단 소개·이름 정정은 일정 요청이 아닙니다.
@@ -17,10 +17,10 @@ appRequest.quote는 현재 발화에서 요청 의도를 드러내는 원문 그
 사실 답변·숫자·경기 인덱스는 생성하지 않습니다. target에는 원문에 결속된 대상 조건만 씁니다. 현재 발화에 팀이 있으면 target.source=question이며 모든 현재 팀을 teams/excludedTeams/backgroundTeams 역할 중 하나에 넣습니다. 배경 팬은 조회 조건이 아닙니다. 같은 야구 경기에 관한 후속이고 현재 대상이 생략된 경우에만 context_question으로 직전 질문의 구단을 유지합니다. 직전 대화가 회사 등 무관한 주제면 그 대상은 버리되 현재의 명시적 앱 요청은 유지합니다. 사용 가능한 대상·프로필이 없으면 target.source=none과 빈 대상 조건으로 반환합니다. 요청 사실이 선발투수에서 출전 선수로 바뀌어도 같은 경기의 대상은 유지합니다. 현재 명시한 다른 팀이나 전체 경기 요청이 우선이며 무관한 주제에서는 이전 구단을 가져오지 않습니다. 그 밖의 대상 생략은 profile을 쓸 수 있습니다. 전체 일정/순위 요청이면 target.source=none, teams=[]입니다.
 두 팀의 맞대결 요청이면 teams에 두 팀을 모두 넣습니다. 자료가 없거나 선발 미발표여도 요청 종류를 바꾸지 않습니다. 코드는 미조회·빈 일정·미발표를 구별합니다.
 lineup은 현재 연결된 데이터에 타순이 없으므로 옛 라인업 대신 확인 불가와 실제 경기만 안내합니다. prediction/postseason은 승패/진출을 단정하지 않고 실제 경기/현재 순위만 안내합니다. 조회 결과가 질문을 바꾸지는 않습니다.
-app_facts에서는 attendanceEvidence="", evidenceSource=none입니다. 이 evidenceSource는 관람 근거만 뜻하며 target.source와 무관합니다. 현재 질문의 teamNames.question은 코드가 조회 대상으로 사용합니다. 모델은 제외·배경 역할을 원문에 근거해 구분하며, evidenceSource=none 때문에 target을 비우지 않습니다. 현재 시각·영업시간 등 야구와 무관한 시간 질문은 other이며, 앱 일정이나 프로필을 보고 야구 질문으로 바꾸지 않습니다. 기존 관람 계획은 원래 match/clarify/other 계약을 유지합니다. 행사 정보 요청을 관람 계획으로 간주하지 않습니다. app_facts가 아니면 kind="none", period="unsupported", intentSource="none", intentQuote=""입니다. event_date 요청은 informationNeed="event_date"와 현재 요청 원문 quote를 유지하며, 그 외에는 informationNeed="none", quote=""입니다.`;
+app_facts에서는 attendanceEvidence="", evidenceSource=none입니다. 이 evidenceSource는 관람 근거만 뜻하며 target.source와 무관합니다. 현재 질문의 teamNames.question은 코드가 조회 대상으로 사용합니다. 모델은 제외·배경 역할을 원문에 근거해 구분하며, evidenceSource=none 때문에 target을 비우지 않습니다. 현재 시각·영업시간 등 야구와 무관한 시간 질문은 other이며, 앱 일정이나 프로필을 보고 야구 질문으로 바꾸지 않습니다. 기존 관람 계획은 원래 match/clarify/other 계약을 유지합니다. 행사 정보 요청을 관람 계획으로 간주하지 않습니다. app_facts가 아니면 kind="none", period="unsupported", intentSource="none", intentQuote=""입니다. event_date/player_availability 요청은 각각의 informationNeed와 현재 요청 원문 quote를 유지하며, 그 외에는 informationNeed="none", quote=""입니다.`;
 
 export const APP_REQUEST_SCHEMA = { type: "OBJECT", properties: {
-  informationNeed: { type: "STRING", enum: ["game_schedule", "starting_pitchers", "team_standing", "qualification", "batting_order", "match_prediction", "event_date", "none"] },
+  informationNeed: { type: "STRING", enum: ["game_schedule", "starting_pitchers", "team_standing", "qualification", "batting_order", "match_prediction", "event_date", "player_availability", "none"] },
   kind: { type: "STRING", enum: ["schedule", "starters", "standings", "postseason", "lineup", "prediction", "none"] },
   period: { type: "STRING", enum: ["today", "tomorrow", "current", "unsupported"] },
   quote: { type: "STRING" },
@@ -64,15 +64,7 @@ export function renderAppFacts(value: Record<string, unknown>, input: GameConver
   }
   if (typeof target.stadium !== "string") return null;
   const proposedTeams = target.teams as string[], excluded = target.excludedTeams as string[], background = target.backgroundTeams as string[];
-  let names = hasCurrentTeams ? input.teamNames.question : source === "none" ? [] : input.teamNames[source as keyof typeof input.teamNames];
-  // Accept spacing repair only, never substituted entities or answer-derived
-  // names. Use the existing closed team resolver, not a new keyword list.
-  const compact = (text: string) => Array.from(text).filter((character) => character.trim().length > 0).join("");
-  if (!hasCurrentTeams && !names.length && source === "context_question" && sourceText && entities
-    && typeof target.segmentedSource === "string"
-    && compact(target.segmentedSource) === compact(sourceText)) {
-    names = entities.resolve(target.segmentedSource);
-  }
+  const names = hasCurrentTeams ? input.teamNames.question : source === "none" ? [] : input.teamNames[source as keyof typeof input.teamNames];
   if ([...proposedTeams, ...excluded, ...background].some((t) => !names.includes(t))) return clarify();
   if ((excluded.length || background.length) && (!target.quote.trim() || !sourceText?.includes(target.quote))) return clarify();
   if (proposedTeams.some((t) => excluded.includes(t) || background.includes(t)) || excluded.some((t) => background.includes(t))) return clarify();

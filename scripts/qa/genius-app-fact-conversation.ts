@@ -116,7 +116,7 @@ export async function checkAppFactConversation() {
   assert.deepEqual(mentionedTeamCanonicals("내일 케이티 투수 ㄴㄱ?"), ["KT"]);
 }
 
-// #1505 P1: intent grounding and spacing-only context entity projection.
+// #1505 P1: intent grounding; model-generated spacing is not entity evidence.
 {
   const entities = { resolve: mentionedTeamCanonicals, isBare: isBareTeamName };
   const render = (plan: unknown, input: GameConversationInput) => renderGameConversation(JSON.stringify(plan), input, entities);
@@ -137,14 +137,13 @@ export async function checkAppFactConversation() {
   const followup = { ...plan, target: { ...plan.target, source: "context_question", quote: "한화",
     segmentedSource: "오늘 한화 경기 선발 누구였어)" } };
   const result = render(followup, input)!;
-  assert.equal(result.source, "history_hold");
-  assert.match(result.answer, /한화 vs 롯데/);
-  assert.doesNotMatch(result.answer, /어느 구단|KT vs 삼성|선발:/);
+  assert.equal(result.source, "context_missing", "spacing-only context repair is deferred; do not trust model-added teams");
+  assert.doesNotMatch(result.answer, /한화 vs 롯데|KT vs 삼성|선발:/);
   for (const segmentedSource of ["오늘 삼성 경기 선발 누구였어)", "오늘 한화 경기 선발 누구였어?", "한화"]) {
     assert.equal(render({ ...followup, target: { ...followup.target, segmentedSource } }, input)?.source, "context_missing");
   }
   // The real R0 selector returned only the team. It must remain rejected;
-  // fixing generation must never weaken the full-source provenance gate.
+  // even a full copy must not grant entity authority after removing that path.
   for (const [company, team] of [["한화생명", "한화"], ["기아자동차", "KIA"], ["삼성전자", "삼성"]]) {
     const question = `${company} 영업시간 알려줘`;
     const companyInput = { ...input, context: { question, answer: "회사 안내" },
@@ -167,7 +166,7 @@ export async function checkAppFactConversation() {
     assert.match(explicit.answer, /KT vs 삼성/);
     assert.doesNotMatch(explicit.answer, /이 내용은 지금 정확히|어느 구단/);
   }
-  // Spacing repair is not authorized for the current turn by this contract.
+  // Model spacing repair is not authorized for either turn in this PR.
   const directInput = { ...input, question: prior, context: undefined };
   const directPlan = proposal(prior, "lineup", "today", ["한화"]);
   assert.equal(render({ ...directPlan, target: { ...followup.target, source: "question" } }, directInput)?.source, "context_missing");
@@ -181,4 +180,17 @@ export async function checkAppFactConversation() {
   const schedule = proposal("두산", "schedule", "today", ["두산"]);
   assert.match(render({ ...schedule, appRequest: { ...schedule.appRequest,
     intentSource: "context_question", intentQuote: "경기 일정 알려줘" } }, teamFollowup)!.answer, /두산 vs 삼성/);
+}
+
+// A player status/date is not a game schedule, even if the provider proposes
+// one of the supported app kinds. Player names are fixtures, not production rules.
+{
+  for (const question of ["문동주 언제와", "부상 선수는 언제 돌아올 수 있어?", "김도영 복귀 일정 알려줘"]) {
+    const input = { ...snapshot, question, teamNames: { question: [], context_question: [], profile: [] } };
+    for (const kind of ["schedule", "starters", "lineup"]) {
+      const plan = proposal(question, kind, "today", []);
+      assert.equal(renderGameConversation(JSON.stringify({ ...plan,
+        appRequest: { ...plan.appRequest, informationNeed: "player_availability" } }), input), null);
+    }
+  }
 }

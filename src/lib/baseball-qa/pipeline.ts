@@ -6801,7 +6801,7 @@ async function answerQuestionObserved(userId: string, rawQuestion: string, deps:
               profile: mentionedTeamCanonicals(snapshot.favoriteTeam ?? "") },
           };
           const model = await deps.callGameConversation!(input);
-          return { model, served: renderGameConversation(model.text, input, { resolve: mentionedTeamCanonicals, isBare: isBareTeamName }) };
+          return { model, served: renderGameConversation(model.text, input, { isBare: isBareTeamName }) };
         })(),
         new Promise<null>((resolve) => { timer = setTimeout(() => resolve(null), 4500); }),
       ]);
