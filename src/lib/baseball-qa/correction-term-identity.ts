@@ -83,7 +83,9 @@ export function preservesCorrectionTermIdentity(question: string, candidate: str
   // compound term made by rewriting that word (a predicate may live there).
   // Whitespace alone remains Tier A; this only vetoes lexical identity expansion.
   const sourceWords = question.normalize("NFKC").split(/\s+/u).map(normalizeKey);
-  if (introduced.some(entry => entry.keys.some(key => existing.some(known =>
+  // Only the spelling actually proposed can expand an anchor. Another alias
+  // of the same entry (e.g. 히트포더사이클) is not part of this edit.
+  if (introduced.some(entry => entry.keys.some(key => proposed.includes(key) && existing.some(known =>
     known.keys.some(anchor => sourceWords.includes(anchor) && key !== anchor && key.startsWith(anchor)),
   )))) return false;
   // Check only identities actually introduced by this candidate. Unchanged

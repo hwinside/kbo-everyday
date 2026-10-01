@@ -5967,7 +5967,9 @@ export function resolveQuestionNormalization(
     // 만들면 수용 대신 카드를 낸다. 복원이 실패하면 종전 그대로 수용 진행한다(무회귀).
     const acceptedStillResidual = accepted
       && routeQuestion(candidate, glossary, players, false) === "llm_scope_gate";
-    if (!suggested && (!accepted || acceptedStillResidual)
+    // Compare a model suggestion with the original's unique SSOT repair too.
+    // A shorter valid destination can discard meaning inside the quoted span.
+    if ((!accepted || acceptedStillResidual)
         && permitsGlossaryRepair(question, norm?.originalSpelling)) {
       // A partial spelling fix can restore the question ending (모야 → 뭐야).
       // It must keep term identity and stay inside the attested original span.
@@ -5975,7 +5977,7 @@ export function resolveQuestionNormalization(
         && (normalizeKey(candidate) === normalizeKey(question)
           || permitsLexicalCorrection(question, norm?.originalSpelling, candidate))
         ? candidate : question;
-      const repaired = repairGlossaryTermTypo(repairBase, glossary) ?? repairGlossaryTermTypo(question, glossary);
+      const repaired = repairGlossaryTermTypo(question, glossary) ?? repairGlossaryTermTypo(repairBase, glossary);
       if (repaired !== null
           && permitsGlossaryRepair(question, norm?.originalSpelling, repaired)
           && classifyQuestionCorrectionCandidate(question, repaired, glossary, players) === "suggest") {

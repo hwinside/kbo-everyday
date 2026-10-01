@@ -266,8 +266,11 @@ async function main() {
       ...glossary,
       { term: "와인드업", aliases: [], answer: "투구 동작" },
       { term: "폭투", aliases: [], answer: "투구 기록" },
-      { term: "사이클링히트", aliases: ["사이클링 히트"], answer: "타격 기록" },
+      { term: "사이클링히트", aliases: ["사이클링 히트", "히트포더사이클", "cycle", "사이클히트"], answer: "타격 기록" },
       { term: "히트", aliases: [], answer: "안타" },
+      { term: "아웃", aliases: ["out"], answer: "공격 기회 종료" },
+      { term: "낫아웃", aliases: ["낫 아웃"], answer: "제3스트라이크 미포구" },
+      { term: "포스아웃", aliases: ["포스 아웃", "봉살"], answer: "포스 상태의 주자 아웃" },
       { term: "스트라이크", aliases: [], answer: "투구 판정" },
       { term: "스트라이크존", aliases: [], answer: "판정 구역" },
     ];
@@ -275,6 +278,10 @@ async function main() {
       ["폭추", null, "폭투"],
       ["와일드업에 뭐야?", "와인드업에 뭐야?", "와인드업이 뭐야?"],
       ["싸이클링 히트", null, "사이클링 히트"],
+      ["싸이클링 히트", "사이클링 히트", "사이클링 히트"],
+      ["싸이클링 히트가 뭐야?", "사이클링 히트가 뭐야?", "사이클링 히트가 뭐야?"],
+      ["낙아웃이 뭐야", "아웃이 뭐야", "낫아웃이 뭐야"],
+      ["포즈아웃이 뭐야", "아웃이 뭐야", "포스아웃이 뭐야"],
       ["스트라이크 조은가?", "스트라이크존은가?", null],
       ["오늘 폭추 몇개", null, null],
       ["야구 전광판 보는 법 알려줘", null, null],
@@ -282,6 +289,16 @@ async function main() {
       const decision = resolveQuestionNormalization(q, { text, originalSpelling: { status: "typo", quote: q, intent: "definition" } }, terms, players);
       assert.equal(decision.suggestionText, expected, q);
       assert.equal(decision.accepted, false, "lexical repair is never auto-applied");
+    }
+    for (const [q, text, quote, expected] of [
+      ["낙아웃이 뭐야", "아웃이 뭐야", "낙아웃", "낫아웃이 뭐야"],
+      ["싸이클링 히트", "사이클링 히트", "싸이클링", "사이클링 히트"],
+    ] as const) {
+      const decision = resolveQuestionNormalization(q, {
+        text, originalSpelling: { status: "typo", quote },
+      }, terms, players);
+      assert.equal(decision.suggestionText, expected, `R3 provider replay: ${q}`);
+      assert.equal(decision.accepted, false);
     }
     // R2 corpus regressions: valid ordinary words stay valid even with a
     // definition intent and a tempting unique destination.
