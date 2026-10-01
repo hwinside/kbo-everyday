@@ -217,8 +217,11 @@ async function measure(chromium) {
     const communityIds = await community.locator(HOME_POPULAR_LINKS).evaluateAll(
       (links) => links.map((link) => Number(link.getAttribute("href").split("/").pop())));
     const communityPrefetch = rsc.filter((p) => HOME_POPULAR_IDS.some((id) => p === `/community/teams/lg/posts/${id}`)).length;
+    // 로드/스크롤 중 어느 시점에 발화해도 경기 상세 자동 prefetch는 허용하지 않는다.
+    // 총량 예산 10건만 적용하면 fixture 5경기 prefetch가 예산에 흡수될 수 있다.
+    const gamePrefetch = rsc.filter((p) => FIXTURE_GAMES.some(({ gameId }) => p === `/games/${gameId}`)).length;
     await ctx.close();
-    return { load, scroll, navLinks, gameLinks, communityIds, communityPrefetch,
+    return { load, scroll, navLinks, gameLinks, gamePrefetch, communityIds, communityPrefetch,
       communityRequests: popularFixture.requests.length, paths: rsc };
   } finally {
     await browser.close();
@@ -235,6 +238,8 @@ function judge(m) {
     fails.push(`스크롤 3왕복 후 _rsc ${m.scroll}건 > 예산 ${RSC_BUDGET_SCROLL}`);
   if (m.communityPrefetch > 0)
     fails.push(`홈 글 상세 자동 prefetch ${m.communityPrefetch}건 > 예산 0`);
+  if (m.gamePrefetch > 0)
+    fails.push(`홈 경기 상세 자동 prefetch ${m.gamePrefetch}건 > 예산 0`);
   return fails;
 }
 
@@ -291,6 +296,7 @@ async function runOnce() {
       return EXIT_HARNESS_FAILURE;
     }
     log(`  홈 인기글 ${m.communityIds.length}행 · 상세 prefetch ${m.communityPrefetch}건`);
+    log(`  홈 경기 상세 자동 prefetch ${m.gamePrefetch}건 (예산 0)`);
     log(`  홈 로드 직후 _rsc ${m.load}건 (예산 ${RSC_BUDGET_LOAD})`);
     log(`  스크롤 3왕복 후  _rsc ${m.scroll}건 (예산 ${RSC_BUDGET_SCROLL})`);
     const uniq = new Set(m.paths);
