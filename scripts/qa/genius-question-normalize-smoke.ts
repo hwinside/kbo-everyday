@@ -48,8 +48,11 @@ import {
   }
   assert.equal(preservesCorrectionTermIdentity("콜드 게임", "콜드게임", terms), true);
   assert.equal(preservesCorrectionTermIdentity("홀드", "홀드", terms), true);
-  // External lexical evidence works even when the answer glossary lacks this entry.
-  const innings = [...terms, { term: "이닝", aliases: [], answer: "경기의 단위" }];
+  // The reviewed DB glossary, not a code vocabulary, supplies term identity.
+  const innings = [...terms,
+    { term: "이닝", aliases: [], answer: "경기의 단위" },
+    { term: "워닝 트랙", aliases: ["워닝트랙", "warning track"], answer: "펜스 앞 경고 구역" },
+  ];
   for (const question of ["워닝", "워닝 뭐야?", "워닝 트랙"]) {
     const candidate = question.replace("워닝", "이닝");
     assert.equal(resolveQuestionNormalization(question, {
@@ -57,6 +60,7 @@ import {
     }, innings, []).suggested, false, "model agreement cannot replace an independently attested word");
   }
   assert.equal(preservesCorrectionTermIdentity("워닝 트랙", "워닝트랙", innings), true);
+  assert.equal(preservesCorrectionTermIdentity("워닝", "이닝", terms.concat({ term: "이닝", aliases: [], answer: "경기 단위" })), true, "no hidden vocabulary outside the injected SSOT");
   assert.equal(preservesCorrectionTermIdentity("폭추", "폭투", [{ term: "폭투", aliases: [] }]), true);
 
 }
