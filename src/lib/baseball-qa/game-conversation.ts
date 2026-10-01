@@ -72,7 +72,7 @@ JSON만 출력합니다. action은 match/clarify/unavailable/other/app_facts/ack
           target: { type: "OBJECT", properties: {
             source: { type: "STRING", enum: ["question", "context_question", "profile", "none"] },
             quote: { type: "STRING" },
-            segmentedSource: { type: "STRING", description: "Copy the ENTIRE source field, not target.quote or the team name: question=input.question; context_question=input.context.question; profile=input.favoriteTeam; none=empty string. Only whitespace may change. Preserve every other character including punctuation. Never split a company/person proper name into a team. Example: source text 오늘 한화경기 선발 누구였어) must become 오늘 한화 경기 선발 누구였어), NEVER 한화. 한화생명 영업시간 알려줘 stays unchanged, NEVER 한화 생명 영업시간 알려줘." },
+            segmentedSource: { type: "STRING", description: "Entire text of target.source (question, context.question, or favoriteTeam), NOT target.quote. Change whitespace only; preserve punctuation and proper names. Empty only for source=none." },
             teams: { type: "ARRAY", items: { type: "STRING" } },
             excludedTeams: { type: "ARRAY", items: { type: "STRING" } },
             backgroundTeams: { type: "ARRAY", items: { type: "STRING" } },

@@ -155,6 +155,18 @@ export async function checkAppFactConversation() {
         teams: [team], segmentedSource } }, companyInput)?.source, "context_missing");
     }
   }
+  // An unrelated prior entity must not erase a current, explicit app request.
+  // Empty target is valid: the renderer can show actual games + lineup limits.
+  for (const priorQuestion of ["한화생명 영업시간 알려줘", "롯데마트 영업시간 알려줘", "두산에너빌리티 뭐하는 회사야?", "한화오션 뭐하는 회사야?"]) {
+    const explicitInput = { ...input, context: { question: priorQuestion, answer: "회사 안내" },
+      teamNames: { question: [], context_question: [], profile: [] } };
+    const explicitPlan = proposal(q, "lineup", "today", []);
+    const explicit = render(explicitPlan, explicitInput)!;
+    assert.equal(explicit.source, "history_hold");
+    assert.match(explicit.answer, /라인업|타순/);
+    assert.match(explicit.answer, /KT vs 삼성/);
+    assert.doesNotMatch(explicit.answer, /이 내용은 지금 정확히|어느 구단/);
+  }
   // Spacing repair is not authorized for the current turn by this contract.
   const directInput = { ...input, question: prior, context: undefined };
   const directPlan = proposal(prior, "lineup", "today", ["한화"]);
