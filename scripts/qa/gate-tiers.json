@@ -1024,6 +1024,10 @@
       "tier": "deploy"
     },
     {
+      "name": "qa:next-game-scan",
+      "tier": "ci"
+    },
+    {
       "name": "qa:home-next-game-poller",
       "tier": "ci"
     },
@@ -1073,6 +1077,14 @@
     },
     {
       "name": "qa:og-preview-cache",
+      "tier": "ci"
+    },
+    {
+      "name": "qa:post-impression-batch",
+      "tier": "ci"
+    },
+    {
+      "name": "qa:venue-story-auto-flight",
       "tier": "ci"
     }
   ],

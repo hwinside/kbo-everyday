@@ -1,5 +1,6 @@
 "use client";
 
+import { createImpressionBatch } from "./impression-batch";
 import { getGuestId } from "@/lib/store/onboarding";
 import {
   viewerKeyOf,
@@ -57,9 +58,7 @@ function markImpressionSeen(postId: number, viewerKey: string): void {
 }
 
 /** 조회수 카운터 +1 (best-effort). sendBeacon 우선, 큐잉 실패(false)면 fetch 폴백. */
-function sendView(postId: number, kind: "click" | "impression"): void {
-  const url = `/api/posts/${postId}/view`;
-  const body = JSON.stringify({ kind });
+function sendBody(url: string, body: string): void {
   const beaconAvailable =
     typeof navigator !== "undefined" && typeof navigator.sendBeacon === "function";
   let beaconQueued = false;
@@ -85,10 +84,27 @@ function sendView(postId: number, kind: "click" | "impression"): void {
   }
 }
 
+const impressionBatch = createImpressionBatch((postIds) => {
+  sendBody("/api/posts/views", JSON.stringify({ postIds }));
+});
+let lifecycleBound = false;
+function enqueueImpression(postId: number): void {
+  if (!lifecycleBound && typeof window !== "undefined") {
+    window.addEventListener("pagehide", impressionBatch.flush);
+    document.addEventListener("visibilitychange", () => {
+      if (document.visibilityState === "hidden") impressionBatch.flush();
+    });
+    lifecycleBound = true;
+  }
+  impressionBatch.enqueue(postId);
+  // Background callbacks must not wait on a throttled timer.
+  if (typeof document !== "undefined" && document.visibilityState === "hidden") impressionBatch.flush();
+}
+
 /** 클릭 조회수 집계 — 상세 진입마다 +1 (dedup 없음, 하린아빠 스펙). */
 export function trackPostClick(postId: number): void {
   if (!Number.isInteger(postId) || postId <= 0) return;
-  sendView(postId, "click");
+  sendBody(`/api/posts/${postId}/view`, JSON.stringify({ kind: "click" }));
 }
 
 /**
@@ -100,5 +116,5 @@ export function trackPostImpressionOncePerSession(postId: number, userId?: strin
   const viewerKey = currentViewerKey(userId);
   if (!canCountImpression(postId, viewerKey)) return;
   markImpressionSeen(postId, viewerKey);
-  sendView(postId, "impression");
+  enqueueImpression(postId);
 }
