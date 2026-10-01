@@ -1,3 +1,4 @@
+import type { OriginalSpellingAssessment } from "./correction-term-identity";
 import { renderTeamCorrection } from "./rag/correction";
 import { gameConversationRequest, type GameConversationInput, type GameConversationResult } from "./game-conversation";
 import { getTeamById } from "@/lib/constants/teams";
@@ -272,7 +273,7 @@ export async function mapGlossaryDefinition(
  */
 export async function normalizeQuestionLlm(
   question: string,
-): Promise<{ text: string | null; inputTokens: number | null; outputTokens: number | null }> {
+): Promise<{ text: string | null; originalSpelling?: OriginalSpellingAssessment; inputTokens: number | null; outputTokens: number | null }> {
   if (!GEMINI_API_KEY) throw new Error("GEMINI_API_KEY missing");
   const systemPrompt = [
     "너는 KBO 야구 서비스에 들어온 사용자 질문의 표기 교정기다.",
@@ -283,7 +284,9 @@ export async function normalizeQuestionLlm(
     "· 질문을 답변이나 설명으로 바꾸는 것",
     "· 확신 없는 사람 이름 교정 — 이름은 명백한 오타일 때만 고친다",
     "교정할 것이 없거나 확신이 없으면 null 을 준다 — 잘못 고치는 쪽이 안 고치는 쪽보다 나쁘다.",
-    '반드시 JSON 하나만 출력한다: {"normalized":"교정한 질문"} 또는 {"normalized":null}',
+    "후보를 만들기 전에 원문 자체의 표기가 유효한지 판정한다. 정상 단어·엔티티·반응·생략된 후속 질문은 valid이다. 문맥이 없어 답할 수 없다는 것은 오타가 아니다. 낯선 단어를 야구 용어와 비슷하다는 이유로 typo로 판단하지 않는다. 확실하지 않으면 unknown이다.",
+    "originalSpelling.status=typo는 원문에 명백한 철자 오류가 있을 때만 가능하며 quote에는 그 원문 오류 부분을 정확히 복사한다. valid/unknown이면 quote는 빈 문자열이다. 후보가 유효한 야구 용어라는 사실은 원문이 오타라는 근거가 아니다.",
+    '반드시 JSON 하나만 출력한다: {"originalSpelling":{"status":"valid|typo|unknown","quote":"원문 오류 부분 또는 빈 문자열"},"normalized":"교정한 질문 또는 null"}',
   ].join("\n");
   const res = await fetch(GEMINI_URL, {
     method: "POST",
@@ -293,7 +296,7 @@ export async function normalizeQuestionLlm(
       contents: [{ role: "user", parts: [{ text: `질문: ${question}` }] }],
       generationConfig: {
         temperature: 0,
-        maxOutputTokens: 128,
+        maxOutputTokens: 256,
         responseMimeType: "application/json",
       },
     }),
@@ -313,8 +316,12 @@ export async function normalizeQuestionLlm(
     return { text: null, inputTokens, outputTokens };
   }
   const normalized = (parsed as { normalized?: unknown })?.normalized;
+  const assessment = (parsed as { originalSpelling?: OriginalSpellingAssessment })?.originalSpelling;
+  const originalSpelling = assessment && ["valid", "typo", "unknown"].includes(assessment.status)
+    && typeof assessment.quote === "string" ? assessment : undefined;
   return {
     text: typeof normalized === "string" && normalized.trim().length > 0 ? normalized.trim() : null,
+    originalSpelling,
     inputTokens,
     outputTokens,
   };

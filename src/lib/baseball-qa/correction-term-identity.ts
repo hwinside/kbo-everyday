@@ -1,10 +1,24 @@
 import { normalizeKey } from "./normalize";
 
-/** Complete, correctly spelled period-only utterances are not glossary typos.
- * This suppresses spelling correction only; it supplies neither intent, team,
- * context eligibility nor a supported date to the downstream answer path. */
-export function isTemporalOnlyUtterance(question: string): boolean {
-  return /^(?:(?:그럼|그러면|아니)\s*)?(?:오늘|내일|모레|어제|그제|올해|내년|작년|(?:이번|다음|지난)\s*(?:주|달|시즌))(?:은|는|도)?(?:요)?[\s?!,.…~]*$/u.test(question.normalize("NFKC").trim());
+/** Evidence from the spelling provider, independent of a proposed destination.
+ * Missing/unknown evidence cannot authorize a lexical correction or fallback.
+ * This is a semantic model decision, not proof: live precision replay is required. */
+export interface OriginalSpellingAssessment {
+  status: "valid" | "typo" | "unknown";
+  quote: string;
+}
+
+export function permitsLexicalCorrection(question: string, assessment?: OriginalSpellingAssessment, candidate?: string): boolean {
+  if (assessment?.status !== "typo" || !assessment.quote.trim() || !question.includes(assessment.quote)) return false;
+  if (candidate === undefined) return true;
+  const at = question.indexOf(assessment.quote);
+  // Ambiguous repeated spans are not a license to edit either occurrence.
+  if (question.indexOf(assessment.quote, at + 1) !== -1) return false;
+  const prefix = normalizeKey(question.slice(0, at));
+  const suffix = normalizeKey(question.slice(at + assessment.quote.length));
+  const proposed = normalizeKey(candidate);
+  return proposed.length >= prefix.length + suffix.length
+    && proposed.startsWith(prefix) && proposed.endsWith(suffix);
 }
 
 type TermEntry = { term: string; aliases: string[] };

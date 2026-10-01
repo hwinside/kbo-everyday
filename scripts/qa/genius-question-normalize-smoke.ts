@@ -90,7 +90,7 @@ function makeDeps(state: State, withNormalizer = true, glossaryOverride?: Glossa
     deps.normalizeQuestionLlm = async (question) => {
       state.normCalls.push(question);
       if (state.normThrows) throw new Error("normalizer down");
-      return { text: state.normReply, inputTokens: 23, outputTokens: 7 };
+      return { text: state.normReply, originalSpelling: { status: "typo", quote: question }, inputTokens: 23, outputTokens: 7 };
     };
   }
   return deps;
