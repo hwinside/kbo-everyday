@@ -1248,6 +1248,7 @@ export interface QaDeps {
    */
   normalizeQuestionLlm?: (
     question: string,
+    glossary?: GlossaryEntry[],
   ) => Promise<{ text: string | null; originalSpelling?: OriginalSpellingAssessment; inputTokens: number | null; outputTokens: number | null }>;
   /** 유저가 교정 카드에서 선택하고 서버 후보 membership 검증까지 끝낸 exact 후보. */
   pickedNormalizedQuestion?: string | null;
@@ -4691,7 +4692,7 @@ export function teamRosterBlock(candidate: RagTeamCandidate, players: PlayerRef[
  * 멤버십 검사는 룰 핑퐁이 아니다. "그 용어의 뜻을 묻는 질문인가"는 열린 언어 판정이므로
  * 여기서 하지 않고 LLM(mapGlossaryDefinition)에 넘긴다.
  *
- * 한 글자 alias(예: `r`)는 우연 포함이 너무 쉬워 제외한다(길이 ≥ 2). 긴 용어부터 반환해
+ * 한 글자 영문 alias는 독립 영문 토큰일 때만 후보로 허용한다. 의미는 매퍼가 판정한다. 긴 용어부터 반환해
  * `40-40 클럽` 질문에서 `40-40`보다 정본 term 이 앞에 오게 한다.
  *
  * 후보가 5개를 **초과하면 빈 배열** — 그 질문은 단일 정의 질문이 아니므로 매퍼를
@@ -4706,8 +4707,13 @@ export function glossaryCandidatesIn(entries: GlossaryEntry[], question: string)
   for (const entry of entries) {
     for (const name of [entry.term, ...entry.aliases]) {
       const nameKey = normalizeKey(name);
-      if (nameKey.length < 2) continue;
-      if (!key.includes(nameKey)) continue;
+      if (nameKey.length < 2) {
+        // Closed glossary symbols only, never a substring of an English word,
+        // acronym or number. Keep Korean particles for the semantic mapper.
+        if (!/^[a-z]$/u.test(nameKey)) continue;
+        const tokens: string[] = question.normalize("NFKC").toLowerCase().match(/[a-z0-9]+/gu) ?? [];
+        if (!tokens.includes(nameKey)) continue;
+      } else if (!key.includes(nameKey)) continue;
       if (seen.has(entry.term)) break;
       seen.add(entry.term);
       found.push({ entry, len: nameKey.length });
@@ -6029,7 +6035,7 @@ async function answerQuestionObserved(userId: string, rawQuestion: string, deps:
       && !liveScoreGuideForQuestion(question) && !isTermOriginQuestion(question)) {
     let norm: { text: string | null; originalSpelling?: OriginalSpellingAssessment; inputTokens: number | null; outputTokens: number | null } | null = null;
     try {
-      norm = await deps.normalizeQuestionLlm(question);
+      norm = await deps.normalizeQuestionLlm(question, glossary);
     } catch {
       norm = null; // 정규화 장애는 원문 진행 — 새 경로가 기존 답변을 죽이면 안 된다.
     }

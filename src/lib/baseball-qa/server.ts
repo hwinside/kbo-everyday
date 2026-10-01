@@ -17,6 +17,9 @@ import { planQuestionJobReady } from "@/lib/baseball-qa/job-ready-plan";
 import { sendOpsMessageToUser } from "@/lib/cs/send-ops-message";
 import {
   answerQuestion,
+  glossaryCandidatesIn,
+  repairGlossaryTermTypo,
+  matchGlossary,
   BLOCKED_ANSWER,
   answerTeamIdForResult,
   answerPlayerRoleForTarget,
@@ -273,8 +276,17 @@ export async function mapGlossaryDefinition(
  */
 export async function normalizeQuestionLlm(
   question: string,
+  glossary?: GlossaryEntry[],
 ): Promise<{ text: string | null; originalSpelling?: OriginalSpellingAssessment; inputTokens: number | null; outputTokens: number | null }> {
   if (!GEMINI_API_KEY) throw new Error("GEMINI_API_KEY missing");
+  // Reuse the pipeline's loaded SSOT. Standalone probes use the same loader;
+  // unavailable evidence must not turn optional normalization into a hard error.
+  const entries = glossary ?? await loadGlossary().catch(() => []);
+  const repaired = repairGlossaryTermTypo(question, entries);
+  const repairEntry = repaired ? matchGlossary(entries, repaired) : null;
+  const evidence = [...new Map([
+    ...glossaryCandidatesIn(entries, question), ...(repairEntry ? [repairEntry] : []),
+  ].map(entry => [entry.term, { term: entry.term, aliases: entry.aliases }])).values()];
   const systemPrompt = [
     "너는 KBO 야구 서비스에 들어온 사용자 질문의 표기 교정기다.",
     "질문의 의미는 절대 바꾸지 말고 **표기만** 교정한다: 띄어쓰기, 명백한 오탈자, 붙여 쓴 단어 분리.",
@@ -286,6 +298,8 @@ export async function normalizeQuestionLlm(
     "교정할 것이 없거나 확신이 없으면 null 을 준다 — 잘못 고치는 쪽이 안 고치는 쪽보다 나쁘다.",
     "후보를 만들기 전에 원문 자체의 표기가 유효한지 판정한다. 정상 단어·엔티티·반응·생략된 후속 질문은 valid이다. 문맥이 없어 답할 수 없다는 것은 오타가 아니다. 낯선 단어를 야구 용어와 비슷하다는 이유로 typo로 판단하지 않는다. 확실하지 않으면 unknown이다.",
     "originalSpelling.status=typo는 원문에 명백한 철자 오류가 있을 때만 가능하며 quote에는 그 원문 오류 부분을 정확히 복사한다. valid/unknown이면 quote는 빈 문자열이다. 후보가 유효한 야구 용어라는 사실은 원문이 오타라는 근거가 아니다.",
+    "참고 사전은 서버의 검수 용어·별칭이다. 원문에 등장하거나 기존 폐쇄집합 복원기가 찾은 참고 자료일 뿐 정답이나 교정 명령이 아니다. 원문의 정의 요청과 문법이 그 용어를 유일하게 지지하는 경우에만 오타 후보로 쓸 수 있다.",
+    "교정 후에도 원문의 질문 기능과 서술어를 보존한다. 일반어의 구어체·축약된 서술어를 비슷한 야구 명사로 바꾸지 않는다. 일반어 해석과 전문 용어 해석이 모두 가능하면 unknown과 null을 반환한다. 후보 문장이 문법적으로 성립하지 않으면 제안하지 않는다.",
     '반드시 JSON 하나만 출력한다: {"originalSpelling":{"status":"valid|typo|unknown","quote":"원문 오류 부분 또는 빈 문자열"},"normalized":"교정한 질문 또는 null"}',
   ].join("\n");
   const res = await fetch(GEMINI_URL, {
@@ -293,7 +307,7 @@ export async function normalizeQuestionLlm(
     headers: { "Content-Type": "application/json" },
     body: JSON.stringify({
       systemInstruction: { parts: [{ text: systemPrompt }] },
-      contents: [{ role: "user", parts: [{ text: `질문: ${question}` }] }],
+      contents: [{ role: "user", parts: [{ text: JSON.stringify({ question, glossaryEvidence: evidence }) }] }],
       generationConfig: {
         temperature: 0,
         maxOutputTokens: 256,

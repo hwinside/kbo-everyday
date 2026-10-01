@@ -45,7 +45,7 @@ async function main() {
   // env 주입 후에 로드해야 server.ts 모듈 초기화가 산다.
   const { normalizeQuestionLlm, loadGlossary } = await import("../../src/lib/baseball-qa/server");
   const { loadRosterPlayers } = await import("../../src/lib/baseball-qa/roster/load-roster-players");
-  const { digitSequencesMatch, evaluateNormalizedCandidate } = await import("../../src/lib/baseball-qa/pipeline");
+  const { digitSequencesMatch, evaluateNormalizedCandidate, classifyQuestionCorrectionCandidate } = await import("../../src/lib/baseball-qa/pipeline");
 
   // 판정 입력을 파이프라인과 동일하게 — production 사전 + 배포 로스터 로더.
   const [glossary, players] = await Promise.all([loadGlossary(), loadRosterPlayers()]);
@@ -59,6 +59,8 @@ async function main() {
     const v = evaluateNormalizedCandidate(question, candidate, glossary, players);
     return { ...v, candidate };
   }
+
+  const { permitsLexicalCorrection } = await import("../../src/lib/baseball-qa/correction-term-identity");
 
   let pass = 0;
   let fail = 0;
@@ -115,6 +117,23 @@ async function main() {
     } else {
       fail++;
       report.push(`FAIL 숫자 변경: ${q} → ${JSON.stringify(out.text)}`);
+    }
+  }
+
+  // Evidence-assisted spelling must preserve valid/common-word interpretations.
+  for (const [question, expected] of [
+    ["낙아웃이 뭐야", "낫아웃이 뭐야"],
+    ["스트라이크 조은가?", null],
+    ["삼성?", null], ["콜드", null], ["아하", null], ["내일은?", null],
+  ] as const) {
+    for (let round = 0; round < 3; round++) {
+      const out = await normalizeQuestionLlm(question, glossary);
+      const candidate = out.text ?? "";
+      const suggests = classifyQuestionCorrectionCandidate(question, candidate, glossary, players) === "suggest"
+        && permitsLexicalCorrection(question, out.originalSpelling, candidate);
+      const ok = expected === null ? !suggests : suggests && candidate.replace(/\s+/g, "") === expected.replace(/\s+/g, "");
+      if (ok) pass++; else fail++;
+      report.push(`${ok ? "PASS" : "FAIL"} evidence r${round + 1}: ${question} → ${JSON.stringify(out)}`);
     }
   }
 
