@@ -1,3 +1,4 @@
+import { collectConversationTeamCandidates } from "./conversation-team-candidates";
 import { renderRagHold } from "./rag/hold-answer";
 import { renderGameConversation, type GameConversationInput, type GameConversationResult } from "./game-conversation";
 import { selectOriginContextTurn } from "./context";
@@ -1976,6 +1977,11 @@ export function isBareTeamName(text: string): boolean {
   return TEAM_ALIASES.some(({ shorts, nicks }) =>
     [...shorts, ...nicks, ...shorts.flatMap((short) => nicks.map((nick) => short + nick))]
       .some((alias) => normalizeKey(alias) === name));
+}
+
+/** Conversation-only ambiguous lexical candidates; never widen the global resolver. */
+export function conversationTeamCandidates(question: string, contextQuestion?: string) {
+  return collectConversationTeamCandidates(question, contextQuestion, TEAM_ALIASES, mentionedTeamCanonicals);
 }
 
 export function mentionedTeamCanonicals(question: string): string[] {
@@ -6845,6 +6851,7 @@ async function answerQuestionObserved(userId: string, rawQuestion: string, deps:
           const snapshot = await deps.loadGameConversation!(date);
           const input: GameConversationInput = { question, context: context ?? undefined, date, nowMs: deps.now?.() ?? Date.now(),
             games: snapshot.games, favoriteTeam: snapshot.favoriteTeam, appFacts: snapshot.appFacts,
+            teamCandidates: conversationTeamCandidates(question, context?.question),
             teamNames: { question: mentionedTeamCanonicals(question),
               context_question: mentionedTeamCanonicals(context?.question ?? ""),
               profile: mentionedTeamCanonicals(snapshot.favoriteTeam ?? "") },

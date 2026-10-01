@@ -1,0 +1,466 @@
+[
+  {
+    "id": "grounded-1-1",
+    "kst": "2026-10-01 19:01:10",
+    "user_id": "qa-grounded-1",
+    "q": "오늘 한화경기 선발 누구였어)",
+    "a": "",
+    "mp": "ungraded"
+  },
+  {
+    "id": "grounded-1-2",
+    "kst": "2026-10-01 19:01:20",
+    "user_id": "qa-grounded-1",
+    "q": "그럼 타자들은 누구였어?",
+    "a": "",
+    "mp": "ungraded"
+  },
+  {
+    "id": "grounded-2-1",
+    "kst": "2026-10-01 19:02:10",
+    "user_id": "qa-grounded-2",
+    "q": "오늘 엘지경기 몇시에 해?",
+    "a": "",
+    "mp": "ungraded"
+  },
+  {
+    "id": "grounded-2-2",
+    "kst": "2026-10-01 19:02:20",
+    "user_id": "qa-grounded-2",
+    "q": "그럼 선발 누구야?",
+    "a": "",
+    "mp": "ungraded"
+  },
+  {
+    "id": "grounded-3-1",
+    "kst": "2026-10-01 19:03:10",
+    "user_id": "qa-grounded-3",
+    "q": "오늘 한화경기 선발 누구야?",
+    "a": "",
+    "mp": "ungraded"
+  },
+  {
+    "id": "grounded-3-2",
+    "kst": "2026-10-01 19:03:20",
+    "user_id": "qa-grounded-3",
+    "q": "LG경기 타자들은?",
+    "a": "",
+    "mp": "ungraded"
+  },
+  {
+    "id": "grounded-4-1",
+    "kst": "2026-10-01 19:04:10",
+    "user_id": "qa-grounded-4",
+    "q": "오늘 한화경기 선발 누구야?",
+    "a": "",
+    "mp": "ungraded"
+  },
+  {
+    "id": "grounded-4-2",
+    "kst": "2026-10-01 19:04:20",
+    "user_id": "qa-grounded-4",
+    "q": "LG 타자들은?",
+    "a": "",
+    "mp": "ungraded"
+  },
+  {
+    "id": "grounded-5-1",
+    "kst": "2026-10-01 19:05:10",
+    "user_id": "qa-grounded-5",
+    "q": "오늘 한화경기 선발 누구야?",
+    "a": "",
+    "mp": "ungraded"
+  },
+  {
+    "id": "grounded-5-2",
+    "kst": "2026-10-01 19:05:20",
+    "user_id": "qa-grounded-5",
+    "q": "한화경기 말고 LG경기 선발은?",
+    "a": "",
+    "mp": "ungraded"
+  },
+  {
+    "id": "grounded-6-1",
+    "kst": "2026-10-01 19:06:10",
+    "user_id": "qa-grounded-6",
+    "q": "한화생명 영업시간 알려줘",
+    "a": "",
+    "mp": "ungraded"
+  },
+  {
+    "id": "grounded-6-2",
+    "kst": "2026-10-01 19:06:20",
+    "user_id": "qa-grounded-6",
+    "q": "오늘 경기 타자들은 누구야?",
+    "a": "",
+    "mp": "ungraded"
+  },
+  {
+    "id": "grounded-7-1",
+    "kst": "2026-10-01 19:07:10",
+    "user_id": "qa-grounded-7",
+    "q": "삼성전자 영업시간 알려줘",
+    "a": "",
+    "mp": "ungraded"
+  },
+  {
+    "id": "grounded-7-2",
+    "kst": "2026-10-01 19:07:20",
+    "user_id": "qa-grounded-7",
+    "q": "오늘 경기 타자들은 누구야?",
+    "a": "",
+    "mp": "ungraded"
+  },
+  {
+    "id": "grounded-8-1",
+    "kst": "2026-10-01 19:08:10",
+    "user_id": "qa-grounded-8",
+    "q": "기아자동차 영업시간 알려줘",
+    "a": "",
+    "mp": "ungraded"
+  },
+  {
+    "id": "grounded-8-2",
+    "kst": "2026-10-01 19:08:20",
+    "user_id": "qa-grounded-8",
+    "q": "오늘 경기 타자들은 누구야?",
+    "a": "",
+    "mp": "ungraded"
+  },
+  {
+    "id": "grounded-9-1",
+    "kst": "2026-10-01 19:09:10",
+    "user_id": "qa-grounded-9",
+    "q": "롯데마트 영업시간 알려줘",
+    "a": "",
+    "mp": "ungraded"
+  },
+  {
+    "id": "grounded-9-2",
+    "kst": "2026-10-01 19:09:20",
+    "user_id": "qa-grounded-9",
+    "q": "오늘 경기 타자들은 누구야?",
+    "a": "",
+    "mp": "ungraded"
+  },
+  {
+    "id": "grounded-10-1",
+    "kst": "2026-10-01 19:10:10",
+    "user_id": "qa-grounded-10",
+    "q": "두산에너빌리티 영업시간 알려줘",
+    "a": "",
+    "mp": "ungraded"
+  },
+  {
+    "id": "grounded-10-2",
+    "kst": "2026-10-01 19:10:20",
+    "user_id": "qa-grounded-10",
+    "q": "오늘 경기 타자들은 누구야?",
+    "a": "",
+    "mp": "ungraded"
+  },
+  {
+    "id": "grounded-11-1",
+    "kst": "2026-10-01 19:11:10",
+    "user_id": "qa-grounded-11",
+    "q": "LG전자 영업시간 알려줘",
+    "a": "",
+    "mp": "ungraded"
+  },
+  {
+    "id": "grounded-11-2",
+    "kst": "2026-10-01 19:11:20",
+    "user_id": "qa-grounded-11",
+    "q": "오늘 경기 타자들은 누구야?",
+    "a": "",
+    "mp": "ungraded"
+  },
+  {
+    "id": "grounded-12-1",
+    "kst": "2026-10-01 19:12:10",
+    "user_id": "qa-grounded-12",
+    "q": "KT클라우드 영업시간 알려줘",
+    "a": "",
+    "mp": "ungraded"
+  },
+  {
+    "id": "grounded-12-2",
+    "kst": "2026-10-01 19:12:20",
+    "user_id": "qa-grounded-12",
+    "q": "오늘 경기 타자들은 누구야?",
+    "a": "",
+    "mp": "ungraded"
+  },
+  {
+    "id": "grounded-13-1",
+    "kst": "2026-10-01 19:13:10",
+    "user_id": "qa-grounded-13",
+    "q": "NC소프트 영업시간 알려줘",
+    "a": "",
+    "mp": "ungraded"
+  },
+  {
+    "id": "grounded-13-2",
+    "kst": "2026-10-01 19:13:20",
+    "user_id": "qa-grounded-13",
+    "q": "오늘 경기 타자들은 누구야?",
+    "a": "",
+    "mp": "ungraded"
+  },
+  {
+    "id": "grounded-14-1",
+    "kst": "2026-10-01 19:14:10",
+    "user_id": "qa-grounded-14",
+    "q": "오늘 한화경기 선발 누구야?",
+    "a": "",
+    "mp": "ungraded"
+  },
+  {
+    "id": "grounded-14-2",
+    "kst": "2026-10-01 19:14:20",
+    "user_id": "qa-grounded-14",
+    "q": "내일은?",
+    "a": "",
+    "mp": "ungraded"
+  },
+  {
+    "id": "grounded-15-1",
+    "kst": "2026-10-01 19:15:10",
+    "user_id": "qa-grounded-15",
+    "q": "오늘 한화경기 선발 누구야?",
+    "a": "",
+    "mp": "ungraded"
+  },
+  {
+    "id": "grounded-15-2",
+    "kst": "2026-10-01 19:15:20",
+    "user_id": "qa-grounded-15",
+    "q": "고마워",
+    "a": "",
+    "mp": "ungraded"
+  },
+  {
+    "id": "grounded-16-1",
+    "kst": "2026-10-01 19:16:10",
+    "user_id": "qa-grounded-16",
+    "q": "오늘 한화경기 선발 누구야?",
+    "a": "",
+    "mp": "ungraded"
+  },
+  {
+    "id": "grounded-16-2",
+    "kst": "2026-10-01 19:16:20",
+    "user_id": "qa-grounded-16",
+    "q": "한화생명 영업시간은?",
+    "a": "",
+    "mp": "ungraded"
+  },
+  {
+    "id": "r2-regression-1-1",
+    "kst": "2026-10-01 19:21:10",
+    "user_id": "qa-r2-regression-1",
+    "q": "오늘 한화경기 선발 누구야?",
+    "a": "",
+    "mp": "ungraded"
+  },
+  {
+    "id": "r2-regression-1-2",
+    "kst": "2026-10-01 19:21:20",
+    "user_id": "qa-r2-regression-1",
+    "q": "그럼 타자들은?",
+    "a": "",
+    "mp": "ungraded"
+  },
+  {
+    "id": "r2-regression-2-1",
+    "kst": "2026-10-01 19:22:10",
+    "user_id": "qa-r2-regression-2",
+    "q": "한화생명 영업시간",
+    "a": "",
+    "mp": "ungraded"
+  },
+  {
+    "id": "r2-regression-2-2",
+    "kst": "2026-10-01 19:22:20",
+    "user_id": "qa-r2-regression-2",
+    "q": "오늘 경기 선수 누구누구였어?",
+    "a": "",
+    "mp": "ungraded"
+  },
+  {
+    "id": "r2-regression-3-1",
+    "kst": "2026-10-01 19:23:10",
+    "user_id": "qa-r2-regression-3",
+    "q": "두산에너빌리티 영업시간",
+    "a": "",
+    "mp": "ungraded"
+  },
+  {
+    "id": "r2-regression-3-2",
+    "kst": "2026-10-01 19:23:20",
+    "user_id": "qa-r2-regression-3",
+    "q": "오늘 경기 선수 누구누구였어?",
+    "a": "",
+    "mp": "ungraded"
+  },
+  {
+    "id": "r2-regression-4-1",
+    "kst": "2026-10-01 19:24:10",
+    "user_id": "qa-r2-regression-4",
+    "q": "LG전자 영업시간",
+    "a": "",
+    "mp": "ungraded"
+  },
+  {
+    "id": "r2-regression-4-2",
+    "kst": "2026-10-01 19:24:20",
+    "user_id": "qa-r2-regression-4",
+    "q": "오늘 경기 선수 누구누구였어?",
+    "a": "",
+    "mp": "ungraded"
+  },
+  {
+    "id": "r2-regression-5-1",
+    "kst": "2026-10-01 19:25:10",
+    "user_id": "qa-r2-regression-5",
+    "q": "KT클라우드 영업시간",
+    "a": "",
+    "mp": "ungraded"
+  },
+  {
+    "id": "r2-regression-5-2",
+    "kst": "2026-10-01 19:25:20",
+    "user_id": "qa-r2-regression-5",
+    "q": "오늘 경기 선수 누구누구였어?",
+    "a": "",
+    "mp": "ungraded"
+  },
+  {
+    "id": "r2-regression-6-1",
+    "kst": "2026-10-01 19:26:10",
+    "user_id": "qa-r2-regression-6",
+    "q": "NC소프트 영업시간",
+    "a": "",
+    "mp": "ungraded"
+  },
+  {
+    "id": "r2-regression-6-2",
+    "kst": "2026-10-01 19:26:20",
+    "user_id": "qa-r2-regression-6",
+    "q": "오늘 경기 선수 누구누구였어?",
+    "a": "",
+    "mp": "ungraded"
+  },
+  {
+    "id": "r2-regression-7-1",
+    "kst": "2026-10-01 19:27:10",
+    "user_id": "qa-r2-regression-7",
+    "q": "한화생명 영업시간",
+    "a": "",
+    "mp": "ungraded"
+  },
+  {
+    "id": "r2-regression-7-2",
+    "kst": "2026-10-01 19:27:20",
+    "user_id": "qa-r2-regression-7",
+    "q": "오늘 경기 타자들은?",
+    "a": "",
+    "mp": "ungraded"
+  },
+  {
+    "id": "r2-regression-8-1",
+    "kst": "2026-10-01 19:28:10",
+    "user_id": "qa-r2-regression-8",
+    "q": "오늘 한화경기 선발 누구야?",
+    "a": "",
+    "mp": "ungraded"
+  },
+  {
+    "id": "r2-regression-8-2",
+    "kst": "2026-10-01 19:28:20",
+    "user_id": "qa-r2-regression-8",
+    "q": "LG 타자들은?",
+    "a": "",
+    "mp": "ungraded"
+  },
+  {
+    "id": "r2-regression-9-1",
+    "kst": "2026-10-01 19:29:10",
+    "user_id": "qa-r2-regression-9",
+    "q": "오늘 한화경기 선발 누구야?",
+    "a": "",
+    "mp": "ungraded"
+  },
+  {
+    "id": "r2-regression-9-2",
+    "kst": "2026-10-01 19:29:20",
+    "user_id": "qa-r2-regression-9",
+    "q": "그럼 엘지경기는?",
+    "a": "",
+    "mp": "ungraded"
+  },
+  {
+    "id": "r2-regression-10-1",
+    "kst": "2026-10-01 19:30:10",
+    "user_id": "qa-r2-regression-10",
+    "q": "오늘 한화경기 선발 누구야?",
+    "a": "",
+    "mp": "ungraded"
+  },
+  {
+    "id": "r2-regression-10-2",
+    "kst": "2026-10-01 19:30:20",
+    "user_id": "qa-r2-regression-10",
+    "q": "삼성 타자들은?",
+    "a": "",
+    "mp": "ungraded"
+  },
+  {
+    "id": "r2-regression-11-1",
+    "kst": "2026-10-01 19:31:10",
+    "user_id": "qa-r2-regression-11",
+    "q": "kt랑 기아 경기 몇시",
+    "a": "",
+    "mp": "ungraded"
+  },
+  {
+    "id": "r2-regression-11-2",
+    "kst": "2026-10-01 19:31:20",
+    "user_id": "qa-r2-regression-11",
+    "q": "그럼 선발은?",
+    "a": "",
+    "mp": "ungraded"
+  },
+  {
+    "id": "r2-regression-12-1",
+    "kst": "2026-10-01 19:32:10",
+    "user_id": "qa-r2-regression-12",
+    "q": "KTX 시간표",
+    "a": "",
+    "mp": "ungraded"
+  },
+  {
+    "id": "r2-regression-12-2",
+    "kst": "2026-10-01 19:32:20",
+    "user_id": "qa-r2-regression-12",
+    "q": "오늘 경기 몇시야?",
+    "a": "",
+    "mp": "ungraded"
+  },
+  {
+    "id": "r2-regression-13-1",
+    "kst": "2026-10-01 19:33:10",
+    "user_id": "qa-r2-regression-13",
+    "q": "내일 롯데 누구랑해",
+    "a": "",
+    "mp": "ungraded"
+  },
+  {
+    "id": "r2-regression-14-1",
+    "kst": "2026-10-01 19:34:10",
+    "user_id": "qa-r2-regression-14",
+    "q": "롯데가 가을야구 갈 확률은?",
+    "a": "",
+    "mp": "ungraded"
+  }
+]

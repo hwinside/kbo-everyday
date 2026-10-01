@@ -1,3 +1,4 @@
+import { TEAM_CANDIDATE_PROMPT, TEAM_MENTIONS_SCHEMA, type ConversationTeamCandidate } from "./conversation-team-candidates";
 import { APP_FACT_PROMPT, APP_REQUEST_SCHEMA, renderAppFacts, type AppFactSnapshot } from "./app-fact-conversation";
 import type { ContextTurn } from "./context";
 
@@ -20,6 +21,8 @@ export interface GameConversationInput {
   appFacts?: AppFactSnapshot;
   favoriteTeam: string | null;
   games: ConversationGame[] | null;
+  /** Ambiguous whole-word candidates, scoped to app-fact interpretation. */
+  teamCandidates?: ConversationTeamCandidate[];
   /** Canonical entities from the existing team resolver, not model guesses. */
   teamNames: { question: string[]; context_question: string[]; profile: string[] };
 }
@@ -47,14 +50,15 @@ games는 해당 날짜의 앱 일정입니다. 경기 인덱스를 고르지 않
 오늘 관람 의도는 분명하나 대상이 모호하면 clarify입니다. games=null은 조회 실패이며 빈 일정과 다릅니다.
 attendanceEvidence에는 관람 행동·계획을 드러내는 원문 구절을 그대로 복사합니다. 단순 팀명·구장명은 근거가 될 수 없습니다. 현재 발화에 계획이 있으면 evidenceSource=question, 직전 관람 계획의 대상 정정/후속이면 evidenceSource=context_question으로 하고 직전 질문의 관람 구절을 복사합니다. 관람 근거가 없으면 evidenceSource=none, attendanceEvidence=""이며, 별도로 판정한 ack/app_facts가 아닌 경우에만 action=other입니다.
 관람 의도의 근거(attendanceEvidence)와 관람 대상(target)은 별개입니다. 직전 관람 계획을 이어도 현재 발화가 대상을 바꾸면 target.source=question입니다. 이전 구장과 프로필은 현재 대상에 덧붙이지 않습니다.
-target은 {source:question|context_question|profile|none,quote:대상을 명시한 해당 출처의 원문,teams:대상 구단 canonical 배열,excludedTeams:명시적으로 제외한 구단 배열,backgroundTeams:팬이라는 배경 등 관람 대상을 뜻하지 않는 구단 배열,stadium:명시한 관람 구장 또는 빈 문자열,excludedStadiums:명시적으로 제외한 구장 배열}입니다. 구단 이름은 제공된 teamNames의 해당 출처 값만 씁니다. 구장에서 홈팀이나 상대팀을 추론해 teams에 넣지 않습니다. backgroundTeams는 팬 배경이며 일정 조회 조건이 아닙니다. 구장을 바꾸면 이전 구장은 excludedStadiums, 새 관람 구장은 stadium에 넣습니다. 현재 구단 언급은 teams/excludedTeams/backgroundTeams에서 빠뜨리지 않습니다. 부정한 팀을 관람 대상으로 뒤집지 않습니다. 팀과 구장 모두 현재 명시했으면 두 조건을 모두 유지합니다. 구장명은 games의 명칭을 사용하되 원문에 없는 구장을 만들어내지 않습니다.
+target은 {source:question|context_question|profile|none,quote:대상을 명시한 해당 출처의 원문,teams:대상 구단 canonical 배열,excludedTeams:명시적으로 제외한 구단 배열,backgroundTeams:팬이라는 배경 등 관람 대상을 뜻하지 않는 구단 배열,stadium:명시한 관람 구장 또는 빈 문자열,excludedStadiums:명시적으로 제외한 구장 배열}입니다. 모든 action의 구단 이름은 제공된 teamNames의 해당 출처 canonical 값만 그대로 씁니다. 정식 구단명으로 확장하거나 별칭으로 바꾸지 않습니다(예: 롯데 자이언츠가 아니라 롯데). app_facts에 한해 아래 후보 ID 판정 계약으로 결속한 후보의 canonical 값도 추가로 사용할 수 있습니다. 구장에서 홈팀이나 상대팀을 추론해 teams에 넣지 않습니다. backgroundTeams는 팬 배경이며 일정 조회 조건이 아닙니다. 구장을 바꾸면 이전 구장은 excludedStadiums, 새 관람 구장은 stadium에 넣습니다. 현재 구단 언급은 teams/excludedTeams/backgroundTeams에서 빠뜨리지 않습니다. 부정한 팀을 관람 대상으로 뒤집지 않습니다. 팀과 구장 모두 현재 명시했으면 두 조건을 모두 유지합니다. 구장명은 games의 명칭을 사용하되 원문에 없는 구장을 만들어내지 않습니다.
 대상이 생략됐을 때만 직전 질문 또는 프로필로 보완합니다. 프로필 선택 시 quote는 favoriteTeam 원문입니다. 대상 불명확·다른 주제면 source=none, quote/stadium은 빈 문자열, teams/excludedTeams/backgroundTeams/excludedStadiums는 빈 배열입니다.
 ${APP_FACT_PROMPT}
+${TEAM_CANDIDATE_PROMPT}
 JSON만 출력합니다. action은 match/clarify/unavailable/other/app_facts/ack 중 하나입니다. 일정의 존재 여부와 조회 성공 여부는 코드가 판단하므로, 대상 조건을 확인했으면 games가 비어 있거나 null이어도 match로 반환합니다.` }] },
     contents: [{ role: "user", parts: [{ text: JSON.stringify(input) }] }],
     generationConfig: {
       temperature: 0,
-      maxOutputTokens: 768,
+      maxOutputTokens: input.teamCandidates?.length ? 1280 : 768,
       responseMimeType: "application/json",
       responseSchema: {
         type: "OBJECT",
@@ -68,6 +72,7 @@ JSON만 출력합니다. action은 match/clarify/unavailable/other/app_facts/ack
           action: { type: "STRING", enum: ["match", "clarify", "unavailable", "other", "app_facts", "ack"] },
           appRequest: APP_REQUEST_SCHEMA,
           target: { type: "OBJECT", properties: {
+            mentions: TEAM_MENTIONS_SCHEMA,
             source: { type: "STRING", enum: ["question", "context_question", "profile", "none"] },
             quote: { type: "STRING" },
             teams: { type: "ARRAY", items: { type: "STRING" } },
@@ -108,6 +113,7 @@ export function renderGameConversation(text: string, input: GameConversationInpu
       || dialogue.hasCorrection !== false || request?.kind !== "none" || request.informationNeed !== "none"
       || request.quote !== "" || (request.intentSource !== undefined && request.intentSource !== "none")
       || (request.intentQuote !== undefined && request.intentQuote !== "") || value.evidenceSource !== "none" || value.attendanceEvidence !== ""
+      || (target?.mentions !== undefined && (!Array.isArray(target.mentions) || target.mentions.length !== 0))
       || target?.source !== "none" || target.quote !== "" || target.stadium !== ""
       || !["teams", "excludedTeams", "backgroundTeams", "excludedStadiums"].every((key) =>
         Array.isArray(target[key]) && (target[key] as unknown[]).length === 0)) return null;
