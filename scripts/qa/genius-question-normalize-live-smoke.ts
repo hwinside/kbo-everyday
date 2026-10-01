@@ -72,11 +72,27 @@ async function main() {
       };
       const out = await normalizeQuestionLlm("쿼터가 뭐야?", glossary);
       assert.equal(requests.length, 2, "lexical assessment requires independent source check");
-      assert.deepEqual(requests[1], { question: "쿼터가 뭐야?" }, "veto must never see candidates/evidence");
+      assert.deepEqual(requests[1], { quote: "쿼터" }, "veto sees only original subject, never candidates/evidence");
       assert.equal(out.text, status === "typo" ? "커터가 뭐야?" : null);
       assert.equal(out.originalSpelling?.status, status === "typo" || status === "valid" ? status : "unknown");
       assert.equal(out.inputTokens, status === "unavailable" ? 10 : 20);
       assert.equal(out.outputTokens, status === "unavailable" ? 2 : 4);
+    }
+    // Quoted evidence must belong to the scope assessed in parallel.
+    for (const quote of ["싸이클링", "싸이클링 히트", "뭐야", "", "없는말"]) {
+      const requests: Array<Record<string, unknown>> = [];
+      globalThis.fetch = async (_url, init) => {
+        const body = JSON.parse(String(init?.body));
+        const input = JSON.parse(body.contents[0].parts[0].text);
+        requests.push(input);
+        const reply = "spellingCandidates" in input
+          ? { originalSpelling: { status: "typo", quote }, normalized: "사이클링 히트가 뭐야?" }
+          : { status: "typo" };
+        return new Response(JSON.stringify({ candidates: [{ content: { parts: [{ text: JSON.stringify(reply) }] } }] }));
+      };
+      const out = await normalizeQuestionLlm("싸이클링 히트가 뭐야?", glossary);
+      assert.deepEqual(requests[1], { quote: "싸이클링 히트" });
+      assert.equal(out.text, quote.startsWith("싸이클링") ? "사이클링 히트가 뭐야?" : null);
     }
     // A proposal response is deliberately held until the blind read starts.
     // Sequential execution must fail instead of silently reintroducing a round-trip.

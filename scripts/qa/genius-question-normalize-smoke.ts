@@ -16,6 +16,18 @@
  * 실행: npm run qa:genius-question-normalize
  */
 import assert from "node:assert/strict";
+import { originalSpellingScope } from "../../src/lib/baseball-qa/normalize";
+
+for (const [question, scope] of [
+  ["싸이클링 히트가 뭐야?", "싸이클링 히트"],
+  ["싸이클링 히트", "싸이클링 히트"],
+  ["폭추", "폭추"],
+  ["쿼터가 뭐야?", "쿼터"],
+  ["워닝", "워닝"],
+  ["스트라이크 조은가?", "스트라이크 조은가?"],
+  ["내일은?", "내일은?"],
+]) assert.equal(originalSpellingScope(question), scope);
+
 import { preservesCorrectionTermIdentity } from "../../src/lib/baseball-qa/correction-term-identity";
 import { readFileSync } from "node:fs";
 import {

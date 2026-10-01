@@ -16,6 +16,7 @@ const cases = [
   ["폭추", "폭투", "폭투"],
   ["싸이클링 히트", "사이클링 히트", "사이클링 히트"],
   ["싸이클링 히트가 뭐야?", "사이클링 히트가 뭐야?", "사이클링 히트"],
+  ["야구장잔디는천연잔디야인조야", "야구장 잔디는 천연 잔디야 인조야", null],
 ] as const;
 const key = (text: string) => text.replace(/\s+/g, "").toLowerCase();
 async function main() {
@@ -56,16 +57,24 @@ async function main() {
         const v = variants[variant];
         try {
           let providerFailed = false;
+          let surfaceAccepted = false;
           const result = await v.pipeline.answerQuestion("qa-normalize-recall-report", question, {
-            ...v.deps, // already restricted to read ports and local no-op writes
+            ...v.deps,
+            normalizeQuestionLlm: async (...args) => {
+              const assessment = await v.deps.normalizeQuestionLlm!(...args);
+              // Surface-only success is observed at the provider boundary; e2e still runs.
+              surfaceAccepted = term === null && typeof assessment.text === "string"
+                && assessment.text !== question && key(assessment.text) === key(expected);
+              return assessment;
+            }, // already restricted to read ports and local no-op writes
             log: async entry => {
               if ((entry.classifierObservation?.providerFailures ?? 0) > 0) providerFailed = true;
             },
           });
           const options = result.correctionOptions ?? [];
           const correctCard = result.source === "question_correction" && options.length === 1 && key(options[0]) === key(expected);
-          const directDefinition = result.source === "dictionary" && key(result.term ?? "") === key(term);
-          rows.push({ round, question, variant, success: correctCard || directDefinition,
+          const directDefinition = term !== null && result.source === "dictionary" && key(result.term ?? "") === key(term);
+          rows.push({ round, question, variant, success: term === null ? surfaceAccepted : correctCard || directDefinition,
             unsafe: result.source === "question_correction" && !correctCard,
             result, error: providerFailed || result.status >= 500 || result.source === "error" });
         } catch {
@@ -76,17 +85,17 @@ async function main() {
   }
   // Runtime failures are not ordinary misses: an invalid run cannot claim base=0%.
   const valid = rows.every(row => !row.error);
-  const summary = cases.map(([question]) => {
+  const summary = cases.map(([question, , term]) => {
     const counts = [0, 1].map(variant => {
       const subset = rows.filter(row => row.question === question && row.variant === variant);
       return { success: subset.filter(row => row.success).length, total: subset.length,
         unsafe: subset.filter(row => row.unsafe).length, errors: subset.filter(row => row.error).length,
         rate: valid ? subset.filter(row => row.success).length / rounds : null };
     });
-    return { question, base: counts[0], head: counts[1], delta: valid ? (counts[1].success - counts[0].success) / rounds : null };
+    return { question, metric: term === null ? "surface_provider_observation" : "e2e_card_or_dictionary", base: counts[0], head: counts[1], delta: valid ? (counts[1].success - counts[0].success) / rounds : null };
   });
   writeFileSync(output, JSON.stringify({ valid, variants: variants.map(({ root, sha }) => ({ root, sha })), rounds, summary, rows,
-    note: "Fixed-budget full answerQuestion replay; expected card or exact dictionary term counts as success. Other answers require manual grading. Any runtime errors invalidate all rates/deltas. Not proof of equivalence; never retry until green." }, null, 2));
+    note: "Fixed-budget full answerQuestion replay; Lexical cases count expected card or exact dictionary term as success; the surface case separately observes character-preserving spacing at the provider boundary, not answer correctness. Other answers require manual grading. Any runtime errors invalidate all rates/deltas. Not proof of equivalence; never retry until green." }, null, 2));
   console.log(JSON.stringify({ valid, summary }, null, 2));
   if (!valid) process.exitCode = 1;
 }
