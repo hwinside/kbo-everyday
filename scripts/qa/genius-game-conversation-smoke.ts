@@ -1,3 +1,4 @@
+import "./genius-grounded-team-followup";
 import { checkAppFactConversation } from "./genius-app-fact-conversation";
 import assert from "node:assert/strict";
 import { answerQuestion, mentionedTeamCanonicals, GREETING_ANSWER, type QaDeps } from "../../src/lib/baseball-qa/pipeline";
@@ -134,6 +135,33 @@ function deps(calls: string[], reply = match): QaDeps {
   };
 }
 async function main() {
+  // Actual pipeline wiring: only a TTL-qualified previous user turn supplies IDs.
+  for (const expired of [false, true]) {
+    const groundedDeps = deps([]);
+    groundedDeps.loadPreviousTurn = async () => ({ question: "오늘 한화경기 선발 누구였어)", answer: "한화 답변",
+      jobSource: "kbo_structured", answeredAt: expired ? "2026-09-30T08:00:00+09:00" : "2026-09-30T08:18:40+09:00",
+      currentCreatedAt: "2026-09-30T08:19:00+09:00" });
+    groundedDeps.loadGameConversation = async () => ({ games: [{ ...input.games![0], awayName: "한화", homeName: "삼성" }], favoriteTeam: null });
+    let invoked = false;
+    groundedDeps.callGameConversation = async (value) => {
+      invoked = true;
+      const candidates = value.teamCandidates ?? [];
+      assert.equal(candidates.some((c) => c.source === "context_question" && c.token === "한화경기"), !expired);
+      return { text: JSON.stringify({ action: "app_facts", evidenceSource: "none", attendanceEvidence: "",
+        appRequest: { kind: "lineup", informationNeed: "batting_order", period: "today", quote: value.question,
+          intentSource: "question", intentQuote: value.question },
+        target: { source: "context_question", quote: "", teams: ["한화"], excludedTeams: [], backgroundTeams: [], excludedStadiums: [], stadium: "",
+          mentions: candidates.map((c) => ({ id: c.id, referent: "baseball_team", role: "target" })) } }), inputTokens: 7, outputTokens: 3 };
+    };
+    const result = await answerQuestion("qa-grounded-wiring", "그럼 타자들은 누구였어?", groundedDeps);
+    assert.ok(invoked);
+    if (!expired) {
+      assert.equal(result.source, "history_hold");
+      assert.match(result.answer!, /한화 vs 삼성/);
+    } else {
+      assert.doesNotMatch(result.answer ?? "", /한화 vs 삼성/);
+    }
+  }
   const reaction = "음 그렇구나";
   const ackPlan = { action: "ack", evidenceSource: "none", attendanceEvidence: "",
     dialogue: { quote: reaction, speechAct: "understanding", hasRequest: false, hasCorrection: false },
