@@ -226,6 +226,10 @@ export async function mapGlossaryDefinition(
 ): Promise<{ term: string | null; inputTokens: number | null; outputTokens: number | null }> {
   if (!GEMINI_API_KEY) throw new Error("GEMINI_API_KEY missing");
   const systemPrompt = GLOSSARY_MAPPER_SYSTEM_PROMPT;
+  const entries = await loadGlossary().catch(() => []);
+  const candidates = candidateTerms.map(term => ({
+    term, aliases: entries.find(entry => entry.term === term)?.aliases ?? [],
+  }));
   const res = await fetch(GEMINI_URL, {
     method: "POST",
     headers: { "Content-Type": "application/json" },
@@ -233,7 +237,7 @@ export async function mapGlossaryDefinition(
       systemInstruction: { parts: [{ text: systemPrompt }] },
       contents: [{
         role: "user",
-        parts: [{ text: `후보 용어: ${JSON.stringify(candidateTerms)}\n질문: ${question}` }],
+        parts: [{ text: JSON.stringify({ question, candidates }) }],
       }],
       generationConfig: {
         temperature: 0,
@@ -298,8 +302,9 @@ export async function normalizeQuestionLlm(
     "교정할 것이 없거나 확신이 없으면 null 을 준다 — 잘못 고치는 쪽이 안 고치는 쪽보다 나쁘다.",
     "후보를 만들기 전에 원문 자체의 표기가 유효한지 판정한다. 정상 단어·엔티티·반응·생략된 후속 질문은 valid이다. 문맥이 없어 답할 수 없다는 것은 오타가 아니다. 낯선 단어를 야구 용어와 비슷하다는 이유로 typo로 판단하지 않는다. 확실하지 않으면 unknown이다.",
     "originalSpelling.status=typo는 원문에 명백한 철자 오류가 있을 때만 가능하며 quote에는 그 원문 오류 부분을 정확히 복사한다. valid/unknown이면 quote는 빈 문자열이다. 후보가 유효한 야구 용어라는 사실은 원문이 오타라는 근거가 아니다.",
-    "참고 사전은 서버의 검수 용어·별칭이다. 원문에 등장하거나 기존 폐쇄집합 복원기가 찾은 참고 자료일 뿐 정답이나 교정 명령이 아니다. 원문의 정의 요청과 문법이 그 용어를 유일하게 지지하는 경우에만 오타 후보로 쓸 수 있다.",
-    "교정 후에도 원문의 질문 기능과 서술어를 보존한다. 일반어의 구어체·축약된 서술어를 비슷한 야구 명사로 바꾸지 않는다. 일반어 해석과 전문 용어 해석이 모두 가능하면 unknown과 null을 반환한다. 후보 문장이 문법적으로 성립하지 않으면 제안하지 않는다.",
+    "참고 사전은 서버의 검수 용어·별칭이다. 원문에 등장하거나 기존 폐쇄집합 복원기가 찾은 참고 자료일 뿐 정답이나 교정 명령이 아니다. 원문 전체와 문장 내 역할이 그 용어를 유일하게 지지하는 경우에만 오타 후보로 쓸 수 있다.",
+    "오타 여부는 단어 전체와 문장 내 역할로 판정한다. 단어 일부가 일반어와 겹친다는 이유만으로 유효한 표기라고 보지 않는다. 정의 요청의 대상이나 단독 용어가 사전 근거의 한 용어로 유일하게 복원되며 다른 자연스러운 전체 해석이 없다면 typo를 허용한다. 완전한 일반어 해석이 실제로 경쟁하면 unknown이다.",
+    "교정 후에도 원문의 질문 기능과 서술어를 보존한다. 일반어의 구어체·축약된 서술어를 비슷한 야구 명사로 바꾸지 않는다. 평가·감상 질문을 용어 정의 질문으로 바꾸거나 서술어를 명사+조사로 바꾸는 후보는 거절한다. 후보 문장이 문법적으로 성립하지 않으면 제안하지 않는다.",
     '반드시 JSON 하나만 출력한다: {"originalSpelling":{"status":"valid|typo|unknown","quote":"원문 오류 부분 또는 빈 문자열"},"normalized":"교정한 질문 또는 null"}',
   ].join("\n");
   const res = await fetch(GEMINI_URL, {

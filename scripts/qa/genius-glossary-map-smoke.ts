@@ -127,7 +127,7 @@ async function main() {
     const state = freshState({ reply: "유격수" });
     const result = await answerQuestion("u1", "유격수 포지션이 뭐야?", makeDeps(state));
     assert.equal(result.source, "dictionary");
-    assert.equal(result.answer, glossary[0].answer); // 생성문이 아니라 검수 원문
+    assert.equal(result.answer, glossary.find(entry => entry.term === "유격수")!.answer); // 생성문이 아니라 검수 원문
     assert.equal(state.calls.length, 1);
     assert.deepEqual(state.calls[0].candidates, ["유격수"]);
     assert.equal(state.llmCalls, 0); // generic LLM 미경유

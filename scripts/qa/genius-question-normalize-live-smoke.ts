@@ -123,6 +123,9 @@ async function main() {
   // Evidence-assisted spelling must preserve valid/common-word interpretations.
   for (const [question, expected] of [
     ["낙아웃이 뭐야", "낫아웃이 뭐야"],
+    ["와일드업에 뭐야?", "와인드업이 뭐야?"],
+    ["폭추", "폭투"],
+    ["싸이클링 히트", "사이클링 히트"],
     ["스트라이크 조은가?", null],
     ["삼성?", null], ["콜드", null], ["아하", null], ["내일은?", null],
   ] as const) {
