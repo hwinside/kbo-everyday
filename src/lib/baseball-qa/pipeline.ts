@@ -67,6 +67,8 @@ import {
   type ValidatedRagAnswer,
   type RagEntityCandidate,
   type RagEvidence,
+  selectRecordbookEvidence,
+  isRecordbookEvidence,
   type RagNewsCandidate,
   type RagPlayerCandidate,
   type RagTeamCandidate,
@@ -1388,7 +1390,7 @@ export interface QaDeps {
    */
   searchOfficialRag?: (question: string) => Promise<RagEvidence[]>;
   /** 공식 간행물 근거 전용 재서술 호출. tier1이므로 근거에 적힌 숫자를 쓸 수 있다. */
-  callOfficialRagLlm?: (question: string, evidence: RagEvidence[], extras?: { context?: ContextTurn; definition?: StatDefinitionFrame; ruleRequest?: RequiredRuleRequest; referenceTimeMs?: number }) => Promise<LlmResult>;
+  callOfficialRagLlm?: (question: string, evidence: RagEvidence[], extras?: { context?: ContextTurn; definition?: StatDefinitionFrame; ruleRequest?: RequiredRuleRequest; referenceTimeMs?: number; recordbookRequest?: boolean }) => Promise<LlmResult>;
   /** 수요 기반 ingestion 우선순위용 — 질문이 지목한 source를 기록한다. 실패는 무시한다. */
   recordRagDemand?: (sourceKeys: string[]) => Promise<void>;
   /**
@@ -4323,6 +4325,7 @@ export function validateLlmResponse(raw: string, question = "", previous?: Conte
 /** 사전에서 정규화 exact 매칭 (term/alias 각각 key·question 두 정규화 레벨로 인덱싱) */
 /** LLM 재서술 호출에 함께 넘기는 부가 맥락 — 직전 턴 + 현재 로스터 블록 (축 A·D). */
 export interface RagLlmExtras {
+  recordbookRequest?: boolean;
   /** Server-owned official RAG reference clock; injectable for replay. */
   referenceTimeMs?: number;
   ruleRequest?: RequiredRuleRequest;
@@ -5131,10 +5134,12 @@ async function answerOfficialDocumentQuestion(
   deps: QaDeps,
   definition?: StatDefinitionIntent | null,
   context?: ContextTurn | null,
+  recordbookRequest = false,
 ): Promise<QaResult | null> {
+  const explicitRecordbookRequest = recordbookRequest;
   let evidence: RagEvidence[];
   const referenceTimeMs = (deps.now ?? Date.now)();
-  const requiredRule = !definition ? requiredRuleEvidence(question, (deps.now ?? Date.now)()) : null;
+  const requiredRule = !recordbookRequest && !definition ? requiredRuleEvidence(question, (deps.now ?? Date.now)()) : null;
   // A plural demonstrative with no explicit current club needs its two club
   // operands from the qualified exact prior USER question. Do not mine the
   // prior bot answer for facts or add its numbers to the grounding license.
@@ -5145,7 +5150,14 @@ async function answerOfficialDocumentQuestion(
   const searchQuestion = relationContext || originContext ? `${context!.question}\n후속 질문: ${question}` : question;
   try {
     const searched = await deps.searchOfficialRag!(definition?.searchQuestion ?? requiredRule?.query ?? searchQuestion);
-    evidence = selectEvidence(requiredRule ? selectRequiredRuleEvidence(searched, requiredRule) : searched);
+    evidence = recordbookRequest ? selectRecordbookEvidence(searched) : selectEvidence(requiredRule ? selectRequiredRuleEvidence(searched, requiredRule) : searched);
+    // Retrieval provenance, not question keywords, closes the ordinary-official
+    // escape hatch: record tables cannot authorize free-form filler prose.
+    if (!recordbookRequest && !definition && !requiredRule && evidence.length > 0
+      && evidence.every(isRecordbookEvidence)) {
+      recordbookRequest = true;
+      evidence = selectRecordbookEvidence(searched);
+    }
     if (requiredRule?.kind === "fa_general" && !requiredRuleFact(evidence, requiredRule)) {
       // One bounded clause-focused search; no local corpus or general-knowledge
       // fallback. A live serving miss remains a miss, even if the PDF exists.
@@ -5201,7 +5213,7 @@ async function answerOfficialDocumentQuestion(
       if (!won) return { status: 202, answer: "", source: "pending", remaining };
     }
     try {
-      const officialExtras = { context: definition?.context ?? context ?? undefined, definition: definition ?? undefined, referenceTimeMs };
+      const officialExtras = { recordbookRequest, context: definition?.context ?? context ?? undefined, definition: definition ?? undefined, referenceTimeMs };
       llm = await deps.callOfficialRagLlm!(question, evidence, { ...officialExtras,
         ...(requiredRule ? { ruleRequest: { kind: requiredRule.kind, season: requiredRule.season, competition: requiredRule.competition, faFocus: requiredRule.faFocus, postseasonStage: requiredRule.postseasonStage, ...(currentRuleFact ? { fact: currentRuleFact } : {}) } } : {}),
       });
@@ -5213,6 +5225,7 @@ async function answerOfficialDocumentQuestion(
   }
 
   const validateOfficial = (raw: LlmResult) => validateRagResponse(raw.text, {
+    recordbookRequest,
     calendarContract: { referenceTimeMs },
     officialQuestion: question,
     numericEvidence: true, evidence,
@@ -5220,7 +5233,7 @@ async function answerOfficialDocumentQuestion(
     // Only compound definitions may echo user quantities, under the same
     // period boundary as GENERAL. Never license bot prose or record lookups.
     definitionQuestion: definition?.assessment ? definitionNumericSource(question, definition) : undefined,
-    generalFallback: { question: definitionNumericSource(question, definition), previous: context },
+    generalFallback: recordbookRequest ? undefined : { question: definitionNumericSource(question, definition), previous: context },
   });
   let validated = validateOfficial(llm);
   // One repair by this invocation's winner only. A stored raw response or a
@@ -5287,6 +5300,14 @@ async function answerOfficialDocumentQuestion(
     return { status: 200, answer: validated.answer, source: "llm", remaining };
   }
   if (validated.kind !== "grounded") {
+    if (explicitRecordbookRequest) {
+      const answer = resolveHoldAnswer(question);
+      const observation = ragObservation("official", question, validated, evidence);
+      if (deps.storeLlm) await deps.storeLlm(packStoredQaFinal({ answer, source: "history_hold", ...observation }, llm));
+      await deps.log({ userId, question, questionNorm, matchPath: "history_hold", answer,
+        inputTokens: llm.inputTokens, outputTokens: llm.outputTokens, ...observation });
+      return { status: 200, answer, source: "history_hold", remaining };
+    }
     // 공식 근거로도, 일반 지식으로도 답을 못 만들었다. LLM 호출을 이미 써서 일반 경로 재호출은 안 된다.
     // 폐기 관측을 **envelope 에도 보존**한다 (삼순 2026-08-16 ②) — store 성공 후 log 전 crash
     // 하면 재생 경로가 관측을 null 로 다시 써서 계측이 유실된다(toneCompliant 와 같은 축).
@@ -5313,10 +5334,16 @@ async function answerOfficialDocumentQuestion(
       ...ragObservation("official", question, validated, evidence) });
     return { status: 200, answer: final.answer, source: final.source, remaining, sourceUrl: final.sourceUrl };
   }
-  const answer = composeRagAnswer(validated.answer, evidence[0]);
+  // A validated historical answer binds provenance and publication boundary to
+  // its cited passage. Never label the corpus title's year as a fact season.
+  const cited = recordbookRequest ? evidence[JSON.parse(llm.text.trim()).recordEvidence - 1] : evidence[0];
+  const body = recordbookRequest
+    ? `${validated.answer}\n${cited.pageTitle} 발행 시점에 수록된 기록 기준이며, 현재 누계와 다를 수 있습니다.`
+    : validated.answer;
+  const answer = composeRagAnswer(body, cited);
   // 본문에는 표시명만 들어간다. 링크는 payload 로 실어 클라가 그 문구에 앵커를 씌운다.
   // allowlist 밖이면 null — payload 에도 링크를 싣지 않는다.
-  const sourceUrl = displayProvenanceOf(evidence[0])?.url;
+  const sourceUrl = displayProvenanceOf(cited)?.url;
   if (deps.storeLlm) await deps.storeLlm(packStoredQaFinal({
     answer, source: "rag", sourceUrl,
     definitionContext: definitionContextFor(definition),
@@ -6304,7 +6331,8 @@ async function answerQuestionObserved(userId: string, rawQuestion: string, deps:
   //   순위 확정에는 리그 전체 순위표가 필요하고 그 정본이 아직 없다.
   // 이 위치여야 하는 이유: 아래 blocked 분기(untrusted_metric)나 기록 렌더보다 앞이라
   //   `희생플라이 1위` 류도 안내문이 갈리지 않고 **전부 exact history_hold** 로 통일된다.
-  //   그리고 LLM·RAG·cache·기록조회가 **한 번도 호출되지 않는다**(게이트가 호출 0 으로 잠금).
+  //   구조화 미지원 순위는 아래 공식 기록 간행물 fallback만 시도한다.
+  //   역사 범위·단일 근거·숫자 검증을 모두 요구하며 현재 요청은 모델 범위 판정에서 거절한다.
   // 판정 어휘는 새로 만들지 않았다 — main 의 `CAREER_LEADERBOARD_ASK` 를 그대로 쓴다(m9).
   //   값을 묻는 형태(`몇 개`·`얼마`)는 그 어휘에 없으므로 실답이 보존된다.
   // ⚠️ **지원 intent 는 예외다** (삼순 #1164 7차 P0). #1159 가 `통산 안타 1위 누구야?` 를
@@ -6316,6 +6344,12 @@ async function answerQuestionObserved(userId: string, rawQuestion: string, deps:
     && isRankAsk(question)
     && resolveCareerMetricIntent(question) === null
   ) {
+    if (baseRoute === "history_hold" && deps.searchOfficialRag && deps.callOfficialRagLlm) {
+      const historical = await answerOfficialDocumentQuestion(
+        userId, question, questionNorm, remaining, deps, null, context, true,
+      );
+      if (historical) return historical;
+    }
     await deps.log({
       userId, question, questionNorm, matchPath: "history_hold", answer: HISTORY_HOLD_ANSWER,
       inputTokens: null, outputTokens: null,
@@ -6598,6 +6632,18 @@ async function answerQuestionObserved(userId: string, rawQuestion: string, deps:
       );
       return settlePrize(rendered.answer, rendered.grounded ? "kbo_structured" : "history_hold");
     }
+  }
+
+  // Existing router owns this fallback. Supported season/career paths and
+  // safety, ambiguity, quota and correction gates retain their original order.
+  // The same official generation call classifies historical/current scope;
+  // no player-name or career-keyword routing is introduced here.
+  if (route === "history_hold"
+    && deps.searchOfficialRag && deps.callOfficialRagLlm) {
+    const historical = await answerOfficialDocumentQuestion(
+      userId, question, questionNorm, remaining, deps, null, context, true,
+    );
+    if (historical) return historical;
   }
 
   if (route !== "baseball_rule_term" && !scopeGate) {

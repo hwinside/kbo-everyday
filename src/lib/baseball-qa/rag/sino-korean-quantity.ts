@@ -71,3 +71,13 @@ export function normalizeSinoKoreanQuantities(text: string, counters: string): s
   }
   return normalized;
 }
+
+/** Recordbook output requires source digits, including malformed cardinals.
+ * Use the same numeral alphabet/metric units as the normalizer; never silently
+ * discard an unparsable token (e.g. 사십이십칠) as nonnumeric prose.
+ * Scoped to recordbook output, not tier2 or general dictionary responses.
+ */
+export function hasSinoKoreanQuantitySurface(text: string, counters: string): boolean {
+  if (sinoKoreanQuantities(text, counters).length > 0) return true;
+  return new RegExp(`(?<![가-힣])[일이삼사오육칠팔구십백천만억조]+\\s*(?:${counters}|${metricUnits})`).test(text);
+}

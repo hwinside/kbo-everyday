@@ -568,6 +568,7 @@
     "qa:genius-agent-fallback": "tsx scripts/qa/genius-agent-fallback.ts",
     "qa:genius-leaderboard-guide": "tsx scripts/qa/genius-leaderboard-guide-smoke.ts",
     "qa:genius-live-score-guide": "tsx scripts/qa/genius-live-score-guide-smoke.ts",
+    "qa:genius-recordbook-evidence": "tsx scripts/qa/genius-recordbook-evidence.ts",
     "qa:post-impression-batch": "tsx scripts/qa/post-impression-batch-smoke.ts",
     "qa:venue-story-auto-flight": "tsx scripts/qa/venue-story-auto-flight-smoke.ts"
   },
