@@ -10,8 +10,8 @@
  *  · 수용 판정은 배포 SSOT(`evaluateNormalizedCandidate`) 그대로 — production 사전·로스터를
  *    로드해 파이프라인과 같은 입력으로 판정한다. mustInclude 류 자체 재구현 판정은
  *    반대 의미·타 선수 추가를 못 잡는 false-green 이라 쓰지 않는다(삼순 1차 지적 축).
- *  · 양성 반복: 붙여쓰기 질문이 3회 연속 `accepted_surface`(문자 구성 동일 = 드리프트
- *    구조적 불가)로 수용된다.
+ *  · 고정 5회/문항, 양성은 3회 이상 성공. 붙여쓰기는 accepted_surface, 용어 오타는 기대 후보.
+ *    음성 오교정·양성의 잘못된 후보·숫자 변경은 0회여야 한다. 통과할 때까지 재시도하지 않는다.
  *  · 반대편: 이미 정상 표기인 질문은 SSOT 기준 미수용으로 수렴한다.
  *  · 숫자 포함 질문의 교정문은 숫자 시퀀스가 정확히 보존된다.
  *  · 키가 없으면 조용한 SKIP 이 아니라 명시적 실패(exit 1).
@@ -129,7 +129,11 @@ async function main() {
   let fail = 0;
   const report: string[] = [];
 
-  // ── 양성: 붙여쓰기 → accepted_surface 3회 연속 ────────────────────────────
+  // Fixed budget: no retry-until-green. Each positive needs >=3/5 successes;
+  // every negative and every wrong lexical suggestion must have zero violations.
+  const rounds = 5;
+  const majority = 3;
+  // ── 양성: 붙여쓰기 → accepted_surface 문항별 다수결 ──────────────────────
   // surface 는 문자 구성 동일이라 "반대 의미·타 선수 추가" false-green 이 구조적으로 없다.
   const positives = [
     "김도영홈런몇개",
@@ -137,17 +141,20 @@ async function main() {
     "수비시프트제한이언제부터야",
   ];
   for (const q of positives) {
-    for (let round = 1; round <= 3; round++) {
+    let successes = 0;
+    let unsafe = 0;
+    for (let round = 1; round <= rounds; round++) {
       const out = await normalizeQuestionLlm(q);
       const v = verdictOf(q, out.text);
-      if (v.accepted && v.status === "accepted_surface") {
-        pass++;
-        report.push(`PASS 양성 r${round} [${v.status}]: ${q} → ${v.candidate}`);
-      } else {
-        fail++;
-        report.push(`FAIL 양성 r${round} [${v.status}]: ${q} → ${JSON.stringify(out.text)}`);
-      }
+      const ok = v.accepted && v.status === "accepted_surface";
+      if (ok) successes++;
+      const decision = resolveQuestionNormalization(q, out, glossary, players);
+      if (decision.suggested) unsafe++;
+      report.push(`${ok ? "SAMPLE_PASS" : "SAMPLE_MISS"} 양성 r${round} [${v.status}]: ${q} → ${JSON.stringify(out.text)}`);
     }
+    const ok = successes >= majority && unsafe === 0;
+    if (ok) pass++; else fail++;
+    report.push(`${ok ? "PASS" : "FAIL"} 양성: ${q} ${successes}/${rounds}, unsafe=${unsafe}`);
   }
 
   // ── 반대편: 정상 표기는 SSOT 기준 미수용으로 수렴 ────────────────────────
@@ -157,19 +164,21 @@ async function main() {
     "오늘 LG 경기 몇 시에 시작해?",
   ];
   for (const q of negatives) {
-    const out = await normalizeQuestionLlm(q);
-    const v = verdictOf(q, out.text);
-    if (!v.accepted) {
-      pass++;
-      report.push(`PASS 반대편(미수용 ${v.status}): ${q}`);
-    } else {
-      fail++;
-      report.push(`FAIL 반대편(수용됨 ${v.status}): ${q} → ${v.candidate}`);
+    for (let round = 1; round <= rounds; round++) {
+      const out = await normalizeQuestionLlm(q);
+      const v = verdictOf(q, out.text);
+      if (!v.accepted) {
+        pass++;
+        report.push(`PASS 반대편 r${round}(미수용 ${v.status}): ${q}`);
+      } else {
+        fail++;
+        report.push(`FAIL 반대편 r${round}(수용됨 ${v.status}): ${q} → ${v.candidate}`);
+      }
     }
   }
 
   // ── 숫자 보존: 숫자 포함 붙여쓰기 질문 ───────────────────────────────────
-  {
+  for (let round = 1; round <= rounds; round++) {
     const q = "30-30클럽이몬가요";
     const out = await normalizeQuestionLlm(q);
     const candidate = (out.text ?? "").trim();
@@ -196,15 +205,21 @@ async function main() {
     ["쿼터가 뭐야?", null], ["워닝", null], ["세잎은?", null],
     ["삼성?", null], ["콜드", null], ["아하", null], ["내일은?", null],
   ] as const) {
-    for (let round = 0; round < 3; round++) {
+    let successes = 0;
+    let unsafe = 0;
+    for (let round = 0; round < rounds; round++) {
       const out = await normalizeQuestionLlm(question, glossary);
       const decision = resolveQuestionNormalization(question, out, glossary, players);
       const candidate = decision.suggestionText ?? "";
       const suggests = decision.suggested;
       const ok = expected === null ? !suggests : suggests && candidate.replace(/\s+/g, "") === expected.replace(/\s+/g, "");
-      if (ok) pass++; else fail++;
-      report.push(`${ok ? "PASS" : "FAIL"} evidence r${round + 1}: ${question} → ${JSON.stringify({ provider: out, finalCandidate: candidate })}`);
+      if (ok) successes++;
+      if (suggests && !ok) unsafe++;
+      report.push(`${ok ? "SAMPLE_PASS" : "SAMPLE_MISS"} evidence r${round + 1}: ${question} → ${JSON.stringify({ provider: out, finalCandidate: candidate })}`);
     }
+    const ok = unsafe === 0 && successes >= (expected === null ? rounds : majority);
+    if (ok) pass++; else fail++;
+    report.push(`${ok ? "PASS" : "FAIL"} evidence: ${question} ${successes}/${rounds}, unsafe=${unsafe}`);
   }
 
   for (const line of report) console.log(line);

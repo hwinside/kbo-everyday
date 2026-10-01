@@ -90,6 +90,13 @@ export function preservesCorrectionTermIdentity(question: string, candidate: str
   // compound term made by rewriting that word (a predicate may live there).
   // Whitespace alone remains Tier A; this only vetoes lexical identity expansion.
   const sourceWords = question.normalize("NFKC").split(/\s+/u).map(normalizeKey);
+  // Conservatively preserve standalone words from reviewed multiword names.
+  // These are SSOT components, not fuzzy prefixes or a hand-written exception list.
+  // They only veto a lexical edit; they never authorize a definition or correction.
+  const reviewedWords = entries.flatMap(entry => [entry.term, ...entry.aliases])
+    .flatMap(name => name.normalize("NFKC").trim().split(/\s+/u))
+    .map(normalizeKey).filter(word => word.length >= 2);
+  if (reviewedWords.some(word => sourceWords.includes(word) && !proposed.includes(word))) return false;
   // Only the spelling actually proposed can expand an anchor. Another alias
   // of the same entry (e.g. 히트포더사이클) is not part of this edit.
   if (introduced.some(entry => entry.keys.some(key => proposed.includes(key) && existing.some(known =>

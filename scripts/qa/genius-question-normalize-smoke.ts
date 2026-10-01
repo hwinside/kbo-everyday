@@ -33,6 +33,23 @@ import {
   type QaDeps,
 } from "../../src/lib/baseball-qa/pipeline";
 
+// Both model judgments may be wrong; SSOT words still veto identity replacement.
+{
+  const terms: GlossaryEntry[] = [
+    { term: "콜드게임", aliases: ["콜드 게임", "강우콜드"], answer: "중도 종료 경기" },
+    { term: "홀드", aliases: [], answer: "구원 투수 기록" },
+  ];
+  for (const question of ["콜드", "콜드 뭐야?"]) {
+    const candidate = question.replace("콜드", "홀드");
+    assert.equal(preservesCorrectionTermIdentity(question, candidate, terms), false);
+    assert.equal(resolveQuestionNormalization(question, {
+      text: candidate, originalSpelling: { status: "typo", quote: "콜드" },
+    }, terms, []).suggested, false, "provider typo must not override reviewed source words");
+  }
+  assert.equal(preservesCorrectionTermIdentity("콜드 게임", "콜드게임", terms), true);
+  assert.equal(preservesCorrectionTermIdentity("홀드", "홀드", terms), true);
+}
+
 const glossary: GlossaryEntry[] = [
   { term: "보크", aliases: ["balk"], answer: "투수의 반칙 동작입니다." },
   { term: "도루", aliases: ["sb"], answer: "베이스를 훔치는 플레이입니다." },
