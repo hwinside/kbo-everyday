@@ -7,7 +7,7 @@ const evidence: RagEvidence[] = [{ sourceGrade: "tier1", sourceKind: "kbo_ebook"
   pageTitle: "2026 KBO 레코드북", content: "통산 세이브 순위\n선수명 세이브 안타 연도\n오승환 427 0 2025\n레이예스 0 202 2024",
   canonicalUrl: "https://www.koreabaseball.com/Reference/Ebook/Ebook.aspx", revision: "qa", sectionPath: "기록", asOf: "2026-09-30" }];
 const response = (value = "427", scope = "historical", citation = 1, subject = "오승환", label = "세이브") => JSON.stringify({ status: "GROUNDED",
-  recordScope: scope, recordEvidence: citation, recordSubject: subject, recordFacts: [{ label, value }] });
+  recordScope: scope, recordPeriod: "all", recordYear: 0, recordYearOffset: 0, recordEvidence: citation, recordSubject: subject, recordFacts: [{ label, value }] });
 const validated = (raw: string, rows = evidence) => validateRagResponse(raw, { recordbookRequest: true, numericEvidence: true, evidence: rows });
 async function main() {
   assert.equal(validated(response()).kind, "grounded");
@@ -28,7 +28,7 @@ async function main() {
   assert.equal(validated(response(), [{ ...evidence[0], pageTitle: "2026 KBO 연감" }]).kind, "insufficient");
   assert.equal(validated(response("202", "historical", 1, "레이예스", "안타")).kind, "grounded");
   const career = [{ ...evidence[0], content: "통산 세이브 순위\n순위 선수명(팀) 세이브 경기 출장 연도 경기수\n1 오승환(삼) 427 2005 ~ 2013, 2020 ~ 2025 (2014 ~ 2019 해외진출) 738\n2 손승락(롯) 271 2005 ~ 2006, 2010 ~ 2019 601" }];
-  const misbound = JSON.stringify({ status: "GROUNDED", recordScope: "historical", recordEvidence: 1,
+  const misbound = JSON.stringify({ status: "GROUNDED", recordScope: "historical", recordPeriod: "all", recordYear: 0, recordYearOffset: 0, recordEvidence: 1,
     recordSubject: "오승환", recordFacts: [{ label: "세이브", value: "427" }, { label: "연도", value: "738" }] });
   const partial = validated(misbound, career);
   assert.equal(partial.kind, "grounded");
@@ -40,6 +40,23 @@ async function main() {
   const season = [{ ...evidence[0], content: "시즌 최다 안타 순위\n순위 선수명(팀) 안타 연도\n1* 레이예스(롯) 202 2024\n2 *서건창(넥) 201 2014" }];
   assert.equal(validated(response("202", "historical", 1, "레이예스", "안타"), season).kind, "grounded");
   assert.equal(validated(response("2024", "historical", 1, "레이예스", "안타"), season).kind, "insufficient");
+  const periodRaw = (recordPeriod: string, recordYear: number, recordYearOffset: number) => JSON.stringify({
+    ...JSON.parse(response("202", "historical", 1, "레이예스", "안타")), recordPeriod, recordYear, recordYearOffset });
+  const periodCheck = (question: string, raw: string, rows = season, time = Date.parse("2026-09-30T10:00:00Z")) =>
+    validateRagResponse(raw, { recordbookRequest: true, numericEvidence: true, evidence: rows,
+      officialQuestion: question, calendarContract: { referenceTimeMs: time } });
+  assert.equal(validated(periodRaw("relative_year", 0, -1), season).kind, "insufficient", "relative period requires request clock");
+  assert.equal(periodCheck("작년 최다안타", periodRaw("relative_year", 2024, -1)).kind, "insufficient", "ambiguous absolute and relative basis");
+  assert.equal(periodCheck("작년 최다안타", periodRaw("relative_year", 0, -1)).kind, "insufficient", "2026 last year is 2025, not the row's 2024");
+  assert.equal(periodCheck("2025 최다안타", periodRaw("absolute_year", 2025, 0)).kind, "insufficient");
+  assert.equal(periodCheck("2025 최다안타", periodRaw("all", 0, 0)).kind, "insufficient", "cannot erase explicit period");
+  assert.equal(periodCheck("2025 최다안타", periodRaw("absolute_year", 2024, 0)).kind, "insufficient");
+  assert.equal(periodCheck("2024 최다안타", periodRaw("absolute_year", 2024, 0)).kind, "grounded");
+  assert.equal(periodCheck("재작년 최다안타", periodRaw("relative_year", 0, -2)).kind, "grounded");
+  assert.equal(periodCheck("작년 최다안타", periodRaw("relative_year", 0, -1), season, Date.parse("2025-09-30T10:00:00Z")).kind, "grounded");
+  assert.equal(periodCheck("2024년부터 최다안타", periodRaw("unsupported", 0, 0)).kind, "insufficient");
+  assert.equal(periodCheck("작년 최다안타", periodRaw("relative_year", 0, -1), [{ ...season[0], content: season[0].content + "\n다른 표의 연도 2025" }]).kind, "insufficient");
+  assert.equal(periodCheck("작년 최다안타", periodRaw("relative_year", 0, -1), [{ ...season[0], content: season[0].content.replace("안타 연도", "안타").replace("202 2024", "202").replace("201 2014", "201") }]).kind, "insufficient");
   const selected = selectRecordbookEvidence([{ ...evidence[0], pageTitle: "2015 KBO 기록대백과" },
     { ...evidence[0], content: "표 설명 ".repeat(170) + "\n오승환 427" }]);
   assert.equal(selected[0].pageTitle, "2026 KBO 레코드북");

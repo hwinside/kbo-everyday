@@ -1065,6 +1065,7 @@ const RECORDBOOK_PROMPT = [
   "먼저 자료의 내용과 무관하게 질문이 요구하는 시간 범위를 recordScope로 판정한다. 답할 자료가 있다는 이유로 질문의 범위를 바꾸지 않는다.",
   "현재 누계, 최신 순위, 과거 기록이 지금까지도 유지되는지의 확인은 current다. 과거 시즌이나 통산이라는 표현이 함께 있어도 현재 확인 요구가 우선한다. current는 반드시 INSUFFICIENT이며 과거 기록으로 대체하지 않는다.",
   "현재 확인을 요구하지 않는 통산·역대·과거 기록 조회는 historical이다. 기록 조회인지 불명확하면 unknown이다. unknown도 INSUFFICIENT다.",
+  "recordPeriod는 자료가 아니라 질문의 기간 요구를 먼저 추출한다. 무기간 통산·역대는 all, 특정 연도는 absolute_year, 서버 기준일에 상대적인 단일 연도는 relative_year다. absolute_year는 recordYear에 요청 연도를, relative_year는 recordYearOffset에 기준 연도 대비 차이를 정수로 쓴다. 사용하지 않는 숫자 필드는 0이다. 여러 해·구간·이적 전후 등 단일 연도로 확정할 수 없는 제한은 unsupported로 보류한다. 기간이 제한된 요청에 다른 연도의 기록을 대신 주거나 all로 지우지 않는다. 서버가 상대 연도를 계산하고 해당 선수 표 행의 연도와 대조한다.",
   "historical일 때만 선수·리그·기록종류·요청 기간을 직접 뒷받침하는 단일 자료를 골라 recordEvidence에 번호를 넣는다. 자료에 없는 숫자, 다른 선수의 숫자, 여러 자료의 합산은 금지한다. 기간이 한정된 질문에 그 기간을 분리하지 못하는 전체 누계로 답하지 않는다.",
   "recordSubject에는 자료 속 선수의 순수 이름만 넣는다. 별표·순위·괄호·구단은 제외한다. recordFacts는 최대 6개이며, 달성 이정표보다 요청한 시즌/통산 순위 표에서 필요한 수치 항목을 우선한다. recordFacts에는 표의 머리글(label)과 해당 선수 행의 값(value)을 그대로 추출한다. label과 value 각각은 인용 자료 본문에 연속으로 존재해야 한다. 서술형 answer를 만들지 않는다. 서버가 항목: 값 형식으로 표시한다.",
   "숫자는 반드시 원문 그대로 아라비아 숫자로 쓴다. 한글 수사로 풀어 쓰지 않는다. 표의 숫자에 원문에 붙어 있지 않은 단위를 붙이지 않는다. 표는 '항목: 값' 형식으로 설명한다. 예: '연도: 2024, 안타: 202'. 이는 형식 예시일 뿐 사실 근거가 아니다.",
@@ -1195,6 +1196,9 @@ export function buildRagLlmRequest(
         properties: {
           recordScope: { type: "STRING", enum: ["historical", "current", "unknown"], description: "질문 자체의 시간 요구. 현재 확인 요구는 자료 유무와 무관하게 current." },
           status: { type: "STRING", enum: ["GROUNDED", "INSUFFICIENT"] },
+          recordPeriod: { type: "STRING", enum: ["all", "absolute_year", "relative_year", "unsupported"] },
+          recordYear: { type: "INTEGER" },
+          recordYearOffset: { type: "INTEGER" },
           recordEvidence: { type: "INTEGER", description: "단일 근거 번호(1부터), 없으면 0" },
           recordSubject: { type: "STRING", description: "원문 선수명. 없으면 빈 문자열" },
           recordFacts: { type: "ARRAY", items: { type: "OBJECT", properties: {
@@ -1202,7 +1206,7 @@ export function buildRagLlmRequest(
             value: { type: "STRING", description: "해당 선수 행의 원문 값 그대로. 숫자에 단위 추가 금지" },
           }, required: ["label", "value"] } },
         },
-        required: ["recordScope", "status", "recordEvidence", "recordSubject", "recordFacts"],
+        required: ["recordScope", "recordPeriod", "recordYear", "recordYearOffset", "status", "recordEvidence", "recordSubject", "recordFacts"],
       } : OFFICIAL_RAG_RESPONSE_SCHEMA } : {}),
     },
   };
@@ -1727,7 +1731,31 @@ export function validateRagResponse(
       || !Array.isArray(facts) || facts.length < 1 || facts.length > 6) {
       return { kind: "insufficient", reason: "model_insufficient" };
     }
-    const tables = recordTableRows(selected.content, subject);
+    // Period semantics are extracted separately from evidence. Code computes
+    // relative years from the request clock, never the publication edition.
+    const referenceTimeMs = options.calendarContract?.referenceTimeMs;
+    const referenceYear = referenceTimeMs !== undefined && Number.isFinite(referenceTimeMs)
+      ? Number(toKSTDateString(new Date(referenceTimeMs).toISOString()).slice(0, 4)) : null;
+    const explicit = resolveSeasonTarget(options.officialQuestion ?? "", referenceYear ?? 0);
+    let requestedYear: number | null = null;
+    if (!Number.isInteger(row.recordYear) || !Number.isInteger(row.recordYearOffset)) {
+      return { kind: "insufficient", reason: "model_insufficient" };
+    }
+    if (row.recordPeriod === "absolute_year" && row.recordYearOffset === 0) {
+      requestedYear = row.recordYear as number;
+    } else if (row.recordPeriod === "relative_year" && row.recordYear === 0 && referenceYear !== null) {
+      requestedYear = referenceYear + (row.recordYearOffset as number);
+    } else if (row.recordPeriod !== "all" || row.recordYear !== 0 || row.recordYearOffset !== 0) {
+      return { kind: "insufficient", reason: "model_insufficient" };
+    }
+    if ((requestedYear !== null && (requestedYear < 1982 || requestedYear > 2099))
+      || (explicit.kind === "year" && requestedYear !== explicit.year)) {
+      return { kind: "insufficient", reason: "model_insufficient" };
+    }
+    // A period-bound fact must have that exact season in the SAME table row.
+    // An edition year, another table, or a career span cannot license it.
+    const tables = recordTableRows(selected.content, subject)
+      .filter(table => requestedYear === null || table.get("연도") === String(requestedYear));
     const matchingFacts = tables.map(table => facts.filter(fact =>
       fact && typeof fact.label === "string" && typeof fact.value === "string"
       && table.get(fact.label) === fact.value));
