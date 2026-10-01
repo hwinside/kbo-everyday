@@ -1,6 +1,6 @@
 import assert from "node:assert/strict";
 import { answerQuestion, type QaDeps, type LlmResult } from "../../src/lib/baseball-qa/pipeline";
-import { buildRagLlmRequest, selectRecordbookEvidence, RAG_OFFICIAL_SYSTEM_PROMPT, validateRagResponse, type RagEvidence } from "../../src/lib/baseball-qa/rag/retrieve";
+import { buildRagLlmRequest, recordbookRowCandidates, selectRecordbookEvidence, RAG_OFFICIAL_SYSTEM_PROMPT, validateRagResponse, type RagEvidence } from "../../src/lib/baseball-qa/rag/retrieve";
 
 // Synthetic passages test wiring/guards, not real production record accuracy.
 const evidence: RagEvidence[] = [{ sourceGrade: "tier1", sourceKind: "kbo_ebook",
@@ -69,6 +69,57 @@ async function main() {
   assert.equal(periodCheck("2024 최다안타", periodRaw("absolute_year", 2024, 0, "2025")).kind, "insufficient", "quote must occur verbatim");
   assert.equal(periodCheck("2024년 최다안타", periodRaw("absolute_year", 2024, 0, "2024년")).kind, "grounded");
   assert.equal(periodCheck("지난해 최다안타", periodRaw("relative_year", 0, -1, "지난해"), season, Date.parse("2025-09-30T10:00:00Z")).kind, "grounded");
+  // Quantity counters must not become a season. Bare/explicit year constraints remain strict.
+  const quantityRows = [{ ...season[0], content: season[0].content.replace("202 2024", "2000 2024") }];
+  const quantityRaw = JSON.stringify({ ...JSON.parse(periodRaw("all", 0, 0)), recordFacts: [{ label: "안타", value: "2000" }] });
+  for (const q of ["레이예스 2000안타 기록", "레이예스 안타 2000개 기록", "레이예스 2000타 기록"]) {
+    assert.equal(periodCheck(q, quantityRaw, quantityRows).kind, "grounded", "synthetic count must not be read as season");
+  }
+  assert.equal(periodCheck("2000년 레이예스 안타 기록", quantityRaw, quantityRows).kind, "insufficient");
+  assert.equal(periodCheck("2000 레이예스 안타 기록", quantityRaw, quantityRows).kind, "insufficient");
+  assert.equal(periodCheck("2025년 레이예스 2000안타 기록", periodRaw("absolute_year", 2025, 0, "2025년"), quantityRows).kind, "insufficient");
+  const rowId = recordbookRowCandidates(season).find(row => row.subject === "레이예스")!.id;
+  const rowRaw = { status: "GROUNDED", recordScope: "historical", recordPeriod: "all", recordPeriodQuote: "",
+    recordYear: 0, recordYearOffset: 0, recordEvidence: 1, recordRowId: rowId, recordLabels: ["안타", "연도"], answer: "" };
+  const picked = validated(JSON.stringify(rowRaw), season);
+  assert.equal(picked.kind, "grounded");
+  if (picked.kind === "grounded") assert.match(picked.answer, /안타: 202.*연도: 2024/);
+  for (const delta of [{ recordRowId: "99:0" }, { recordEvidence: 2 }, { recordLabels: ["없는열"] },
+    { recordLabels: ["안타", "안타"] }, { recordScope: "current" }, { recordLabels: ["연도"] }]) {
+    assert.equal(validated(JSON.stringify({ ...rowRaw, ...delta }), season).kind, "insufficient");
+  }
+  const extraYear = [{ ...season[0], content: season[0].content + "\n3 레이예스(롯) 202 2025" }];
+  assert.equal(periodCheck("2025년 최다안타", JSON.stringify({ ...rowRaw, recordPeriod: "absolute_year", recordYear: 2025,
+    recordPeriodQuote: "2025년", recordLabels: ["안타"] }), extraYear).kind, "insufficient", "selected 2024 row cannot borrow another row's 2025");
+  const generalRaw = { status: "GENERAL", recordScope: "non_record", recordPeriod: "all", recordPeriodQuote: "",
+    recordYear: 0, recordYearOffset: 0, recordEvidence: 0, recordRowId: "", recordLabels: [],
+    answer: "투수가 던진 공이 아니라 수비수가 던진 공으로 주자를 아웃시키는 상황을 뜻합니다." };
+  const generalOptions = { recordbookRequest: true, allowRecordbookGeneral: true, evidence,
+    generalFallback: { question: "송구로 아웃시킨다는 게 무슨 말이야?" } };
+  assert.equal(validateRagResponse(JSON.stringify(generalRaw), generalOptions).kind, "general");
+  for (const delta of [{ recordScope: "current" }, { recordScope: "historical" }, { recordEvidence: 1 },
+    { recordLabels: ["안타"] }, { recordRowId: rowId }, { answer: "기록집에 안타 202개가 있습니다." }]) {
+    assert.equal(validateRagResponse(JSON.stringify({ ...generalRaw, ...delta }), generalOptions).kind, "insufficient");
+  }
+  assert.equal(validateRagResponse(JSON.stringify(generalRaw), { ...generalOptions, allowRecordbookGeneral: false }).kind, "insufficient");
+  const rowPrompt = buildRagLlmRequest("레이예스 최다안타기록", season, RAG_OFFICIAL_SYSTEM_PROMPT, { recordbookRequest: true });
+  assert.ok(rowPrompt.contents[0].parts[0].text.includes(rowId));
+  assert.ok(JSON.stringify(rowPrompt.generationConfig.responseSchema).includes("recordRowId"));
+  let generalCalls = 0, generalStored: LlmResult | null = null;
+  const generalDeps: QaDeps = {
+    loadGlossary: async () => [], loadPlayers: async () => [], reserveDaily: async () => ({ allowed: true, remaining: 9 }),
+    log: async () => {}, getCache: async () => null, setCache: async () => { throw new Error("no cache"); },
+    callLlm: async () => { throw new Error("no second generation"); }, searchOfficialRag: async () => evidence,
+    callOfficialRagLlm: async (_q, _e, extras) => { generalCalls++; assert.equal(extras?.allowRecordbookGeneral, true);
+      return { text: JSON.stringify(generalRaw), inputTokens: 1, outputTokens: 1 }; },
+    getLlmState: async () => ({ started: generalStored !== null, result: generalStored }),
+    acquireLlmStart: async () => true, storeLlm: async result => { generalStored = result; },
+  };
+  const restoredGeneral = await answerQuestion("qa-general-promotion", generalOptions.generalFallback.question, generalDeps);
+  assert.equal(restoredGeneral.source, "llm");
+  assert.equal(restoredGeneral.answer, generalRaw.answer);
+  assert.equal((await answerQuestion("qa-general-promotion", generalOptions.generalFallback.question, generalDeps)).answer, generalRaw.answer);
+  assert.equal(generalCalls, 1);
   const selected = selectRecordbookEvidence([{ ...evidence[0], pageTitle: "2015 KBO 기록대백과" },
     { ...evidence[0], content: "표 설명 ".repeat(170) + "\n오승환 427" }]);
   assert.equal(selected[0].pageTitle, "2026 KBO 레코드북");

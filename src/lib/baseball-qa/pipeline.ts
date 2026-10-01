@@ -1390,7 +1390,7 @@ export interface QaDeps {
    */
   searchOfficialRag?: (question: string) => Promise<RagEvidence[]>;
   /** 공식 간행물 근거 전용 재서술 호출. tier1이므로 근거에 적힌 숫자를 쓸 수 있다. */
-  callOfficialRagLlm?: (question: string, evidence: RagEvidence[], extras?: { context?: ContextTurn; definition?: StatDefinitionFrame; ruleRequest?: RequiredRuleRequest; referenceTimeMs?: number; recordbookRequest?: boolean }) => Promise<LlmResult>;
+  callOfficialRagLlm?: (question: string, evidence: RagEvidence[], extras?: { context?: ContextTurn; definition?: StatDefinitionFrame; ruleRequest?: RequiredRuleRequest; referenceTimeMs?: number; recordbookRequest?: boolean; allowRecordbookGeneral?: boolean }) => Promise<LlmResult>;
   /** 수요 기반 ingestion 우선순위용 — 질문이 지목한 source를 기록한다. 실패는 무시한다. */
   recordRagDemand?: (sourceKeys: string[]) => Promise<void>;
   /**
@@ -4326,6 +4326,7 @@ export function validateLlmResponse(raw: string, question = "", previous?: Conte
 /** LLM 재서술 호출에 함께 넘기는 부가 맥락 — 직전 턴 + 현재 로스터 블록 (축 A·D). */
 export interface RagLlmExtras {
   recordbookRequest?: boolean;
+  allowRecordbookGeneral?: boolean;
   /** Server-owned official RAG reference clock; injectable for replay. */
   referenceTimeMs?: number;
   ruleRequest?: RequiredRuleRequest;
@@ -5215,6 +5216,7 @@ async function answerOfficialDocumentQuestion(
     try {
       const officialExtras = { recordbookRequest, context: definition?.context ?? context ?? undefined, definition: definition ?? undefined, referenceTimeMs };
       llm = await deps.callOfficialRagLlm!(question, evidence, { ...officialExtras,
+        allowRecordbookGeneral: recordbookRequest && !explicitRecordbookRequest,
         ...(requiredRule ? { ruleRequest: { kind: requiredRule.kind, season: requiredRule.season, competition: requiredRule.competition, faFocus: requiredRule.faFocus, postseasonStage: requiredRule.postseasonStage, ...(currentRuleFact ? { fact: currentRuleFact } : {}) } } : {}),
       });
       generatedOfficialNow = true;
@@ -5226,6 +5228,7 @@ async function answerOfficialDocumentQuestion(
 
   const validateOfficial = (raw: LlmResult) => validateRagResponse(raw.text, {
     recordbookRequest,
+    allowRecordbookGeneral: recordbookRequest && !explicitRecordbookRequest,
     calendarContract: { referenceTimeMs },
     officialQuestion: question,
     numericEvidence: true, evidence,
@@ -5233,7 +5236,7 @@ async function answerOfficialDocumentQuestion(
     // Only compound definitions may echo user quantities, under the same
     // period boundary as GENERAL. Never license bot prose or record lookups.
     definitionQuestion: definition?.assessment ? definitionNumericSource(question, definition) : undefined,
-    generalFallback: recordbookRequest ? undefined : { question: definitionNumericSource(question, definition), previous: context },
+    generalFallback: explicitRecordbookRequest ? undefined : { question: definitionNumericSource(question, definition), previous: context },
   });
   let validated = validateOfficial(llm);
   // One repair by this invocation's winner only. A stored raw response or a
