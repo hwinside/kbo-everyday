@@ -146,6 +146,18 @@ async function main() {
     assert.equal(renderGameConversation(JSON.stringify({ ...ackPlan,
       dialogue: { ...ackPlan.dialogue, quote: question, speechAct } }), { ...input, question })?.source, "ack");
   }
+  // R1's real output: valid laughter classified as other must normalize to ack.
+  const laughterPlan = { ...ackPlan, action: "other", dialogue: {
+    ...ackPlan.dialogue, quote: "ㅋㅋㅋ", speechAct: "laughter" } };
+  const laughterInput = { ...input, question: "ㅋㅋㅋ" };
+  assert.equal(renderGameConversation(JSON.stringify(laughterPlan), laughterInput)?.source, "ack");
+  for (const delta of [{ hasRequest: true }, { hasCorrection: true }, { speechAct: "criticism" },
+    { speechAct: "confusion" }, { quote: "ㅋㅋ" }, { speechAct: undefined }]) {
+    assert.equal(renderGameConversation(JSON.stringify({ ...laughterPlan,
+      dialogue: { ...laughterPlan.dialogue, ...delta } }), laughterInput), null);
+  }
+  assert.equal(renderGameConversation(JSON.stringify({ ...laughterPlan,
+    appRequest: { ...ackPlan.appRequest, informationNeed: "event_date" } }), laughterInput), null);
   // Even a mistaken ack action must not override a negative/unknown speech act.
   const nonAckCases = [["이해가 잘 안돼…", "confusion"], ["이해가 힘들어", "confusion"],
     ["응 너 야알못", "criticism"], ["ㅋㅋ 설명 진짜 못하네", "criticism"],
@@ -163,9 +175,16 @@ async function main() {
     { ...ackPlan.dialogue, quote: "그렇구나" }, { quote: reaction }]) {
     assert.equal(renderGameConversation(JSON.stringify({ ...ackPlan, dialogue }), reactionInput), null);
   }
+  for (const patch of [{ intentSource: "question" }, { intentQuote: reaction }]) {
+    assert.equal(renderGameConversation(JSON.stringify({ ...ackPlan,
+      appRequest: { ...ackPlan.appRequest, ...patch } }), reactionInput), null);
+  }
   assert.equal(renderGameConversation(JSON.stringify(ackPlan), { ...reactionInput, question: reaction + " 근데 내일 선발은?" }), null);
   assert.equal(renderGameConversation(JSON.stringify({ ...ackPlan, appRequest: { ...ackPlan.appRequest, kind: "postseason" } }), reactionInput), null);
   assert.equal(renderGameConversation(JSON.stringify({ ...ackPlan, target: { ...ackPlan.target, source: "profile", teams: ["롯데"] } }), reactionInput), null);
+  const laughterDeps = deps([]);
+  laughterDeps.callGameConversation = async () => ({ text: JSON.stringify(laughterPlan), inputTokens: 7, outputTokens: 3 });
+  assert.equal((await answerQuestion("qa-game-context", "ㅋㅋㅋ", laughterDeps)).source, "ack");
   const reactionCalls: string[] = [];
   const reactionDeps = deps(reactionCalls);
   reactionDeps.callGameConversation = async () => ({ text: JSON.stringify(ackPlan), inputTokens: 7, outputTokens: 3 });
