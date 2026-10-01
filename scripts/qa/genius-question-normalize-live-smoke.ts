@@ -45,7 +45,7 @@ async function main() {
   // env 주입 후에 로드해야 server.ts 모듈 초기화가 산다.
   const { normalizeQuestionLlm, loadGlossary } = await import("../../src/lib/baseball-qa/server");
   const { loadRosterPlayers } = await import("../../src/lib/baseball-qa/roster/load-roster-players");
-  const { digitSequencesMatch, evaluateNormalizedCandidate, classifyQuestionCorrectionCandidate } = await import("../../src/lib/baseball-qa/pipeline");
+  const { digitSequencesMatch, evaluateNormalizedCandidate, resolveQuestionNormalization } = await import("../../src/lib/baseball-qa/pipeline");
 
   // 판정 입력을 파이프라인과 동일하게 — production 사전 + 배포 로스터 로더.
   const [glossary, players] = await Promise.all([loadGlossary(), loadRosterPlayers()]);
@@ -60,7 +60,7 @@ async function main() {
     return { ...v, candidate };
   }
 
-  const { permitsLexicalCorrection } = await import("../../src/lib/baseball-qa/correction-term-identity");
+
 
   let pass = 0;
   let fail = 0;
@@ -131,12 +131,12 @@ async function main() {
   ] as const) {
     for (let round = 0; round < 3; round++) {
       const out = await normalizeQuestionLlm(question, glossary);
-      const candidate = out.text ?? "";
-      const suggests = classifyQuestionCorrectionCandidate(question, candidate, glossary, players) === "suggest"
-        && permitsLexicalCorrection(question, out.originalSpelling, candidate);
+      const decision = resolveQuestionNormalization(question, out, glossary, players);
+      const candidate = decision.suggestionText ?? "";
+      const suggests = decision.suggested;
       const ok = expected === null ? !suggests : suggests && candidate.replace(/\s+/g, "") === expected.replace(/\s+/g, "");
       if (ok) pass++; else fail++;
-      report.push(`${ok ? "PASS" : "FAIL"} evidence r${round + 1}: ${question} → ${JSON.stringify(out)}`);
+      report.push(`${ok ? "PASS" : "FAIL"} evidence r${round + 1}: ${question} → ${JSON.stringify({ provider: out, finalCandidate: candidate })}`);
     }
   }
 

@@ -5872,7 +5872,7 @@ export function evaluateNormalizedCandidate(
  *  · **정의형 축약**: 복원 결과가 그 term 의 정의 질문으로만 축약될 때만 채택한다
  *    (`normalizeQuestion(restored) === normalizeKey(term)`). 잔여 의미어가 남는
  *    복원은 오제안이라 전부 탈락한다 (삼순 2026-08-14 배포 후 오제안 실측).
- *  · term 길이 2 미만 제외, 창에 공백·숫자 포함 제외, 창=term(이미 정상 표기) 제외.
+ *  · term 길이 2 미만·숫자 제외. 내부 공백은 정본과 같은 위치만 허용, 정상 표기 제외.
  *  · 복원 결과 문자열이 **정확히 1개**일 때만 반환 — 2026-08-09 name_suggest 와 같은
  *    "후보 정확히 1개" 안전선. 2개 이상이면 어느 쪽인지 증명할 수 없어 fail-close.
  *  · 이 함수는 후보 생성만 한다 — 제안 자격은 classifyQuestionCorrectionCandidate
@@ -5887,7 +5887,10 @@ export function repairGlossaryTermTypo(text: string, glossary: GlossaryEntry[]):
     for (let i = 0; i + term.length <= source.length; i++) {
       const window = source.slice(i, i + term.length);
       if (window === term) continue;
-      if (/[\s\p{N}]/u.test(window)) continue;
+      // Multiword canonical terms keep their exact internal whitespace shape;
+      // never bridge unrelated words or alter numeric tokens.
+      if (/\p{N}/u.test(window) || [...window].some((char, at) =>
+        /\s/u.test(char) !== /\s/u.test(term[at]))) continue;
       let diff = 0;
       for (let j = 0; j < term.length; j++) {
         if (window[j] !== term[j]) diff++;
@@ -5918,6 +5921,64 @@ export function repairGlossaryTermTypo(text: string, glossary: GlossaryEntry[]):
   }
   if (repaired.size !== 1) return null;
   return [...repaired].at(0) ?? null;
+}
+
+/** Final spelling decision shared by serving and live gates. Model spelling
+ * evidence governs model proposals only; the unique, definition-only glossary
+ * repair is independent evidence and still requires the destination SSOT.
+ * No lexical candidate is applied before the user selects its correction card. */
+export function resolveQuestionNormalization(
+  question: string,
+  norm: { text: string | null; originalSpelling?: OriginalSpellingAssessment } | null,
+  glossary: GlossaryEntry[],
+  players: PlayerRef[],
+) {
+    const candidate = typeof norm?.text === "string" ? norm.text.trim() : "";
+    // 관측 상태는 미호출(null)·교정없음·거절·장애를 구분해 기록한다 — `question_normalized`
+    // null 만으로는 발동률을 주장할 수 없다(삼순 1차 ④).
+    let normStatus: NormalizeStatus;
+    let accepted = false;
+    let suggested = false;
+    let suggestionText: string | null = null;
+    if (norm === null) {
+      normStatus = "error";
+    } else if (candidate.length === 0) {
+      normStatus = "no_change";
+    } else {
+      const verdict = classifyQuestionCorrectionCandidate(question, candidate, glossary, players);
+      accepted = verdict === "accepted_surface";
+      suggested = verdict === "suggest" && permitsLexicalCorrection(question, norm.originalSpelling, candidate);
+      normStatus = accepted ? "accepted_surface" : suggested ? "suggested" : "rejected";
+    }
+    if (suggested) suggestionText = candidate;
+    // ── 결정론 사전 복원 fallback (2026-08-14 #1177 Production QA FAIL hotfix) ──
+    // 배포 provider 3/3 실측이 `보끄가모야 → 보끄가 뭐야` 까지만 교정해(`보끄→보크` 는
+    // 보수 계약상 안 고침) 후보가 residual 착지 → rejected → 카드가 도달 불가였다.
+    // 사전 폐쇄집합 결정론 복원을 시도하되, 제안 자격은 같은 SSOT 가 재판정한다.
+    //
+    // (삼순 2026-08-14 NO-GO 반영) Tier A 자동수용 후보가 **여전히 residual** 인 경우 —
+    // provider 가 공백만 고쳐 `보끄가 뭐야` 처럼 오탈자가 남은 경우 — 도 복원 대상이다.
+    // 자동수용해 봤자 generic LLM 으로 가는 질문이므로, 복원이 allowlist 착지 제안을
+    // 만들면 수용 대신 카드를 낸다. 복원이 실패하면 종전 그대로 수용 진행한다(무회귀).
+    const acceptedStillResidual = accepted
+      && routeQuestion(candidate, glossary, players, false) === "llm_scope_gate";
+    if (!suggested && (!accepted || acceptedStillResidual)
+        && permitsGlossaryRepair(question, norm?.originalSpelling)) {
+      // Only surface-equivalent model text may supply spacing. Lexical rewrites
+      // cannot erase the original typo or become evidence for a second rewrite.
+      const repairBase = candidate.length > 0 && normalizeKey(candidate) === normalizeKey(question)
+        ? candidate : question;
+      const repaired = repairGlossaryTermTypo(repairBase, glossary);
+      if (repaired !== null
+          && permitsGlossaryRepair(question, norm?.originalSpelling, repaired)
+          && classifyQuestionCorrectionCandidate(question, repaired, glossary, players) === "suggest") {
+        suggested = true;
+        accepted = false;
+        suggestionText = repaired;
+        normStatus = "suggested";
+      }
+    }
+    return { candidate, accepted, suggested, suggestionText, normStatus };
 }
 
 /** Keep navigation recognition identical before correction and at settlement. */
@@ -6039,49 +6100,8 @@ async function answerQuestionObserved(userId: string, rawQuestion: string, deps:
     } catch {
       norm = null; // 정규화 장애는 원문 진행 — 새 경로가 기존 답변을 죽이면 안 된다.
     }
-    const candidate = typeof norm?.text === "string" ? norm.text.trim() : "";
-    // 관측 상태는 미호출(null)·교정없음·거절·장애를 구분해 기록한다 — `question_normalized`
-    // null 만으로는 발동률을 주장할 수 없다(삼순 1차 ④).
-    let normStatus: NormalizeStatus;
-    let accepted = false;
-    let suggested = false;
-    let suggestionText: string | null = null;
-    if (norm === null) {
-      normStatus = "error";
-    } else if (candidate.length === 0) {
-      normStatus = "no_change";
-    } else {
-      const verdict = classifyQuestionCorrectionCandidate(question, candidate, glossary, players);
-      accepted = verdict === "accepted_surface";
-      suggested = verdict === "suggest" && permitsLexicalCorrection(question, norm.originalSpelling, candidate);
-      normStatus = accepted ? "accepted_surface" : suggested ? "suggested" : "rejected";
-    }
-    if (suggested) suggestionText = candidate;
-    // ── 결정론 사전 복원 fallback (2026-08-14 #1177 Production QA FAIL hotfix) ──
-    // 배포 provider 3/3 실측이 `보끄가모야 → 보끄가 뭐야` 까지만 교정해(`보끄→보크` 는
-    // 보수 계약상 안 고침) 후보가 residual 착지 → rejected → 카드가 도달 불가였다.
-    // 사전 폐쇄집합 결정론 복원을 시도하되, 제안 자격은 같은 SSOT 가 재판정한다.
-    //
-    // (삼순 2026-08-14 NO-GO 반영) Tier A 자동수용 후보가 **여전히 residual** 인 경우 —
-    // provider 가 공백만 고쳐 `보끄가 뭐야` 처럼 오탈자가 남은 경우 — 도 복원 대상이다.
-    // 자동수용해 봤자 generic LLM 으로 가는 질문이므로, 복원이 allowlist 착지 제안을
-    // 만들면 수용 대신 카드를 낸다. 복원이 실패하면 종전 그대로 수용 진행한다(무회귀).
-    const acceptedStillResidual = accepted
-      && routeQuestion(candidate, glossary, players, false) === "llm_scope_gate";
-    if (!suggested && (!accepted || acceptedStillResidual)
-        && permitsGlossaryRepair(question, norm?.originalSpelling)) {
-      const repairBase = candidate.length > 0 && preservesCorrectionTermIdentity(question, candidate, glossary)
-        ? candidate : question;
-      const repaired = repairGlossaryTermTypo(repairBase, glossary);
-      if (repaired !== null
-          && permitsGlossaryRepair(question, norm?.originalSpelling, repaired)
-          && classifyQuestionCorrectionCandidate(question, repaired, glossary, players) === "suggest") {
-        suggested = true;
-        accepted = false;
-        suggestionText = repaired;
-        normStatus = "suggested";
-      }
-    }
+    const { candidate, accepted, suggested, suggestionText, normStatus } =
+      resolveQuestionNormalization(question, norm, glossary, players);
     // 관측 계약 (mapGlossaryDefinition ④축과 동일): 정규화도 LLM 호출이다 — 수용 여부와
     // 무관하게 토큰을 최종 로그 행에 합산한다. 수용 시에는 로그의 question 을 **원문**으로
     // 고정하고 정규화문을 별도 필드(questionNormalized)로 남긴다 — 원문 없이는

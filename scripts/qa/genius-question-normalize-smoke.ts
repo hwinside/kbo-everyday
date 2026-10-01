@@ -24,6 +24,7 @@ import {
   evaluateNormalizedCandidate,
   classifyQuestionCorrectionCandidate,
   repairGlossaryTermTypo,
+  resolveQuestionNormalization,
   CORRECTION_SUGGESTABLE_ROUTES,
   routeQuestion,
   type GlossaryEntry,
@@ -242,21 +243,49 @@ async function main() {
     assert.deepEqual(r.correctionOptions, ["보크가 뭐야"]);
   }
 
-  // R2: absence means provider fail-open only for deterministic glossary repair.
-  // An explicit valid/unknown assessment remains a veto, not an outage.
+  // Closed-glossary evidence is independent of the model spelling assessment.
+  // A valid/unknown model verdict must not veto a unique definition-only repair.
   for (const status of [undefined, "valid", "unknown"] as const) {
     const state = freshState({ normReply: null });
     const deps = makeDeps(state);
     deps.normalizeQuestionLlm = async () => ({ text: null, inputTokens: 0, outputTokens: 0,
-      ...(status ? { originalSpelling: { status, quote: "" } } : {}),
+      ...(status ? { originalSpelling: { status, quote: "", intent: "definition" as const } } : {}),
     });
     const result = await answerQuestion("u1", "보끄가 뭐야", deps);
-    if (status === undefined) {
-      assert.equal(result.source, "question_correction");
-      assert.deepEqual(result.correctionOptions, ["보크가 뭐야"]);
-    } else {
-      assert.notEqual(result.source, "question_correction", `${status} must veto glossary repair`);
+    assert.equal(result.source, "question_correction");
+    assert.deepEqual(result.correctionOptions, ["보크가 뭐야"]);
+  }
+
+  // R2: original-source unique repairs survive a valid verdict and a partial
+  // lexical rewrite; phrases with remaining meaning cannot become definition cards.
+  {
+    const terms: GlossaryEntry[] = [
+      ...glossary,
+      { term: "와인드업", aliases: [], answer: "투구 동작" },
+      { term: "폭투", aliases: [], answer: "투구 기록" },
+      { term: "사이클링 히트", aliases: [], answer: "타격 기록" },
+      { term: "스트라이크", aliases: [], answer: "투구 판정" },
+      { term: "스트라이크존", aliases: [], answer: "판정 구역" },
+    ];
+    for (const [q, text, expected] of [
+      ["폭추", null, "폭투"],
+      ["와일드업에 뭐야?", "와인드업에 뭐야?", "와인드업이 뭐야?"],
+      ["싸이클링 히트", null, "사이클링 히트"],
+      ["스트라이크 조은가?", "스트라이크존은가?", null],
+      ["오늘 폭추 몇개", null, null],
+      ["야구 전광판 보는 법 알려줘", null, null],
+    ] as const) {
+      const decision = resolveQuestionNormalization(q, { text, originalSpelling: { status: "valid", quote: "", intent: "definition" } }, terms, players);
+      assert.equal(decision.suggestionText, expected, q);
+      assert.equal(decision.accepted, false, "lexical repair is never auto-applied");
     }
+    for (const intent of ["other", "unknown"] as const) {
+      const decision = resolveQuestionNormalization("내일은?", {
+        text: null, originalSpelling: { status: "valid", quote: "", intent },
+      }, [{ term: "포일", aliases: [], answer: "포수 실책" }], players);
+      assert.equal(decision.suggested, false, "a unique term does not override follow-up intent");
+    }
+    assert.equal(preservesCorrectionTermIdentity("스트라이크 조은가?", "스트라이크존은가?", terms), false);
   }
 
   // (삼순 2026-08-14 NO-GO 반영) Tier A 공백-only 수용 후보가 여전히 residual 이면 —

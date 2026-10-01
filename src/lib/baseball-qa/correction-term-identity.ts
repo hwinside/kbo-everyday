@@ -6,6 +6,7 @@ import { normalizeKey } from "./normalize";
 export interface OriginalSpellingAssessment {
   status: "valid" | "typo" | "unknown";
   quote: string;
+  intent?: "definition" | "other" | "unknown";
 }
 
 export function permitsLexicalCorrection(question: string, assessment?: OriginalSpellingAssessment, candidate?: string): boolean {
@@ -21,11 +22,13 @@ export function permitsLexicalCorrection(question: string, assessment?: Original
     && proposed.startsWith(prefix) && proposed.endsWith(suffix);
 }
 
-/** Closed-glossary repair retains the pre-existing fail-open contract when the
- * provider is unavailable or omits assessment. Explicit valid/unknown evidence
- * still vetoes repair; a typo assessment must authorize the exact edited span.
- * This never authorizes a model candidate or automatically applies a repair. */
+/** A spelling verdict cannot veto independent, unique glossary evidence when
+ * the ORIGINAL request is a definition. Follow-ups/evaluations still veto it.
+ * Missing provider evidence retains the existing outage fail-open contract;
+ * legacy fixtures retain their exact-span policy. This is only a prerequisite:
+ * callers must generate from original/surface text and recheck destination SSOT. */
 export function permitsGlossaryRepair(question: string, assessment?: OriginalSpellingAssessment, candidate?: string): boolean {
+  if (assessment?.intent !== undefined) return assessment.intent === "definition";
   return assessment === undefined || permitsLexicalCorrection(question, assessment, candidate);
 }
 
@@ -78,6 +81,13 @@ export function preservesCorrectionTermIdentity(question: string, candidate: str
   if (existing.some(entry => !present(proposed, entry.keys))) return false;
   const introduced = terms.filter(entry => present(proposed, entry.keys) && !present(original, entry.keys));
   if (introduced.length === 0) return true;
+  // An intact known term followed by another word is not evidence for a longer
+  // compound term made by rewriting that word (a predicate may live there).
+  // Whitespace alone remains Tier A; this only vetoes lexical identity expansion.
+  const sourceWords = question.normalize("NFKC").split(/\s+/u).map(normalizeKey);
+  if (introduced.some(entry => entry.keys.some(key => existing.some(known =>
+    known.keys.some(anchor => sourceWords.includes(anchor) && key !== anchor && key.includes(anchor)),
+  )))) return false;
   // Check only identities actually introduced by this candidate. Unchanged
   // question endings and other glossary entries cannot make a repair ambiguous.
   const positions = originalPositions(original, proposed);

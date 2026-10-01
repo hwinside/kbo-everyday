@@ -89,6 +89,14 @@ async function main() {
     else { fail += 1; console.log(`FAIL ${label}`); }
   };
 
+  // Definition answers must not replace evaluative predicates, including colloquial spelling.
+  for (const question of ["스트라이크 조은가?", "볼넷 조은가?", "홈런 좋은가?", "도루 나쁜가?"]) {
+    for (let round = 1; round <= 3; round++) {
+      const result = await run(question);
+      report(result.mapped === null, `평가 의도 r${round}: ${question} → ${result.mapped}`);
+    }
+  }
+
   // ── 양성 반복 (3회 연속 같은 term) ──────────────────────────────────
   for (const [question, expected] of [
     ["K가 뭐어", "삼진"],
