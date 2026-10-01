@@ -131,25 +131,25 @@ export default function LiveActivityMonitorPage() {
         {s && p2s && (
           <div className="mb-6 grid grid-cols-2 md:grid-cols-4 gap-4">
             <div className="bg-gray-800/50 rounded-lg p-4">
-              <div className="text-sm text-gray-400 mb-1">떠있는 잠금화면 카드</div>
+              <div className="text-sm text-gray-400 mb-1">시작 요청 기록</div>
               <div className="text-3xl font-bold">{s.cards}</div>
               <div className="text-xs text-gray-500 mt-1">진행중·예정(+상태 미상 fallback) push-to-start 발급</div>
             </div>
             <div className="bg-gray-800/50 rounded-lg p-4">
-              <div className="text-sm text-gray-400 mb-1">자동발급 카드 중 갱신 수신</div>
+              <div className="text-sm text-gray-400 mb-1">기기 등록 확인</div>
               <div className="text-3xl font-bold text-green-400">{s.updatable}</div>
               <div className="text-xs text-gray-500 mt-1">
-                update 토큰 · 채널 구독 · 채널 내장 발송 — 토큰 {s.updateTokens}건 · 채널 {s.channelSubs}대 · 내장 {s.channelBorn}명
+                update 토큰 · 채널 ACK 기준 — 토큰 {s.updateTokens}건 · 채널 {s.channelSubs}대 · 내장 {s.channelBorn}명
               </div>
             </div>
             <div className="bg-gray-800/50 rounded-lg p-4">
-              <div className="text-sm text-gray-400 mb-1">갱신 불가 (gap)</div>
+              <div className="text-sm text-gray-400 mb-1">기기 확인 없음 (미노출 확정 아님)</div>
               <div className={`text-3xl font-bold ${s.gap > 0 ? "text-red-400" : "text-green-400"}`}>
                 {s.gap}
                 <span className="text-base font-normal text-gray-500 ml-2">{gapPct}%</span>
               </div>
               <div className="text-xs text-gray-500 mt-1">
-                토큰 미등록 — 무음 wake 시도 {s.wakeAttempted} · 구제 {s.wakeRescued}
+                기기 등록 미확인 — 무음 wake 시도 {s.wakeAttempted} · 구제 {s.wakeRescued}
                 {s.wakeAttempted > 0 ? ` (${Math.round((s.wakeRescued / s.wakeAttempted) * 100)}%)` : ""}
               </div>
             </div>
@@ -183,8 +183,8 @@ export default function LiveActivityMonitorPage() {
                     <th className="text-right py-3 px-4">update 토큰</th>
                     <th className="text-right py-3 px-4">채널 구독</th>
                     <th className="text-right py-3 px-4">채널 내장</th>
-                    <th className="text-right py-3 px-4">갱신 수신</th>
-                    <th className="text-right py-3 px-4">갱신 불가</th>
+                    <th className="text-right py-3 px-4">기기 확인</th>
+                    <th className="text-right py-3 px-4">기기 미확인</th>
                   </tr>
                 </thead>
                 <tbody>
@@ -229,7 +229,7 @@ export default function LiveActivityMonitorPage() {
           <div>• <span className="text-gray-300">무음 wake 성공률</span> = 갱신불가 카드에 무음 푸시를 시도한 후 update 토큰/채널 ACK 등록으로 전환된 비율. 강제종료(스와이프 kill) 기기는 iOS가 안 깨워 구조적으로 실패한다.</div>
           <div>• <span className="text-gray-300">과거 잔존</span> = 오늘 경기 목록에 없는 지난 game_id의 발급 기록 행. iOS가 카드를 ~8시간 내 자동 만료시키므로 실제 좀비 카드가 아니라 서버 기록 잔재{s ? ` (현재 ${s.residualRows}행 / ${s.residualGameCount}경기)` : ""}.</div>
           <div>• <span className="text-gray-300">미상(활성 fallback)</span> = 오늘 game_id인데 KBO 일정 조회 실패나 목록 누락으로 상태를 확정 못한 경우. 요약에는 활성으로 포함해 집계 누락을 막는다.</div>
-          <div>• <span className="text-gray-300">자동발급 카드 중 갱신 수신</span> = push-to-start 카드 중 update 토큰 보유 또는 현재 active 채널 구독이 확인된 카드(중복 제거). 경기룸 방문으로만 뜬 LA는 전체 update 토큰 수치에만 포함된다.</div>
+          <div>• <span className="text-gray-300">기기 등록 확인</span> = push-to-start 카드 중 update 토큰 보유 또는 현재 active 채널 구독이 확인된 카드(중복 제거). 경기룸 방문으로만 뜬 LA는 전체 update 토큰 수치에만 포함된다.</div>
           <div>• 종료/취소 경기는 end 푸시 후 update 토큰이 정상 삭제된다. 종료 경기에 토큰이 남아 있으면 <span className="text-orange-400">end 미처리 의심</span>으로 표시.</div>
         </div>
 

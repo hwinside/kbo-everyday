@@ -570,7 +570,8 @@
     "qa:genius-live-score-guide": "tsx scripts/qa/genius-live-score-guide-smoke.ts",
     "qa:genius-recordbook-evidence": "tsx scripts/qa/genius-recordbook-evidence.ts",
     "qa:post-impression-batch": "tsx scripts/qa/post-impression-batch-smoke.ts",
-    "qa:venue-story-auto-flight": "tsx scripts/qa/venue-story-auto-flight-smoke.ts"
+    "qa:venue-story-auto-flight": "tsx scripts/qa/venue-story-auto-flight-smoke.ts",
+    "qa:la-ack-recovery": "tsx scripts/qa/la-ack-recovery-smoke.ts"
   },
   "dependencies": {
     "@capacitor-firebase/messaging": "^8.3.0",

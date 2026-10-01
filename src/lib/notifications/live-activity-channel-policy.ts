@@ -608,13 +608,8 @@ export function isLiveBornChannel(row: ChannelBornRef, activeKeys: Set<string>):
   );
 }
 
-/**
- * '갱신 수신(updatable)' 유저 수 — started ∩ (update토큰 ∪ 유효 채널ACK ∪ 유효 채널출생).
- * 채널출생(p2s payload에 channelId 내장 발송 성공 서버 기록)은 네이티브 ACK가 아직/영영
- * 안 와도 broadcast로 갱신을 받으므로 updatable — ACK만 인정하면 gap 과대계상(2026-07-23
- * 실측). ⚠️ channelBornUsers는 반드시 isLiveBornChannel(세대 일치) 통과 유저만 담아야
- * 한다 — 출생 채널이 재생성으로 교체된 행을 그대로 세면 갱신 못 받는 카드를 수신으로
- * 오인한다(삼순 라운드2 blocker). 과거 행은 세대 기록이 없어(backfill 불가) 종전과 동일 집계.
+/** Device evidence only. APNs acceptance/channel_born is not a device receipt.
+ * Kept channelBornUsers in the input contract for existing callers; it is diagnostic only.
  */
 export function countUpdatableUsers(i: {
   started: Iterable<string>;
@@ -624,16 +619,13 @@ export function countUpdatableUsers(i: {
 }): number {
   let n = 0;
   for (const u of i.started) {
-    if (i.tokenUsers.has(u) || i.channelAckUsers.has(u) || i.channelBornUsers.has(u)) n += 1;
+    if (i.tokenUsers.has(u) || i.channelAckUsers.has(u)) n += 1;
   }
   return n;
 }
 
-// ── 무음 wake 대상 선별 (③ wake 오염 제거, 삼순 재리뷰 2026-07-23) ──────
-// 유효 채널출생 카드는 broadcast로 갱신을 받아 wake가 불필요한데, 이를 wake 대상에
-// 넣으면 FCM 무음 wake가 낭비될 뿐 아니라 wake_attempted_at이 기록돼 어드민의
-// wake 구제 성공률 분모가 오염된다(시도할 필요가 없던 카드가 분모에 섞임).
-// gap 판정과 attempted 기록이 같은 행 집합에서 나오도록 순수 함수로 고정한다.
+// ACK-less accepted starts must remain visible to bounded recovery.
+export const START_ACK_GRACE_MS = 2 * 60 * 1000;
 
 export interface WakeGapRow extends ChannelBornRef {
   user_id: string;
@@ -641,14 +633,9 @@ export interface WakeGapRow extends ChannelBornRef {
   created_at: string | null;
 }
 
-/**
- * 무음 wake 대상 gap 행 선별 — wake 발송 대상과 wake_attempted_at 기록이 모두
- * 이 반환값에서만 파생돼야 한다(분모 오염 방지 계약).
- * - 유효 채널출생 행 제외(isLiveBornChannel — 어드민 updatable 합산과 동일 기준):
- *   출생 채널이 지금도 active면 토큰/ACK 없이도 broadcast 수신 — wake 불필요·attempted
- *   기록 금지. 출생 채널이 교체됐으면(세대 불일치) gap으로 복귀 = wake 대상(삼순 라운드2).
- * - updatableKeys(`user|game` — update 토큰 or 유효 채널 ACK) 보유 행 제외.
- * - scheduled 경기 행은 카드 발급(created_at) 후 wakeWindowMs 이내만(그 뒤는 live 전환 창이 백스톱).
+/** Select unconfirmed starts, not confirmed display failures. Give APNs starts
+ * two minutes for native registration before attempting a silent rescan.
+ * The caller atomically claims newly included channel-born recovery rows.
  */
 export function selectWakeGapRows<T extends WakeGapRow>(
   rows: T[],
@@ -659,7 +646,10 @@ export function selectWakeGapRows<T extends WakeGapRow>(
   wakeWindowMs: number,
 ): T[] {
   return rows.filter((r) => {
-    if (isLiveBornChannel(r, activeChannelKeys)) return false;
+    if (isLiveBornChannel(r, activeChannelKeys)) {
+      const age = nowMs - Date.parse(r.created_at ?? "");
+      if (!Number.isFinite(age) || age < START_ACK_GRACE_MS) return false;
+    }
     if (updatableKeys.has(`${r.user_id}|${r.game_id}`)) return false;
     if (scheduledGameIds.has(r.game_id)) {
       return r.created_at !== null && nowMs - new Date(r.created_at).getTime() <= wakeWindowMs;
