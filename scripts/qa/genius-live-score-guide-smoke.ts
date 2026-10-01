@@ -55,7 +55,7 @@ async function main() {
     callLlm: async () => { throw new Error("must not answer a correction suggestion"); },
     normalizeQuestionLlm: async () => {
       correctionCalls++;
-      return { text: "보크가 뭐야", inputTokens: 2, outputTokens: 3 };
+      return { text: "보크가 뭐야", originalSpelling: { status: "typo", quote: "보끄가모야" }, inputTokens: 2, outputTokens: 3 };
     },
   } as unknown as QaDeps;
   const correction = await answerQuestion("qa-only", "보끄가모야", correctionDeps);

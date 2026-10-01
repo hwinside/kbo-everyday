@@ -492,6 +492,10 @@
       "tier": "deploy"
     },
     {
+      "name": "qa:genius-deictic-temporal-followup",
+      "tier": "ci"
+    },
+    {
       "name": "qa:genius-question-normalize",
       "tier": "deploy"
     },

@@ -3,7 +3,7 @@ import { renderRagHold } from "./rag/hold-answer";
 import { renderGameConversation, type GameConversationInput, type GameConversationResult } from "./game-conversation";
 import { selectOriginContextTurn } from "./context";
 import { resolveTermOrigin, VERIFIED_TERM_ORIGINS } from "./term-origin";
-import { preservesCorrectionTermIdentity } from "./correction-term-identity";
+import { permitsGlossaryRepair, permitsLexicalCorrection, preservesCorrectionTermIdentity, type OriginalSpellingAssessment } from "./correction-term-identity";
 import { leaderboardGuide } from "./stats/leaderboard-guide";
 import { liveScoreGuide } from "./stats/live-score-guide";
 import { fallbackEligible, primaryNewsDateSupported, type FallbackAnswer } from "./agent/fallback";
@@ -1248,7 +1248,7 @@ export interface QaDeps {
    */
   normalizeQuestionLlm?: (
     question: string,
-  ) => Promise<{ text: string | null; inputTokens: number | null; outputTokens: number | null }>;
+  ) => Promise<{ text: string | null; originalSpelling?: OriginalSpellingAssessment; inputTokens: number | null; outputTokens: number | null }>;
   /** 유저가 교정 카드에서 선택하고 서버 후보 membership 검증까지 끝낸 exact 후보. */
   pickedNormalizedQuestion?: string | null;
   /**
@@ -6027,7 +6027,7 @@ async function answerQuestionObserved(userId: string, rawQuestion: string, deps:
       // This skips correction only: context/entity/safety guards and durable
       // settlement below still run. Tier B candidate acceptance is unchanged.
       && !liveScoreGuideForQuestion(question) && !isTermOriginQuestion(question)) {
-    let norm: { text: string | null; inputTokens: number | null; outputTokens: number | null } | null = null;
+    let norm: { text: string | null; originalSpelling?: OriginalSpellingAssessment; inputTokens: number | null; outputTokens: number | null } | null = null;
     try {
       norm = await deps.normalizeQuestionLlm(question);
     } catch {
@@ -6047,7 +6047,7 @@ async function answerQuestionObserved(userId: string, rawQuestion: string, deps:
     } else {
       const verdict = classifyQuestionCorrectionCandidate(question, candidate, glossary, players);
       accepted = verdict === "accepted_surface";
-      suggested = verdict === "suggest";
+      suggested = verdict === "suggest" && permitsLexicalCorrection(question, norm.originalSpelling, candidate);
       normStatus = accepted ? "accepted_surface" : suggested ? "suggested" : "rejected";
     }
     if (suggested) suggestionText = candidate;
@@ -6062,11 +6062,13 @@ async function answerQuestionObserved(userId: string, rawQuestion: string, deps:
     // 만들면 수용 대신 카드를 낸다. 복원이 실패하면 종전 그대로 수용 진행한다(무회귀).
     const acceptedStillResidual = accepted
       && routeQuestion(candidate, glossary, players, false) === "llm_scope_gate";
-    if (!suggested && (!accepted || acceptedStillResidual)) {
+    if (!suggested && (!accepted || acceptedStillResidual)
+        && permitsGlossaryRepair(question, norm?.originalSpelling)) {
       const repairBase = candidate.length > 0 && preservesCorrectionTermIdentity(question, candidate, glossary)
         ? candidate : question;
       const repaired = repairGlossaryTermTypo(repairBase, glossary);
       if (repaired !== null
+          && permitsGlossaryRepair(question, norm?.originalSpelling, repaired)
           && classifyQuestionCorrectionCandidate(question, repaired, glossary, players) === "suggest") {
         suggested = true;
         accepted = false;

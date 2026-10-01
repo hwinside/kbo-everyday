@@ -1,5 +1,34 @@
 import { normalizeKey } from "./normalize";
 
+/** Evidence from the spelling provider, independent of a proposed destination.
+ * Missing/unknown evidence cannot authorize a model lexical correction.
+ * This is a semantic model decision, not proof: live precision replay is required. */
+export interface OriginalSpellingAssessment {
+  status: "valid" | "typo" | "unknown";
+  quote: string;
+}
+
+export function permitsLexicalCorrection(question: string, assessment?: OriginalSpellingAssessment, candidate?: string): boolean {
+  if (assessment?.status !== "typo" || !assessment.quote.trim() || !question.includes(assessment.quote)) return false;
+  if (candidate === undefined) return true;
+  const at = question.indexOf(assessment.quote);
+  // Ambiguous repeated spans are not a license to edit either occurrence.
+  if (question.indexOf(assessment.quote, at + 1) !== -1) return false;
+  const prefix = normalizeKey(question.slice(0, at));
+  const suffix = normalizeKey(question.slice(at + assessment.quote.length));
+  const proposed = normalizeKey(candidate);
+  return proposed.length >= prefix.length + suffix.length
+    && proposed.startsWith(prefix) && proposed.endsWith(suffix);
+}
+
+/** Closed-glossary repair retains the pre-existing fail-open contract when the
+ * provider is unavailable or omits assessment. Explicit valid/unknown evidence
+ * still vetoes repair; a typo assessment must authorize the exact edited span.
+ * This never authorizes a model candidate or automatically applies a repair. */
+export function permitsGlossaryRepair(question: string, assessment?: OriginalSpellingAssessment, candidate?: string): boolean {
+  return assessment === undefined || permitsLexicalCorrection(question, assessment, candidate);
+}
+
 type TermEntry = { term: string; aliases: string[] };
 
 // Align the proposed spelling to the original question. A destination term

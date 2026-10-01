@@ -3954,7 +3954,7 @@ async function verifyReplyKindMatchesActualPipelineOutcome() {
       question: "보끄가모야",
       deps: (state) => ({
         ...richDeps(state),
-        normalizeQuestionLlm: async () => ({ text: "보크가 뭐야?", inputTokens: 5, outputTokens: 2 }),
+        normalizeQuestionLlm: async () => ({ text: "보크가 뭐야?", originalSpelling: { status: "typo", quote: "보끄가모야" }, inputTokens: 5, outputTokens: 2 }),
       }),
     },                                                                    // question_correction
     { question: "고마워", deps: richDeps },                                // ack

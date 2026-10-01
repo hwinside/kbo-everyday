@@ -90,7 +90,7 @@ function makeDeps(state: State, withNormalizer = true, glossaryOverride?: Glossa
     deps.normalizeQuestionLlm = async (question) => {
       state.normCalls.push(question);
       if (state.normThrows) throw new Error("normalizer down");
-      return { text: state.normReply, inputTokens: 23, outputTokens: 7 };
+      return { text: state.normReply, originalSpelling: { status: "typo", quote: question }, inputTokens: 23, outputTokens: 7 };
     };
   }
   return deps;
@@ -240,6 +240,23 @@ async function main() {
     const r = await answerQuestion("u1", "보끄가 뭐야", makeDeps(s));
     assert.equal(r.source, "question_correction");
     assert.deepEqual(r.correctionOptions, ["보크가 뭐야"]);
+  }
+
+  // R2: absence means provider fail-open only for deterministic glossary repair.
+  // An explicit valid/unknown assessment remains a veto, not an outage.
+  for (const status of [undefined, "valid", "unknown"] as const) {
+    const state = freshState({ normReply: null });
+    const deps = makeDeps(state);
+    deps.normalizeQuestionLlm = async () => ({ text: null, inputTokens: 0, outputTokens: 0,
+      ...(status ? { originalSpelling: { status, quote: "" } } : {}),
+    });
+    const result = await answerQuestion("u1", "보끄가 뭐야", deps);
+    if (status === undefined) {
+      assert.equal(result.source, "question_correction");
+      assert.deepEqual(result.correctionOptions, ["보크가 뭐야"]);
+    } else {
+      assert.notEqual(result.source, "question_correction", `${status} must veto glossary repair`);
+    }
   }
 
   // (삼순 2026-08-14 NO-GO 반영) Tier A 공백-only 수용 후보가 여전히 residual 이면 —

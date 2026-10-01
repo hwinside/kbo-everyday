@@ -489,6 +489,8 @@
     "qa:genius-career-metric-leak:mutations": "node scripts/qa/genius-career-metric-leak-mutations.mjs",
     "qa:career-metrics": "tsx scripts/qa/baseball-qa-career-metrics-smoke.ts",
     "qa:career-metrics:mutations": "node scripts/qa/baseball-qa-career-metrics-mutations.mjs",
+    "qa:genius-correction-corpus-replay": "tsx scripts/qa/genius-correction-corpus-replay.ts",
+    "qa:genius-deictic-temporal-followup": "tsx scripts/qa/genius-deictic-temporal-followup.ts",
     "qa:genius-question-normalize": "tsx scripts/qa/genius-question-normalize-smoke.ts",
     "qa:genius-question-normalize:mutations": "node scripts/qa/genius-question-normalize-mutations.mjs",
     "qa:genius-question-normalize-live": "tsx scripts/qa/genius-question-normalize-live-smoke.ts",
