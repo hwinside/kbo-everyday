@@ -78,14 +78,14 @@ const mutations = [
     // 2026-08-14 hotfix 축: 복원 배선을 죽이면 Production QA FAIL 실데이터(provider 가
     // `보끄가 뭐야` 까지만 교정)가 다시 카드 도달 불가가 된다.
     name: "M22 결정론 사전 복원 배선 제거",
-    find: '      const repaired = repairGlossaryTermTypo(repairBase, glossary) ?? repairGlossaryTermTypo(question, glossary);',
+    find: '      const repaired = originalRepair !== null\n        ? [candidate, partialRepair].find(value => value != null && normalizeKey(value) === normalizeKey(originalRepair)) ?? originalRepair\n        : partialRepair;',
     replace: '      const repaired = null;',
   },
   {
     // 유일성 안전선을 죽이면 증명 불가한 후보(보루→보크/도루 동시)가 카드로 나간다.
     name: "M23 복원 유일성 fail-close 제거",
-    find: '  if (repaired.size !== 1) return null;',
-    replace: '  if (repaired.size < 1) return null;',
+    find: '  return repaired.length === 1 ? repaired[0] : null;',
+    replace: '  return repaired.length >= 1 ? repaired[0] : null;',
   },
   {
     // 삼순 2026-08-14 2차: 정의형 축약 guard 를 죽이면 실측 오제안

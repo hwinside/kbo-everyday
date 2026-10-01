@@ -18,7 +18,7 @@ import { sendOpsMessageToUser } from "@/lib/cs/send-ops-message";
 import {
   answerQuestion,
   glossaryCandidatesIn,
-  repairGlossaryTermTypo,
+  glossaryTermTypoCandidates,
   matchGlossary,
   BLOCKED_ANSWER,
   answerTeamIdForResult,
@@ -286,10 +286,13 @@ export async function normalizeQuestionLlm(
   // Reuse the pipeline's loaded SSOT. Standalone probes use the same loader;
   // unavailable evidence must not turn optional normalization into a hard error.
   const entries = glossary ?? await loadGlossary().catch(() => []);
-  const repaired = repairGlossaryTermTypo(question, entries);
-  const repairEntry = repaired ? matchGlossary(entries, repaired) : null;
+  const spellingCandidates = glossaryTermTypoCandidates(question, entries);
+  const repairEntries = spellingCandidates.flatMap(candidate => {
+    const entry = matchGlossary(entries, candidate);
+    return entry ? [entry] : [];
+  });
   const evidence = [...new Map([
-    ...glossaryCandidatesIn(entries, question), ...(repairEntry ? [repairEntry] : []),
+    ...glossaryCandidatesIn(entries, question), ...repairEntries,
   ].map(entry => [entry.term, { term: entry.term, aliases: entry.aliases }])).values()];
   const systemPrompt = [
     "너는 KBO 야구 서비스에 들어온 사용자 질문의 표기 교정기다.",
@@ -302,6 +305,7 @@ export async function normalizeQuestionLlm(
     "교정할 것이 없거나 확신이 없으면 null 을 준다 — 잘못 고치는 쪽이 안 고치는 쪽보다 나쁘다.",
     "후보를 만들기 전에 원문 자체의 표기가 유효한지 판정한다. 정상 단어·엔티티·반응·생략된 후속 질문은 valid이다. 문맥이 없어 답할 수 없다는 것은 오타가 아니다. 낯선 단어를 야구 용어와 비슷하다는 이유로 typo로 판단하지 않는다. 확실하지 않으면 unknown이다.",
     "originalSpelling.status=typo는 원문에 명백한 철자 오류가 있을 때만 가능하며 quote에는 그 원문 오류 부분을 정확히 복사한다. valid/unknown이면 quote는 빈 문자열이다. 후보가 유효한 야구 용어라는 사실은 원문이 오타라는 근거가 아니다.",
+    "철자를 바꾸어 알아본 용어와 원문 그대로 유효한 표기를 구분한다. 참고 복원 문장이 여럿이면 원문의 발음·전체 문맥으로 하나가 명백할 때만 제안하고, 애매하면 기권한다. 원문 단어 일부를 삭제해 짧은 다른 용어로 만드는 것은 교정이 아니다.",
     "참고 사전은 서버의 검수 용어·별칭이다. 원문에 등장하거나 기존 폐쇄집합 복원기가 찾은 참고 자료일 뿐 정답이나 교정 명령이 아니다. 원문 전체와 문장 내 역할이 그 용어를 유일하게 지지하는 경우에만 오타 후보로 쓸 수 있다.",
     "valid는 원문 표기 자체가 실제 일반어·용어·고유명으로 유효하다는 뜻이다. 의도한 용어를 알아볼 수 있다는 뜻이 아니다. 원문 그대로의 단어에 독립된 뜻이나 이름 근거가 있으면 다른 용어와 가깝더라도 valid다. 뜻을 추정하기 위해 철자를 바꿔야 하고 원문 표기 자체에는 유효한 해석이 없을 때만 typo다. 두 가능성이 있으면 unknown으로 기권한다.",
     "오타 여부는 단어 전체와 문장 내 역할로 판정한다. 단어 일부가 일반어와 겹친다는 이유만으로 유효한 표기라고 보지 않는다. 정의 요청의 대상이나 단독 용어가 사전 근거의 한 용어로 유일하게 복원되며 다른 자연스러운 전체 해석이 없다면 typo를 허용한다. 완전한 일반어 해석이 실제로 경쟁하면 unknown이다.",
@@ -313,7 +317,7 @@ export async function normalizeQuestionLlm(
     headers: { "Content-Type": "application/json" },
     body: JSON.stringify({
       systemInstruction: { parts: [{ text: systemPrompt }] },
-      contents: [{ role: "user", parts: [{ text: JSON.stringify({ question, glossaryEvidence: evidence }) }] }],
+      contents: [{ role: "user", parts: [{ text: JSON.stringify({ question, glossaryEvidence: evidence, spellingCandidates }) }] }],
       generationConfig: {
         temperature: 0,
         maxOutputTokens: 256,

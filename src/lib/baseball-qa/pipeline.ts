@@ -5878,8 +5878,8 @@ export function evaluateNormalizedCandidate(
  *  · 이 함수는 후보 생성만 한다 — 제안 자격은 classifyQuestionCorrectionCandidate
  *    (숫자 보존·길이 상한·착지 allowlist SSOT)가 다시 판정한다. 자동 수용 경로는 없다.
  */
-export function repairGlossaryTermTypo(text: string, glossary: GlossaryEntry[]): string | null {
-  if (matchGlossary(glossary, text)) return null; // exact original SSOT identity is not a typo
+export function glossaryTermTypoCandidates(text: string, glossary: GlossaryEntry[]): string[] {
+  if (matchGlossary(glossary, text)) return []; // exact original SSOT identity is not a typo
   const source = text.normalize("NFKC");
   const repaired = new Set<string>();
   for (const entry of glossary) {
@@ -5924,8 +5924,12 @@ export function repairGlossaryTermTypo(text: string, glossary: GlossaryEntry[]):
     }
     }
   }
-  if (repaired.size !== 1) return null;
-  return [...repaired].at(0) ?? null;
+  return [...repaired];
+}
+
+export function repairGlossaryTermTypo(text: string, glossary: GlossaryEntry[]): string | null {
+  const repaired = glossaryTermTypoCandidates(text, glossary);
+  return repaired.length === 1 ? repaired[0] : null;
 }
 
 /** Final spelling decision shared by serving and live gates. Model spelling
@@ -5977,7 +5981,13 @@ export function resolveQuestionNormalization(
         && (normalizeKey(candidate) === normalizeKey(question)
           || permitsLexicalCorrection(question, norm?.originalSpelling, candidate))
         ? candidate : question;
-      const repaired = repairGlossaryTermTypo(question, glossary) ?? repairGlossaryTermTypo(repairBase, glossary);
+      const originalRepair = repairGlossaryTermTypo(question, glossary);
+      const partialRepair = repairGlossaryTermTypo(repairBase, glossary);
+      // Surface formatting is not competing lexical evidence. Keep the model's
+      // spacing when it names the same repair; never prefer a different identity.
+      const repaired = originalRepair !== null
+        ? [candidate, partialRepair].find(value => value != null && normalizeKey(value) === normalizeKey(originalRepair)) ?? originalRepair
+        : partialRepair;
       if (repaired !== null
           && permitsGlossaryRepair(question, norm?.originalSpelling, repaired)
           && classifyQuestionCorrectionCandidate(question, repaired, glossary, players) === "suggest") {

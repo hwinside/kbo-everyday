@@ -24,6 +24,7 @@ import {
   evaluateNormalizedCandidate,
   classifyQuestionCorrectionCandidate,
   repairGlossaryTermTypo,
+  glossaryTermTypoCandidates,
   resolveQuestionNormalization,
   CORRECTION_SUGGESTABLE_ROUTES,
   routeQuestion,
@@ -300,6 +301,22 @@ async function main() {
       assert.equal(decision.suggestionText, expected, `R3 provider replay: ${q}`);
       assert.equal(decision.accepted, false);
     }
+    // Production SSOT has three one-syllable alternatives, unlike the tiny
+    // fixture. Ambiguity must not authorize deletion to the nested word 아웃.
+    const ambiguous = [...terms,
+      { term: "더그아웃", aliases: ["덕아웃"], answer: "선수 대기 공간" },
+      { term: "셧아웃", aliases: [], answer: "완봉" },
+    ];
+    assert.deepEqual(glossaryTermTypoCandidates("낙아웃이 뭐야", ambiguous),
+      ["낫아웃이 뭐야", "덕아웃이 뭐야", "셧아웃이 뭐야"]);
+    assert.equal(repairGlossaryTermTypo("낙아웃이 뭐야", ambiguous), null);
+    assert.equal(classifyQuestionCorrectionCandidate("낙아웃이 뭐야", "아웃이 뭐야", ambiguous, players), "rejected");
+    assert.equal(resolveQuestionNormalization("낙아웃이 뭐야", {
+      text: "아웃이 뭐야", originalSpelling: { status: "typo", quote: "낙아웃" },
+    }, ambiguous, players).suggestionText, null);
+    assert.equal(resolveQuestionNormalization("버크가뭐야", {
+      text: "보크가 뭐야", originalSpelling: { status: "typo", quote: "버크" },
+    }, terms, players).suggestionText, "보크가 뭐야");
     // R2 corpus regressions: valid ordinary words stay valid even with a
     // definition intent and a tempting unique destination.
     const ordinaryTerms = [...terms,

@@ -75,6 +75,13 @@ export function preservesCorrectionTermIdentity(question: string, candidate: str
     keys: [...new Set([entry.term, ...entry.aliases].map(normalizeKey))].filter(key => key.length >= 2),
   }));
   const present = (text: string, keys: string[]) => keys.some(key => text.includes(key));
+  // A pure deletion can retain a nested glossary word (낙아웃 → 아웃), so
+  // checking only newly introduced identities misses this semantic rewrite.
+  if (proposed.length < original.length && terms.some(entry => present(proposed, entry.keys))) {
+    let at = 0;
+    for (const char of original) if (char === proposed[at]) at++;
+    if (at === proposed.length) return false;
+  }
   const existing = terms.filter(entry => present(original, entry.keys));
   if (existing.some(entry => !present(proposed, entry.keys))) return false;
   const introduced = terms.filter(entry => present(proposed, entry.keys) && !present(original, entry.keys));
