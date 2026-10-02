@@ -142,7 +142,8 @@
     "videos",
     "warmup_enrich_obs",
     "watch_pings",
-    "youtube_quota_ledger"
+    "youtube_quota_ledger",
+    "live_activity_device_recovery"
   ],
   "boundedTables": [
     "admin_alert_state",
@@ -586,6 +587,14 @@
         "actor_id",
         "action"
       ]
+    ],
+    "live_activity_device_recovery": [
+      [
+        "game_id",
+        "device_key",
+        "environment",
+        "channel_id"
+      ]
     ]
   },
   "keysetHelpers": {
@@ -643,6 +652,7 @@
     "gr_feed": "one JSON object: at most 25 page rows, two team BEST rows, one own/parent row and scalar counts/cursor; service-only and keyset paginated",
     "gr_mutate": "one JSON result for one actor/game mutation; writes serialize actor and parent and return one id/ok status",
     "gr_report": "void result for one verified reporter and one review/comment target",
-    "gr_moderate": "void result for one operator-authorized review/comment visibility update"
+    "gr_moderate": "void result for one operator-authorized review/comment visibility update",
+    "live_activity_recovery_step": "one JSONB object; at most 10 exact-device challenges, or one locked device/game/environment/channel-generation transition"
   }
 }

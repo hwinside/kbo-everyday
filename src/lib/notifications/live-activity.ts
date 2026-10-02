@@ -22,6 +22,7 @@ import {
   runWithChannelBornMarkBudget,
   runStartSendChunks,
   selectWakeGapRows,
+  isLiveBornChannel,
   START_SEND_CHUNK_SIZE,
   p2sSendPlan,
   type P2sSendPlan,
@@ -149,10 +150,11 @@ interface StartedUserRow {
   game_id: string;
   created_at: string | null;
   // 채널 내장 출생 세대(p2s payload에 channelId 포함 발송 성공한 env+channel_id) —
-  // *현재 active 채널과 정확 일치*할 때만 broadcast 수신으로 보고 wake 대상·attempted
-  // 기록에서 제외(selectWakeGapRows/isLiveBornChannel, 삼순 라운드2 세대 일치 계약).
+  // Accepted payload generation only; this is NOT proof of device receipt.
+  // ACK-less current-generation starts use a separately bounded silent recovery.
   channel_born_environment: string | null;
   channel_born_channel_id: string | null;
+  ack_recovery_attempted_at: string | null;
 }
 
 async function fetchLiveActivityTokens(gameIds: string[]): Promise<TokenRow[]> {
@@ -175,7 +177,7 @@ async function fetchStartedUsers(gameIds: string[]): Promise<StartedUserRow[]> {
     fetchAllByKeyset(async (cursor, limit) => {
       let query = supabase
         .from("live_activity_started_users")
-        .select("user_id, game_id, created_at, channel_born_environment, channel_born_channel_id")
+        .select("user_id, game_id, created_at, channel_born_environment, channel_born_channel_id, ack_recovery_attempted_at")
         .eq("game_id", gameId)
         .order("user_id", { ascending: true })
         .limit(limit);
@@ -562,6 +564,7 @@ interface StartTokenMeta {
   env: ApnsEnvironment | null;
   appBuild: number | null;
   osMajor: number | null;
+  recoveryProtocol: number | null;
   /** 토큰 세대 시각(token_changed_at, ms) — 재설치 재발급 판정용. updated_at(heartbeat)와 별개. */
   generationMs: number | null;
 }
@@ -594,14 +597,14 @@ async function startForTeamSide(params: {
     // query-guard: bounded -- 바깥 루프가 매 조회를 200개 user id 청크로 상한(user_id unique → ≤200행)
     const { data, error } = await supabase
       .from("live_activity_start_tokens")
-      .select("user_id, push_to_start_token, apns_environment, app_build, os_major, token_changed_at, updated_at")
+      .select("user_id, push_to_start_token, apns_environment, app_build, os_major, recovery_protocol, token_changed_at, updated_at")
       .in("user_id", fans.ids.slice(i, i + 200))
       .limit(200);
     if (error) return { sent: 0, failed: true }; // 토큰 조회 실패 → 재시도
     for (const r of (data ?? []) as {
       user_id: string; push_to_start_token: string;
       apns_environment: ApnsEnvironment | null; app_build: number | null; os_major: number | null;
-      token_changed_at: string | null; updated_at: string | null;
+      token_changed_at: string | null; updated_at: string | null; recovery_protocol: number | null;
     }[]) {
       // ④ stale 발송 제외 — updated_at 30일+ 미갱신 휴면 기기(gap 유저 41% 실측)는 카드만
       // 띄우고 update 토큰 등록이 사실상 안 일어나 갱신불가 카드만 늘린다. 토큰 행은
@@ -613,6 +616,7 @@ async function startForTeamSide(params: {
         env: r.apns_environment,
         appBuild: r.app_build,
         osMajor: r.os_major,
+        recoveryProtocol: r.recovery_protocol,
         generationMs: Number.isFinite(genMs) ? genMs : null,
       });
     }
@@ -819,6 +823,16 @@ async function startForTeamSide(params: {
         );
         if (res.ok) {
           if (channelId) {
+            // Exact token/generation evidence; missing ledger fails recovery closed.
+            // ACK may race this write: RPC preserves any earlier ACK tombstone.
+            if (meta.recoveryProtocol === 1) {
+              const { error: recoveryError } = await supabase.rpc("live_activity_recovery_step", {
+                p_action: "initial", p_token: meta.token, p_environment: env,
+                p_game: params.gameId, p_channel: channelId,
+                p_attributes: { ...params.attributes, myTeamCode: params.myTeamCode, channelId },
+              });
+              if (recoveryError) console.error("[live-activity] recovery ledger write failed");
+            }
             const key = `${env}|${channelId}`;
             if (!channelBornGroups.has(key)) channelBornGroups.set(key, { env, channelId, users: [] });
             channelBornGroups.get(key)!.users.push(userId);
@@ -1090,6 +1104,23 @@ export async function pushLiveActivitySilentWakes(
     .eq("status", "active");
   if (chanError) return { error: chanError.message };
   const allActiveChannels = (chanRows ?? []) as ActiveChannelRow[];
+  // Recovery needs a fresh game-validity snapshot even pregame (there is no
+  // pregame broadcast/last_send_at). This never advances score-guard baselines.
+  for (const channel of allActiveChannels) {
+    const game = games.find(g => g.G_ID === channel.game_id);
+    const status = game ? gameStatus(game) : "other";
+    const valid = game && !isKboGameCancelled(game.CANCEL_SC_ID) &&
+      (status === "scheduled" || status === "live");
+    const { error } = await supabase.from("live_activity_channels")
+      .update({ recovery_observed_at: new Date().toISOString(),
+        recovery_game_state: valid
+          ? buildLiveActivityContentState(game, status as "scheduled" | "live", undefined, true)
+          : { status: "ineligible" } })
+      .eq("game_id", channel.game_id).eq("environment", channel.environment)
+      .eq("channel_id", channel.channel_id).eq("status", "active");
+    if (error) return { error: error.message };
+  }
+
   // 게임별 현재 채널 세대 생성/교체 시각 — env별 active 행 중 가장 최근 created_at.
   const chanGenAt = new Map<string, number>();
   for (const r of allActiveChannels) {
@@ -1153,14 +1184,14 @@ export async function pushLiveActivitySilentWakes(
       }
     }
   }
-  // 갭 유저 = (user,game) 토큰·유효 ACK 없음 + 유효 채널출생 아님. wake는 기기 단위라 user로 중복 제거.
-  // 채널출생 카드는 *출생 세대가 현재 active 채널과 일치*할 때만 broadcast 수신(어드민
-  // updatable 합산과 동일 기준 = isLiveBornChannel)으로 보고 wake 대상·wake_attempted_at
-  // 기록 모두에서 제외(분모 오염 방지) — selectWakeGapRows가 SSOT. 출생 채널이 교체된
-  // 행(세대 불일치)은 gap으로 복귀해 wake로 구제한다(삼순 라운드2 blocker).
-  // 예정 경기 row는 카드 발급(created_at) 후 WAKE_WINDOW_MS 이내만 — 그 뒤는 live 전환 창이 백스톱.
+  // APNs acceptance alone no longer suppresses recovery. This first-stage fix
+  // adds one silent rescan per (game,user) for ACK-less channel-born starts.
+  // Preserve existing terminal/end-wake behavior; do not create/restart cards here.
   const scheduledSet = new Set(scheduledGameIds);
-  const gapRows = selectWakeGapRows(started, tokened, activeKeys, scheduledSet, nowMs, WAKE_WINDOW_MS);
+  const startRecoveryGames = new Set([...scheduledGameIds, ...liveGameIds]);
+  const gapRows = selectWakeGapRows(started, tokened, activeKeys, scheduledSet, nowMs, WAKE_WINDOW_MS)
+    .filter((r) => !isLiveBornChannel(r, activeKeys) ||
+      (startRecoveryGames.has(r.game_id) && !r.ack_recovery_attempted_at));
   const gapUsers = [...new Set(gapRows.map((r) => r.user_id))];
   if (gapUsers.length === 0) return EMPTY_WAKE;
 
@@ -1176,7 +1207,39 @@ export async function pushLiveActivitySilentWakes(
       if (r.live_activity === false) optedOut.add(r.user_id);
     }
   }
-  const targets = gapUsers.filter((u) => !optedOut.has(u));
+  let targets = gapUsers.filter((u) => !optedOut.has(u));
+  if (targets.length === 0) return EMPTY_WAKE;
+
+  // Atomic compare-and-set BEFORE external delivery: concurrent warmups cannot
+  // each send the new ACK-recovery wake. A crash after claim conservatively consumes
+  // the attempt; do not automatically release it and risk duplicate delivery.
+  const targetSet = new Set(targets);
+  const claimedUsers = new Set<string>();
+  const recoveryByGame = new Map<string, string[]>();
+  for (const row of gapRows) {
+    if (!targetSet.has(row.user_id)) continue;
+    if (!isLiveBornChannel(row, activeKeys)) {
+      claimedUsers.add(row.user_id); // existing legacy/end recovery unchanged
+      continue;
+    }
+    const users = recoveryByGame.get(row.game_id) ?? [];
+    users.push(row.user_id);
+    recoveryByGame.set(row.game_id, users);
+  }
+  for (const [gameId, users] of recoveryByGame) {
+    for (let i = 0; i < users.length; i += 200) {
+      // query-guard: bounded -- UPDATE returning rows restricted to <=200 user IDs and one game.
+      const { data, error } = await supabase.from("live_activity_started_users")
+        .update({ ack_recovery_attempted_at: new Date(nowMs).toISOString() })
+        .eq("game_id", gameId)
+        .in("user_id", users.slice(i, i + 200))
+        .is("ack_recovery_attempted_at", null)
+        .select("user_id");
+      if (error) return { error: error.message };
+      for (const row of data ?? []) claimedUsers.add(row.user_id);
+    }
+  }
+  targets = [...claimedUsers];
   if (targets.length === 0) return EMPTY_WAKE;
 
   // iOS 기기로만 무음 wake(dataOnly + content-available). Android는 platform 필터로 제외.

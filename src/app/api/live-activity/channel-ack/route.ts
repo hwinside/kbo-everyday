@@ -1,5 +1,4 @@
 import { NextRequest, NextResponse } from "next/server";
-import { createHash } from "node:crypto";
 import { supabaseAdmin as supabase } from "@/lib/supabase/admin";
 import { supabaseErrorResponse } from "@/lib/supabase/error";
 
@@ -59,19 +58,14 @@ export async function POST(req: NextRequest) {
     return NextResponse.json({ error: "channel not active" }, { status: 409 });
   }
 
-  const deviceKey = createHash("sha256").update(pushToStartToken).digest("hex");
-  const { error: upErr } = await supabase.from("live_activity_channel_subscriptions").upsert(
-    {
-      game_id: gameId,
-      device_key: deviceKey,
-      environment,
-      channel_id: channelId,
-      user_id: tokenRow.user_id,
-      confirmed_at: new Date().toISOString(),
-    },
-    { onConflict: "game_id,device_key,environment" },
-  );
+  // ACK history and restart claim share the same locked generation ledger.
+  const { data: ackResult, error: upErr } = await supabase.rpc("live_activity_recovery_step", {
+    p_action: "ack", p_token: pushToStartToken, p_environment: environment,
+    p_game: gameId, p_channel: channelId,
+  });
   if (upErr) return supabaseErrorResponse(upErr);
+
+  if (!ackResult?.recorded) return NextResponse.json({ error: "stale identity or channel" }, { status: 409 });
 
   // 구독 확정 → 같은 (user, game)의 stale update 토큰 삭제(이중 발송 방지, 스펙 v4 §서버 4).
   await supabase

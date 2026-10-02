@@ -449,7 +449,11 @@ final class LiveActivityController {
             rescanActiveActivities()
             Task {
                 for await activity in Activity<KBOGameAttributes>.activityUpdates {
-                    observePushToken(activity, gameId: activity.attributes.gameId)
+                    if #available(iOS 18.0, *) {
+                        await convergeRecoveryCards(gameId: activity.attributes.gameId)
+                    } else {
+                        observePushToken(activity, gameId: activity.attributes.gameId)
+                    }
                 }
             }
         }
@@ -465,15 +469,98 @@ final class LiveActivityController {
     /// observePushToken의 observedActivityIds 중복가드로 이미 관찰 중인 Activity는 무시된다
     /// (이중 구독/중복 등록 없음). iOS 16.2+.
     func rescanActiveActivities() {
-        if #available(iOS 16.2, *) {
+        if #available(iOS 18.0, *) {
+            Task {
+                let games = Set(Activity<KBOGameAttributes>.activities.map { $0.attributes.gameId })
+                for gameId in games { await convergeRecoveryCards(gameId: gameId) }
+                await reportMissingRecoveryCards()
+            }
+        } else if #available(iOS 16.2, *) {
             for activity in Activity<KBOGameAttributes>.activities {
                 observePushToken(activity, gameId: activity.attributes.gameId)
             }
-            // ⚠️ 여기서는 마이그레이션을 하지 않는다(삼순 R2 blocker③) — rescan은 silent wake
-            // (didReceiveRemoteNotification)에서도 불리는데, local `Activity.request()`는
-            // foreground 시작 계약이다. 레거시→채널 교체는 foreground-active 전용 진입점
-            // migrateLegacyActivitiesOnForeground()(didBecomeActive)가 담당 — 백그라운드
-            // rescan 경로의 request는 0건이다.
+        }
+    }
+
+    /// Every activityUpdates delivery / wake / foreground re-runs convergence. No
+    /// permanent success flag: an original start can arrive AFTER a retry was ACKed.
+    @available(iOS 18.0, *)
+    private func convergeRecoveryCards(gameId: String) async {
+        await withGameSerialQueue(gameId) { [self] in
+            guard case .active(let fetched) = await fetchActiveChannel(gameId: gameId),
+                  let channel = fetched else { return }
+            let cards = Activity<KBOGameAttributes>.activities.filter {
+                $0.attributes.gameId == gameId && ($0.activityState == .active || $0.activityState == .stale)
+            }
+            let keepId = RecoveryCardPolicy.keep(cards.map {
+                .init(id: $0.id, channel: $0.attributes.channelId, attempt: $0.attributes.recoveryAttempt)
+            }, channel: channel)
+            guard let survivor = cards.first(where: { $0.id == keepId }) else {
+                // Legacy registration remains available; no unsupported background request.
+                for card in cards where card.attributes.channelId == nil {
+                    observePushToken(card, gameId: gameId)
+                }
+                return
+            }
+            for card in cards where card.id != survivor.id {
+                guard survivor.activityState == .active || survivor.activityState == .stale else { return }
+                await card.end(using: card.contentState, dismissalPolicy: .immediate)
+            }
+            // If OS cleanup did not settle, next wake retries; never ACK a removed card.
+            let remaining = Activity<KBOGameAttributes>.activities.filter {
+                $0.attributes.gameId == gameId && ($0.activityState == .active || $0.activityState == .stale)
+            }
+            guard remaining.count == 1, remaining.first?.id == survivor.id else { return }
+            currentActivity = survivor
+            forgetRecoveryAck(activityId: survivor.id)
+            ackChannelActivity(gameId: gameId, channelId: channel, activityId: survivor.id)
+        }
+    }
+
+    private func forgetRecoveryAck(activityId: String) {
+        ackStateLock.lock()
+        ackedActivityIds.remove(activityId)
+        ackStateLock.unlock()
+    }
+
+    @available(iOS 18.0, *)
+    private func recoveryRequest(_ body: [String: Any]) async -> [String: Any]? {
+        guard let token = latestPushToStartToken,
+              let url = URL(string: "https://keubo.fan/api/live-activity/recovery") else { return nil }
+        var payload = body
+        payload["pushToStartToken"] = token
+        payload["environment"] = Self.apnsEnvironment
+        payload["protocol"] = 1 // Only this native implementation supports challenge + convergence.
+        var request = URLRequest(url: url)
+        request.httpMethod = "POST"
+        request.timeoutInterval = 8
+        request.setValue("application/json", forHTTPHeaderField: "Content-Type")
+        request.httpBody = try? JSONSerialization.data(withJSONObject: payload)
+        do {
+            let (data, response) = try await URLSession.shared.data(for: request)
+            guard (response as? HTTPURLResponse)?.statusCode == 200 else { return nil }
+            return try JSONSerialization.jsonObject(with: data) as? [String: Any]
+        } catch { return nil } // no token/error payload logging; next wake can retry challenge.
+    }
+
+    @available(iOS 18.0, *)
+    private func reportMissingRecoveryCards() async {
+        guard let token = latestPushToStartToken,
+              let result = await recoveryRequest(["action": "challenges"]),
+              let challenges = result["challenges"] as? [[String: String]] else { return }
+        for item in challenges {
+            guard let game = item["gameId"], let channel = item["channelId"],
+                  let challenge = item["challenge"] else { continue }
+            await withGameSerialQueue(game) { [self] in
+                // Fresh enumeration AFTER server challenge; a card in ANY generation
+                // is not a no-card report. Rotation mid-request invalidates identity.
+                guard latestPushToStartToken == token,
+                      !Activity<KBOGameAttributes>.activities.contains(where: {
+                          $0.attributes.gameId == game && ($0.activityState == .active || $0.activityState == .stale)
+                      }) else { return }
+                _ = await recoveryRequest(["action": "claim", "gameId": game,
+                    "channelId": channel, "challenge": challenge, "noCard": true])
+            }
         }
     }
 
@@ -585,6 +672,12 @@ final class LiveActivityController {
                     $0.attributes.gameId == gameId && $0.activityState == .active
                         && $0.contentState.status == .live
                 }
+                liveCards.sort { lhs, rhs in
+                    if (lhs.attributes.recoveryAttempt != nil) != (rhs.attributes.recoveryAttempt != nil) {
+                        return lhs.attributes.recoveryAttempt != nil
+                    }
+                    return lhs.id < rhs.id
+                }
                 return liveCards.map { $0.attributes.channelId }
             },
             isForegroundActive: {
@@ -612,6 +705,7 @@ final class LiveActivityController {
                 guard let template = liveCards.first else { return false }   // R6: fetch 후 fresh snapshot 비어있지 않음 보장(cardsGonePostFetch 가드)
                 var channelAttributes = template.attributes
                 channelAttributes.channelId = channelId
+                channelAttributes.recoveryAttempt = nil // A retry marker cannot cross generations.
                 let state = template.contentState
                 do {
                     let newActivity = try Activity.request(
@@ -777,10 +871,22 @@ final class LiveActivityController {
         // 하나라도 있으면 반드시 한 장은 보존된다(카드 0장 불가). 나머지(다른 경기·중복·
         // 더미)는 즉시 종료 — 전환/중복 종료는 .immediate, 15분 잔상은 경기 final(W4)에만.
         let all = Activity<KBOGameAttributes>.activities
-        let sameGame = all.filter { $0.attributes.gameId == gameId }
+        let sameGame = all.filter { $0.attributes.gameId == gameId }.sorted {
+            if ($0.attributes.recoveryAttempt != nil) != ($1.attributes.recoveryAttempt != nil) {
+                return $0.attributes.recoveryAttempt != nil
+            }
+            return $0.id < $1.id
+        }
         let keepIdx = ChannelMigrationPolicy.keepIndex(
             hasChannelMarker: sameGame.map { $0.attributes.channelId != nil })
-        let keep = keepIdx.map { sameGame[$0] }
+        var keep = keepIdx.map { sameGame[$0] }
+        if #available(iOS 18.0, *),
+           case .active(let fetched) = await fetchActiveChannel(gameId: gameId), let channel = fetched {
+            let preferred = RecoveryCardPolicy.keep(sameGame.map {
+                .init(id: $0.id, channel: $0.attributes.channelId, attempt: $0.attributes.recoveryAttempt)
+            }, channel: channel)
+            if let preferred { keep = sameGame.first { $0.id == preferred } }
+        }
         for activity in all where activity.id != keep?.id {
             await activity.end(using: activity.contentState, dismissalPolicy: .immediate)
         }

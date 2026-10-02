@@ -63,6 +63,7 @@ export async function POST(req: NextRequest) {
     {
       user_id: verified.user.id,
       push_to_start_token: pushToStartToken,
+      ...(existingRow?.push_to_start_token !== pushToStartToken ? { recovery_protocol: null } : {}),
       app_build: appBuildVal,
       os_major: osMajorVal,
       frequent_pushes: frequentPushesVal,
