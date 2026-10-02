@@ -645,12 +645,12 @@ async function regularSeasonWindowScopeRegression() {
   assert.equal(regular.complete, true, "window 교집합이면 complete=true 도달 가능");
 
   const future = await collectSeasonGameUniverse(2026, "0", {
-    today: "2026-10-01",
+    today: "2026-10-13",
     fetcher: async (date) => date > w.end ? { games: [], emptyVerified: false } : VERIFIED_EMPTY,
   });
-  assert.ok(future.expectedDates.includes("20261001"), "window.end 뒤 날짜를 조용히 제외하지 않음");
+  assert.ok(future.expectedDates.includes("20261013"), "window.end 뒤 날짜를 조용히 제외하지 않음");
   assert.equal(future.complete, false, "순연 가능 날짜 미검증이면 complete=true 금지");
-  assert.ok(future.failedDates.includes("20261001"));
+  assert.ok(future.failedDates.includes("20261013"));
 
   // 삼순 P0 RED — 앞의 assert 는 end 뒤 날짜를 **강제로** unverified 로 만들어 반대가설을
   // 검사하지 않았다. 진짜 경계는 "KBO+Naver 둘 다 미래 날짜를 빈 응답으로 줌" —
@@ -658,7 +658,7 @@ async function regularSeasonWindowScopeRegression() {
   // complete=true / last=20261031 로 권위 우주를 거짓 확정했다(독립 probe 재현).
   // end 뒤 horizon 은 응답 내용과 무관하게 구조적 incomplete 여야 한다.
   const alwaysVerifiedEmpty = await collectSeasonGameUniverse(2026, "0", {
-    today: "2026-10-01",
+    today: "2026-10-13",
     fetcher: async (): Promise<SeasonGameFetchResult> => VERIFIED_EMPTY,
   });
   assert.equal(
@@ -721,7 +721,7 @@ async function regularSeasonWindowScopeRegression() {
 
   // 전-시리즌 우주(srId≠"0")는 이 경계 규칙의 대상이 아니다 — 종랰 동작 보존.
   const allFuture = await collectSeasonGameUniverse(2026, "0,1,3,4,5,7,9", {
-    today: "2026-10-01",
+    today: "2026-10-13",
     fetcher: async (): Promise<SeasonGameFetchResult> => VERIFIED_EMPTY,
   });
   assert.equal(allFuture.complete, true, "전-시리즌 우주는 end 경계 규칙 미적용(기존 동작)");

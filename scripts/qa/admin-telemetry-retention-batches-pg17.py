@@ -50,7 +50,8 @@ for name in ['20260721_admin_traffic_page_view_rollup.sql',
              '20260721_admin_traffic_dwell_rollup.sql',
              '20260722_admin_telemetry_retention.sql',
              '20260918_telemetry_retention_preview_scan.sql',
-             '20260925_telemetry_retention_kind_batches.sql']:
+             '20260925_telemetry_retention_kind_batches.sql',
+             '20261002_telemetry_rollup_bounded_lock.sql']:
     sql('BEGIN;\n'+Path('supabase/migrations',name).read_text()+'\nCOMMIT;')
 sql('ANALYZE;')
 ref = "'supabase-physical:1@'||clock_timestamp()::text"
@@ -58,7 +59,7 @@ batch = f"SELECT admin_telemetry_retention_batch(true,{ref});"
 for lock, expected, request in [
     ("SELECT pg_advisory_xact_lock(hashtextextended('admin_telemetry_retention',0));", 'already running', batch),
     ('LOCK TABLE admin_page_views IN ROW EXCLUSIVE MODE;', 'could not obtain lock', batch),
-    ('LOCK TABLE admin_page_views IN ROW EXCLUSIVE MODE;', 'could not obtain lock',
+    ('LOCK TABLE admin_page_views IN ROW EXCLUSIVE MODE;', 'lock timeout',
      f'SELECT admin_telemetry_retention_rollups({ref});'),
 ]:
     locker = subprocess.Popen(base, stdin=subprocess.PIPE, stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True)
@@ -70,7 +71,7 @@ for lock, expected, request in [
         if 'READY' in line: break
     started = time.monotonic()
     sql("SET statement_timeout='8s';"+request, expected)
-    assert time.monotonic()-started < 1.5, 'lock conflict must fail without waiting'
+    assert time.monotonic()-started < 1.5, 'lock conflict must fail within bounded wait'
     assert locker.wait(timeout=5) == 0
 assert sql('SELECT count(*) FROM admin_telemetry_retention_runs') == '0'
 sql('SET ROLE anon; SELECT admin_telemetry_retention_batch(false,NULL);', 'permission denied')
@@ -83,6 +84,15 @@ for kind,count in [('pageViews',163434),('pageDwell',145590)]:
     assert body['rawKind']==kind and body['deleted'][kind]==count, body
     results.append({'kind':kind,'rows':count,'ms':elapsed,'audit':body['auditId']})
 assert json.loads(sql(batch))['done'] is True
-sql(f"SET statement_timeout='8s';SELECT admin_telemetry_retention_rollups({ref});")
+# A short concurrent writer should finish within the bounded wait (no RPC retry).
+locker = subprocess.Popen(base, stdin=subprocess.PIPE, stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True)
+locker.stdin.write('BEGIN; LOCK TABLE admin_page_dwell IN ROW EXCLUSIVE MODE;\n\\echo READY\nSELECT pg_sleep(0.2); COMMIT;\n')
+locker.stdin.close()
+while 'READY' not in locker.stdout.readline():
+    assert locker.poll() is None, 'short lock holder failed'
+output = sql(f"SET statement_timeout='8s'; SET lock_timeout='1500ms'; SELECT admin_telemetry_retention_rollups({ref}); SHOW lock_timeout;")
+assert locker.wait(timeout=5) == 0
+assert output.splitlines()[-1] == '1500ms', 'function lock timeout must not leak'
+
 assert sql('SELECT count(*) FROM admin_telemetry_retention_runs')=='3'
-print(json.dumps({'result':'PASS','batches':results,'locks':'NOWAIT/advisory PASS','role':'anon denied','timeout':'8s unchanged'}))
+print(json.dumps({'result':'PASS','batches':results,'locks':'raw NOWAIT / rollup bounded wait / advisory PASS','role':'anon denied','timeout':'8s unchanged'}))
