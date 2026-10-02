@@ -7,6 +7,7 @@
  * It is a pre-application experiment, NOT deployed retrieval or End-User QA.
  * No production accounts, conversations, logs, cache, or corpus writes.
  */
+import { contextRoutingRequest, callContextRouting, CONTEXT_ROUTING_NOTE } from "../baseball-qa/rag/experimental-context-routing";
 import fs from "node:fs";
 import { createHash } from "node:crypto";
 import { officialModelEvidenceContent } from "../../src/lib/baseball-qa/rag/official-parenthetical-evidence";
@@ -34,8 +35,11 @@ const distance = (a: number[], b: number[]) => 1 - a.reduce((s, n, i) => s + n *
 
 async function main() {
   const suite = option("suite") ?? "original";
-  if (!["original", "exclusions", "exclusion-focus", "flyout-regression", "flyout-context", "official-documents", "official81"].includes(suite)) throw new Error("unknown suite");
+  if (!["context-rules", "original", "exclusions", "exclusion-focus", "flyout-regression", "flyout-context", "official-documents", "official81"].includes(suite)) throw new Error("unknown suite");
+  const routingMode = option("routing");
+  if (routingMode && routingMode !== "context") throw new Error("unknown routing mode");
   const selectionMode = option("selection");
+  if (routingMode && (selectionMode || option("annotations") || option("supplement"))) throw new Error("routing experiment must be isolated");
   if (selectionMode && selectionMode !== "contextual") throw new Error("unknown selection experiment");
   const questionsFile = option("questions-file");
   if ((suite === "official81") !== Boolean(questionsFile)) throw new Error("official81 requires questions-file; other suites forbid it");
@@ -67,13 +71,19 @@ async function main() {
     const sample = JSON.parse(fs.readFileSync(new URL("./fixtures/official-parenthetical-document-questions.json", import.meta.url), "utf8")) as Array<{ question: string }>;
     QUESTIONS.splice(0, QUESTIONS.length, ...sample.map(r => r.question));
   }
+  if (suite === "context-rules") QUESTIONS.splice(0, QUESTIONS.length,
+    "이사에서는 인필드 플라이가 없어?",
+    "2사 1·2루에서 내야수가 평범하게 잡을 수 있는 페어 플라이면 인필드플라이야?",
+    "1사 만루에서 번트가 아닌 직선타구도 인필드플라이야?",
+    "2024년 최다안타는 누구야?");
   const contextFile = option("context-file");
-  if ((suite === "flyout-context") !== Boolean(contextFile)) throw new Error("flyout-context requires --context-file, other suites forbid it");
+  if ((["flyout-context", "context-rules"].includes(suite)) !== Boolean(contextFile)) throw new Error("flyout-context/context-rules require --context-file, other suites forbid it");
   const previousTurn = contextFile ? JSON.parse(fs.readFileSync(contextFile, "utf8")) : null;
   if (previousTurn && (!previousTurn.question || !previousTurn.answer || !previousTurn.answeredAt || !previousTurn.currentCreatedAt)) throw new Error("complete previous turn required");
   const out = option("out");
   const reps = Number(option("reps") ?? "3");
   if (!out || !path.isAbsolute(out) || fs.existsSync(out) || !Number.isInteger(reps) || reps < 1 || reps > 10) throw new Error("new absolute --out and reps 1..10 required");
+  if (suite === "context-rules" && reps !== 5) throw new Error("context-rules requires reps=5");
   if (suite === "official81" && reps !== 1) throw new Error("official81 requires reps=1");
   if (suite === "exclusion-focus" && reps !== 5) throw new Error(`${suite} requires fixed --reps=5 budget`);
   if (suite === "official-documents" && reps !== 3) throw new Error("official-documents requires --reps=3");
@@ -110,7 +120,7 @@ async function main() {
     }
   }
   const runs: unknown[] = [];
-  const save = () => fs.writeFileSync(out, JSON.stringify({ suite, plannedRuns: QUESTIONS.length * reps, mode: selectionMode ? "contextual-selection-experiment" : file ? "local-ranked-supplement" : annotationFile ? "source-bound-annotation-experiment" : "production-read-only", reps, previousTurn, annotations, annotatedCalls, experimentCalls, questions: QUESTIONS, runs }, null, 2));
+  const save = () => fs.writeFileSync(out, JSON.stringify({ suite, plannedRuns: QUESTIONS.length * reps, mode: routingMode ? "context-routing-experiment" : selectionMode ? "contextual-selection-experiment" : file ? "local-ranked-supplement" : annotationFile ? "source-bound-annotation-experiment" : "production-read-only", reps, previousTurn, annotations, annotatedCalls, experimentCalls, questions: QUESTIONS, runs }, null, 2));
   for (let rep = 0; rep < reps; rep++) for (const question of QUESTIONS) {
     const trace: unknown[] = [];
     const deps: QaDeps = {
@@ -155,12 +165,13 @@ async function main() {
           return { ...row, content: `${officialModelEvidenceContent(row)}\n[원문 구조화 주석 — 파생 데이터]\n${annotation.note}` };
         });
         if (matched.length) experimentCalls++;
-        const request = buildRagLlmRequest(q, modelEvidence, RAG_OFFICIAL_SYSTEM_PROMPT, extras);
+        const request = routingMode && extras?.context ? contextRoutingRequest(q, modelEvidence, extras) : buildRagLlmRequest(q, modelEvidence, RAG_OFFICIAL_SYSTEM_PROMPT, extras);
+        const routingApplied = Boolean(routingMode && request.systemInstruction.parts[0].text.includes(CONTEXT_ROUTING_NOTE));
         const servingAnnotationCount = request.contents[0].parts[0].text.split("[원문 구조화 주석 — 파생 데이터]").length - 1;
         if (servingAnnotationCount) annotatedCalls++;
-        const raw = await server.callOfficialRagLlm(q, modelEvidence, extras);
+        const raw = routingApplied ? await callContextRouting(request, extras) : await server.callOfficialRagLlm(q, modelEvidence, extras);
         trace.push({ stage: "official-generation", question: q, evidence, extras, matchedAnnotations: matched,
-          request, servingAnnotationCount, raw });
+          request, routingApplied, servingAnnotationCount, raw });
         return raw;
       },
       callLlm: async (...args) => {

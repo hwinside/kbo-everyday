@@ -4,7 +4,7 @@ const paths = process.argv.slice(2);
 if (paths.length !== 2) throw new Error('two paths: baseline candidate');
 const files = paths.map(p => JSON.parse(fs.readFileSync(p,'utf8')));
 const [base,cand] = files;
-if (base.mode !== 'production-read-only' || cand.mode !== 'contextual-selection-experiment'
+if (base.mode !== 'production-read-only' || !['contextual-selection-experiment','context-routing-experiment'].includes(cand.mode)
   || base.suite !== cand.suite || base.reps !== cand.reps
   || JSON.stringify(base.questions) !== JSON.stringify(cand.questions)
   || JSON.stringify(base.previousTurn) !== JSON.stringify(cand.previousTurn)
