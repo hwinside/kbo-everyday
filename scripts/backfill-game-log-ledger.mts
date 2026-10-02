@@ -14,6 +14,8 @@
  * (구 scripts/backfill-game-logs.mts는 결측→0 강등(lenient) 경로라 ledger를 만들지 않는다 —
  *  완료 증거가 필요한 backfill은 이 스크립트를 쓴다.)
  */
+import { readFileSync } from "node:fs";
+import { fetchGames } from "@/lib/crawler/kbo-api";
 import { createClient } from "@supabase/supabase-js";
 import { getSeasonGames } from "@/lib/crawler/season-games-cache";
 import { fetchGameBoxscore } from "@/lib/game-logs/ingest";
@@ -25,7 +27,19 @@ const seasonArg = process.argv.indexOf("--season");
 const SEASON = seasonArg >= 0 ? Number(process.argv[seasonArg + 1]) : 2026;
 const limitArg = process.argv.indexOf("--limit");
 const LIMIT = limitArg >= 0 ? Number(process.argv[limitArg + 1]) : 0;
-const CONCURRENCY = 4;
+// Explicit reviewed game-ID list limits incident recovery; no season-wide writes.
+const idsArg = process.argv.indexOf("--game-ids-file");
+const TARGET_IDS: string[] | null = idsArg < 0 ? null : (() => {
+  const value: unknown = JSON.parse(readFileSync(process.argv[idsArg + 1], "utf8"));
+  if (!Array.isArray(value) || value.length === 0 || value.length > 50 ||
+      value.some((id) => typeof id !== "string" || !/^\d{8}[A-Z]{4}[0-9]$/.test(id) || !id.startsWith(String(SEASON))) ||
+      new Set(value).size !== value.length || LIMIT !== 0) {
+    throw new Error("Invalid explicit game list (1–50 unique season IDs, no --limit)");
+  }
+  return value;
+})();
+// Explicit targets must run serially: throwing on the first incomplete must prevent the next write.
+const CONCURRENCY = TARGET_IDS ? 1 : 4;
 
 async function mapPool<T, R>(items: T[], limit: number, fn: (item: T) => Promise<R>): Promise<R[]> {
   const out: R[] = new Array(items.length);
@@ -45,9 +59,18 @@ async function main() {
 
   // 정규시즌만. srId 근거는 scripts/backfill-game-logs.mts와 동일 (삼순 리뷰 PR #178 실측).
   const REGULAR_SEASON_SR_ID = "0";
-  const all = await getSeasonGames(SEASON, REGULAR_SEASON_SR_ID);
+  const all = TARGET_IDS
+    ? (await mapPool([...new Set(TARGET_IDS.map((id) => id.slice(0, 8)))], 2,
+        (date) => fetchGames(date, REGULAR_SEASON_SR_ID))).flat()
+    : await getSeasonGames(SEASON, REGULAR_SEASON_SR_ID);
   const finals = all.filter((g) => g.status === "final");
-  const targets = LIMIT > 0 ? finals.slice(-LIMIT) : finals;
+  const targets = TARGET_IDS
+    ? TARGET_IDS.map((id) => {
+        const matches = finals.filter((g) => g.gameId === id);
+        if (matches.length !== 1) throw new Error(`Target not uniquely final: ${id}`);
+        return matches[0];
+      })
+    : LIMIT > 0 ? finals.slice(-LIMIT) : finals;
   console.log(`[ledger-backfill] games: ${all.length} total, ${finals.length} final, ${targets.length} target`);
 
   if (!APPLY) {
@@ -77,6 +100,7 @@ async function main() {
     console.log(`\n[ledger-backfill] DRY-RUN 요약: complete 후보 ${ok} / 문제 ${problems.length}`);
     for (const p of problems) console.log(`  ✗ ${p}`);
     console.log(`(dry-run — ledger/rows 미기록. --apply로 실제 backfill)`);
+    if (TARGET_IDS && problems.length) throw new Error("Explicit target preflight failed");
     return;
   }
 
@@ -92,7 +116,10 @@ async function main() {
     const r = await ingestGameWithLedger(client, g);
     done++;
     if (r.status === "complete") complete++;
-    else incompletes.push(`${r.gameId}: ${r.failureReason}`);
+    else {
+      incompletes.push(`${r.gameId}: ${r.failureReason}`);
+      if (TARGET_IDS) throw new Error(`Stopped after incomplete target: ${r.gameId}:${r.failureReason}`);
+    }
     if (done % 50 === 0) console.log(`[ledger-backfill] ${done}/${targets.length}…`);
   });
 
