@@ -1,0 +1,942 @@
+{
+  "provenance": "Read-only genius_rag_serving_chunks snapshot 2026-10-02; exact source revision/generation; existing PDF newline artifacts preserved",
+  "rows": [
+    {
+      "row": {
+        "source": "kbo_official",
+        "inputKind": "serving_chunk",
+        "id": 9665,
+        "sourceKey": "kbo:ebook:2026-kbo-리그-규정",
+        "claimGeneration": 2,
+        "revision": "sha256:8d2b83fc788790a3",
+        "canonicalUrl": "https://www.koreabaseball.com/kbo/board/ebook/ebookpublication.aspx",
+        "section": "2026 KBO 리그 규정#p58",
+        "text": "제72조 경기개시 시간\n① 전 경 기 1 3 : 0 0\n(단, 7, 8월 경기가 야간경기로 편성될 경우 18:00에 거행)\n② 경기력 향상을 위해 필요시 경기개시 시간을 11:00와 16:00 및\n야간경기로 변경하여 거행할 수 있도록 하며, 이동일과 구단\n사정으로 시간 변경이 필요한 경우 반드시 해당 경기의 7일 전\n에 확정하여 KBO에 통보, 사전승인을 받아야 한다. 단, 7, 8월\n경기는 3일 전에 KBO에 통보, 사전승인을 받아야 한다.\n(2016.3.7\n➜ 2017.1.10 ➜ 2019.3.15 개정)",
+        "rawContentSha256": "34a7810e3fc087ec37ce75757ecb3f966c696388cbda8ba6faecbf86d1ae2c01"
+      },
+      "annotation": {
+        "canonicalUrl": "https://www.koreabaseball.com/kbo/board/ebook/ebookpublication.aspx",
+        "contentSha256": "c623ed19eca566cfaf23225d6aff8c95f67c0172b63316ccb689a7b1e696aa26",
+        "sourceRevision": "sha256:8d2b83fc788790a3",
+        "sourceKey": "kbo:ebook:2026-kbo-리그-규정",
+        "chunkId": 9665,
+        "claimGeneration": 2,
+        "note": "괄호 직전 원문(적용 범위는 원문 전체로 판단): \n단서 원문(분해하지 않음): (단, 7, 8월 경기가 야간경기로 편성될 경우 18:00에 거행)",
+        "structure": {
+          "version": "official-parenthetical-v2",
+          "sourceRevision": "sha256:8d2b83fc788790a3",
+          "contentSha256": "34a7810e3fc087ec37ce75757ecb3f966c696388cbda8ba6faecbf86d1ae2c01",
+          "relations": [
+            {
+              "kind": "qualifier-quote",
+              "parenthetical": {
+                "start": 31,
+                "end": 68,
+                "quote": "(단, 7, 8월 경기가 야간경기로 편성될 경우 18:00에 거행)"
+              },
+              "context": {
+                "start": 31,
+                "end": 31,
+                "quote": ""
+              },
+              "coordination": "unsplit",
+              "items": [
+                {
+                  "start": 32,
+                  "end": 67,
+                  "quote": "단, 7, 8월 경기가 야간경기로 편성될 경우 18:00에 거행"
+                }
+              ]
+            }
+          ],
+          "unresolved": []
+        },
+        "section": "2026 KBO 리그 규정#p58"
+      }
+    },
+    {
+      "row": {
+        "source": "kbo_official",
+        "inputKind": "serving_chunk",
+        "id": 10029,
+        "sourceKey": "kbo:ebook:2026-kbo-야구규약",
+        "claimGeneration": 2,
+        "revision": "sha256:bed799a762c4f92d",
+        "canonicalUrl": "https://www.koreabaseball.com/kbo/board/ebook/ebookpublication.aspx",
+        "section": "2026 KBO 야구규약#p143",
+        "text": "제2조 [공인의 신청]\n① 공인신청 조건: 공인배트 제조·판매업자로서 승인을 받고자\n하는 자는 취급하는 제품이 제4조 [제조기준]에 적합하여야 한다.\n② 공인신청 절차: 전항에 해당하는 자로서 공인을 신청하고자 할\n때에는 다음의 사항을 기재한 신청서류 및 배트 견본을 총재에게\n제출하여야 한다.\n1. 국내산배트 제조업자\n가. 공인신청서(KBO 양식)\n나. 신청자의 사업자등록증 사본\n다. 전년도 납세 증명원\n라. 국내 공장등록증 사본(배트가 국내위탁제조에 의한 경우는\n위탁 공장의 등록증 사본)\n마. 배트 제조공정의 상세한 현황(배트 제조에 소요되는 재료\n의 명세 포함)\n바. 전년 생산실적 및 판매현황\n사. 배트 견본 4자루(일반 2, 커프트 2)\n2. 외국산배트 수입업자\n가. 공인신청서(KBO 양식)\n나. 신청자의 사업자등록증 사본\n다. 전년도 납세 증명원\n라. 해당 수입배트 제조사와의 국내 독점 판매권을 증명할 수\n있는 영문 혹은 국문 번역 계약서(한국 총판권으로 원본 대조\n필 날인, 당해 연도 내용 포함)\n마. 외국산 배트의 공인은 MLB와 NPB에서 공인된 제품에 한\n한다.\n바. 배트 견본 4자루(일반 2, 커프트 2)",
+        "rawContentSha256": "6e8890fb470efd237103835593477ecb10f3ed1dda4742ae338cab541f034c84"
+      },
+      "annotation": {
+        "canonicalUrl": "https://www.koreabaseball.com/kbo/board/ebook/ebookpublication.aspx",
+        "contentSha256": "f1afe38c51d5dc08476610dbb38b550a2cdb0da999fd7bace54e9b02ac913815",
+        "sourceRevision": "sha256:bed799a762c4f92d",
+        "sourceKey": "kbo:ebook:2026-kbo-야구규약",
+        "chunkId": 10029,
+        "claimGeneration": 2,
+        "note": "괄호 직전 원문(적용 범위는 원문 전체로 판단): 국내 공장등록증 사본\n단서 원문(분해하지 않음): (배트가 국내위탁제조에 의한 경우는\n위탁 공장의 등록증 사본)",
+        "structure": {
+          "version": "official-parenthetical-v2",
+          "sourceRevision": "sha256:bed799a762c4f92d",
+          "contentSha256": "6e8890fb470efd237103835593477ecb10f3ed1dda4742ae338cab541f034c84",
+          "relations": [
+            {
+              "kind": "qualifier-quote",
+              "parenthetical": {
+                "start": 242,
+                "end": 276,
+                "quote": "(배트가 국내위탁제조에 의한 경우는\n위탁 공장의 등록증 사본)"
+              },
+              "context": {
+                "start": 230,
+                "end": 242,
+                "quote": " 국내 공장등록증 사본"
+              },
+              "coordination": "unsplit",
+              "items": [
+                {
+                  "start": 243,
+                  "end": 275,
+                  "quote": "배트가 국내위탁제조에 의한 경우는\n위탁 공장의 등록증 사본"
+                }
+              ]
+            }
+          ],
+          "unresolved": []
+        },
+        "section": "2026 KBO 야구규약#p143"
+      }
+    },
+    {
+      "row": {
+        "source": "kbo_official",
+        "inputKind": "serving_chunk",
+        "id": 10062,
+        "sourceKey": "kbo:ebook:2026-kbo-야구규약",
+        "claimGeneration": 2,
+        "revision": "sha256:bed799a762c4f92d",
+        "canonicalUrl": "https://www.koreabaseball.com/kbo/board/ebook/ebookpublication.aspx",
+        "section": "2026 KBO 야구규약#p185",
+        "text": "제14조 [급여의 제한] 수급권자가 허위 또는 부정의 서류를 제출하\n여 이 규정에 부당한 손해를 끼쳐 변제할 것을 확정했을 때에는\n연금운영위원회의 결의에 따라 감액 또는 지급을 정지할 수 있다.\n(단, 불입액에 대하여는 감액 또는 지급을 정지할 수 없다)",
+        "rawContentSha256": "71170a07a4abce35f90ed4bec6c2781b4a342cfda3a6b2b99db80bfff717aeea"
+      },
+      "annotation": {
+        "canonicalUrl": "https://www.koreabaseball.com/kbo/board/ebook/ebookpublication.aspx",
+        "contentSha256": "335d4cceec6b0c0162b535dfd16e665fd488638fe1a7268dc86fc5c226716a00",
+        "sourceRevision": "sha256:bed799a762c4f92d",
+        "sourceKey": "kbo:ebook:2026-kbo-야구규약",
+        "chunkId": 10062,
+        "claimGeneration": 2,
+        "note": "괄호 직전 원문(적용 범위는 원문 전체로 판단): \n단서 원문(분해하지 않음): (단, 불입액에 대하여는 감액 또는 지급을 정지할 수 없다)",
+        "structure": {
+          "version": "official-parenthetical-v2",
+          "sourceRevision": "sha256:bed799a762c4f92d",
+          "contentSha256": "71170a07a4abce35f90ed4bec6c2781b4a342cfda3a6b2b99db80bfff717aeea",
+          "relations": [
+            {
+              "kind": "qualifier-quote",
+              "parenthetical": {
+                "start": 109,
+                "end": 142,
+                "quote": "(단, 불입액에 대하여는 감액 또는 지급을 정지할 수 없다)"
+              },
+              "context": {
+                "start": 109,
+                "end": 109,
+                "quote": ""
+              },
+              "coordination": "unsplit",
+              "items": [
+                {
+                  "start": 110,
+                  "end": 141,
+                  "quote": "단, 불입액에 대하여는 감액 또는 지급을 정지할 수 없다"
+                }
+              ]
+            }
+          ],
+          "unresolved": []
+        },
+        "section": "2026 KBO 야구규약#p185"
+      }
+    },
+    {
+      "row": {
+        "source": "kbo_official",
+        "inputKind": "serving_chunk",
+        "id": 10073,
+        "sourceKey": "kbo:ebook:2026-kbo-야구규약",
+        "claimGeneration": 2,
+        "revision": "sha256:bed799a762c4f92d",
+        "canonicalUrl": "https://www.koreabaseball.com/kbo/board/ebook/ebookpublication.aspx",
+        "section": "2026 KBO 야구규약#p189",
+        "text": "제24조 [임원의 직무]\n1. 위원장은 운영위원회를 대표하고 업무를 총괄한다.\n2. 운영위원은 운영위원회에 출석하여 이 규정의 운영에 관한 사\n항을 심의한다.\n3. 감사는 이 규정의 재원 및 운영관리 상태를 감사한다.\n(단, 의결권은 없다)",
+        "rawContentSha256": "167ac4cca441656e353a50fdcbd456854c61a3813e981e0f94602d3c19f796ae"
+      },
+      "annotation": {
+        "canonicalUrl": "https://www.koreabaseball.com/kbo/board/ebook/ebookpublication.aspx",
+        "contentSha256": "30e26d9f6f923cb9631bd97648f1f789b1ca85905e8a4fdcade2e446d9bd9dd1",
+        "sourceRevision": "sha256:bed799a762c4f92d",
+        "sourceKey": "kbo:ebook:2026-kbo-야구규약",
+        "chunkId": 10073,
+        "claimGeneration": 2,
+        "note": "괄호 직전 원문(적용 범위는 원문 전체로 판단): \n단서 원문(분해하지 않음): (단, 의결권은 없다)",
+        "structure": {
+          "version": "official-parenthetical-v2",
+          "sourceRevision": "sha256:bed799a762c4f92d",
+          "contentSha256": "167ac4cca441656e353a50fdcbd456854c61a3813e981e0f94602d3c19f796ae",
+          "relations": [
+            {
+              "kind": "qualifier-quote",
+              "parenthetical": {
+                "start": 122,
+                "end": 134,
+                "quote": "(단, 의결권은 없다)"
+              },
+              "context": {
+                "start": 122,
+                "end": 122,
+                "quote": ""
+              },
+              "coordination": "unsplit",
+              "items": [
+                {
+                  "start": 123,
+                  "end": 133,
+                  "quote": "단, 의결권은 없다"
+                }
+              ]
+            }
+          ],
+          "unresolved": []
+        },
+        "section": "2026 KBO 야구규약#p189"
+      }
+    },
+    {
+      "row": {
+        "source": "kbo_official",
+        "inputKind": "serving_chunk",
+        "id": 10089,
+        "sourceKey": "kbo:ebook:2026-kbo-야구규약",
+        "claimGeneration": 2,
+        "revision": "sha256:bed799a762c4f92d",
+        "canonicalUrl": "https://www.koreabaseball.com/kbo/board/ebook/ebookpublication.aspx",
+        "section": "2026 KBO 야구규약#p195",
+        "text": "제4조 [아마추어육성] 한국야구위원회 소속구단은 아마추어 야구\n육성을 위하여 계약을 체결한 선수의 출신 중학교에 계약금의 3%\n(야구용품 지원에 한함)를 지원해야 하며 선수가 최종으로 졸업한\n학교(4년제 대학교 2학년 또는 3년제 대학교 2학년에 재학 중 지\n명 받은 선수의 경우 재학 중이던 대학교에 지원)에 계약금의 7%\n(야구용품 지원에 한함)를 지원해야 한다. 계약금에 대한 소속학\n교의 지원금은 인상 조정될 수 있다. 학교에 대한 지원금 지급시\n기는 계약금을 선수에게 지급한 후로 한다.",
+        "rawContentSha256": "e17004f8173fb0ad57acfc8385c9b2c056f5d398132cc9acb6cae5d1f6475bd9"
+      },
+      "annotation": {
+        "canonicalUrl": "https://www.koreabaseball.com/kbo/board/ebook/ebookpublication.aspx",
+        "contentSha256": "4205435b4681527c8ae00744de7474cce519a4e0cd916e54699bd7a67a83bbb9",
+        "sourceRevision": "sha256:bed799a762c4f92d",
+        "sourceKey": "kbo:ebook:2026-kbo-야구규약",
+        "chunkId": 10089,
+        "claimGeneration": 2,
+        "note": "괄호 직전 원문(적용 범위는 원문 전체로 판단): \n단서 원문(분해하지 않음): (야구용품 지원에 한함)\n괄호 직전 원문(적용 범위는 원문 전체로 판단): 학교\n단서 원문(분해하지 않음): (4년제 대학교 2학년 또는 3년제 대학교 2학년에 재학 중 지\n명 받은 선수의 경우 재학 중이던 대학교에 지원)\n괄호 직전 원문(적용 범위는 원문 전체로 판단): \n단서 원문(분해하지 않음): (야구용품 지원에 한함)",
+        "structure": {
+          "version": "official-parenthetical-v2",
+          "sourceRevision": "sha256:bed799a762c4f92d",
+          "contentSha256": "e17004f8173fb0ad57acfc8385c9b2c056f5d398132cc9acb6cae5d1f6475bd9",
+          "relations": [
+            {
+              "kind": "qualifier-quote",
+              "parenthetical": {
+                "start": 71,
+                "end": 84,
+                "quote": "(야구용품 지원에 한함)"
+              },
+              "context": {
+                "start": 71,
+                "end": 71,
+                "quote": ""
+              },
+              "coordination": "unsplit",
+              "items": [
+                {
+                  "start": 72,
+                  "end": 83,
+                  "quote": "야구용품 지원에 한함"
+                }
+              ]
+            },
+            {
+              "kind": "qualifier-quote",
+              "parenthetical": {
+                "start": 109,
+                "end": 172,
+                "quote": "(4년제 대학교 2학년 또는 3년제 대학교 2학년에 재학 중 지\n명 받은 선수의 경우 재학 중이던 대학교에 지원)"
+              },
+              "context": {
+                "start": 107,
+                "end": 109,
+                "quote": "학교"
+              },
+              "coordination": "unsplit",
+              "items": [
+                {
+                  "start": 110,
+                  "end": 171,
+                  "quote": "4년제 대학교 2학년 또는 3년제 대학교 2학년에 재학 중 지\n명 받은 선수의 경우 재학 중이던 대학교에 지원"
+                }
+              ]
+            },
+            {
+              "kind": "qualifier-quote",
+              "parenthetical": {
+                "start": 182,
+                "end": 195,
+                "quote": "(야구용품 지원에 한함)"
+              },
+              "context": {
+                "start": 182,
+                "end": 182,
+                "quote": ""
+              },
+              "coordination": "unsplit",
+              "items": [
+                {
+                  "start": 183,
+                  "end": 194,
+                  "quote": "야구용품 지원에 한함"
+                }
+              ]
+            }
+          ],
+          "unresolved": []
+        },
+        "section": "2026 KBO 야구규약#p195"
+      }
+    },
+    {
+      "row": {
+        "source": "kbo_official",
+        "inputKind": "serving_chunk",
+        "id": 10115,
+        "sourceKey": "kbo:ebook:2026-kbo-야구규약",
+        "claimGeneration": 2,
+        "revision": "sha256:bed799a762c4f92d",
+        "canonicalUrl": "https://www.koreabaseball.com/kbo/board/ebook/ebookpublication.aspx",
+        "section": "2026 KBO 야구규약#p198",
+        "text": "제13조 [징계] (이어짐)\n- 해당 대회에서 획득한 국가대표 포상\n포인트 박탈 종교·인종·성차별 행위 등(SNS를 통한 명예훼손 등 반사회적 행위로 사회적 물의를 야기하는 경우 포함) - 1년 이상의 대표팀 참가자격 박탈 - 해당 대회에서 획득한 국가대표 포상 포인트 박탈 기타 ① 위 각 제재수단은 병과할 수 있으며, 벌금, 사회봉사활동 또는 유소년 봉사 활동을 함께 명할 수 있다. ② 이 표에서 예시되지 않은 품위손상 행위를 하였을 경우 이 표의 예에 준하여 적절한 제재를 가할 수 있다. [2023. 7. 12 신설] 3. 전력강화위원회는 징계를 위하여 필요한 사항을 건의할 수 있 다. 4. 총재가 인정하지 않는 사유로 대표팀 감독 선임을 거부할 경우 - 거부회신일로부터 1년간 KBO 등록금지 5. 총재가 인정하지 않는 사유로 코치 선임, 선수의 대회 참가를 거부할 경우 - 거부 회신일로부터 KBO 정규시즌 30경기 출장정지 [2023. 7. 12 개정]",
+        "rawContentSha256": "f988e013b167bf49ff4a608e2f3cf8cc2b50f64b78431c66763c9fe7bd56dff1"
+      },
+      "annotation": {
+        "canonicalUrl": "https://www.koreabaseball.com/kbo/board/ebook/ebookpublication.aspx",
+        "contentSha256": "def6af416769efa70cd7eca9b2556730720bda79f8988a7a2278d3e30f2f6442",
+        "sourceRevision": "sha256:bed799a762c4f92d",
+        "sourceKey": "kbo:ebook:2026-kbo-야구규약",
+        "chunkId": 10115,
+        "claimGeneration": 2,
+        "note": "괄호 직전 원문(적용 범위는 원문 전체로 판단): 포인트 박탈 종교·인종·성차별 행위 등\n단서 원문(분해하지 않음): (SNS를 통한 명예훼손 등 반사회적 행위로 사회적 물의를 야기하는 경우 포함)",
+        "structure": {
+          "version": "official-parenthetical-v2",
+          "sourceRevision": "sha256:bed799a762c4f92d",
+          "contentSha256": "f988e013b167bf49ff4a608e2f3cf8cc2b50f64b78431c66763c9fe7bd56dff1",
+          "relations": [
+            {
+              "kind": "qualifier-quote",
+              "parenthetical": {
+                "start": 59,
+                "end": 103,
+                "quote": "(SNS를 통한 명예훼손 등 반사회적 행위로 사회적 물의를 야기하는 경우 포함)"
+              },
+              "context": {
+                "start": 38,
+                "end": 59,
+                "quote": "포인트 박탈 종교·인종·성차별 행위 등"
+              },
+              "coordination": "unsplit",
+              "items": [
+                {
+                  "start": 60,
+                  "end": 102,
+                  "quote": "SNS를 통한 명예훼손 등 반사회적 행위로 사회적 물의를 야기하는 경우 포함"
+                }
+              ]
+            }
+          ],
+          "unresolved": []
+        },
+        "section": "2026 KBO 야구규약#p198"
+      }
+    },
+    {
+      "row": {
+        "source": "kbo_official",
+        "inputKind": "serving_chunk",
+        "id": 192173,
+        "sourceKey": "kbo:ebook:2026-공식야구규칙",
+        "claimGeneration": 4,
+        "revision": "sha256:de8715105c8984be",
+        "canonicalUrl": "https://www.koreabaseball.com/kbo/board/ebook/ebookpublication.aspx",
+        "section": "2026 공식야구규칙#p46",
+        "text": "5.06 주루 (이어짐)\n베이스에 닿고 있는 경우 그 베이스를 차지할 권리는 후위주자\n에게 있고 선행주자는 야수가 공을 지닌 채 선행주자의 신체 또 는 진루해야만 하는 베이스를 터치하면 아웃된다. ⑶ 다음의 경우 타자를 제외한 각 주자는 아웃될 염려 없이 한 베 이스를 진루할 수 있다. (A) 보크가 선언되었을 경우 (B) 타자가 다음의 이유로 주자가 되어 1루에 진루하기 위해, 그 주자가 루를 비워줄 의무가 생긴 경우 ① 타자가 아웃될 염려 없이, 1루에 나갈 수 있게 된 경우 ② 타자가 타격한 페어 볼이, 야수(투수 포함)에 닿기 전 또는 야수(투수 제외)를 통과하기 전에 페어지역에서 심판원 또는 다른 주자에 닿았을 경우 [원주] 안전진루권을 얻은 주자는 위험을 무릅쓰고 주어진 베 이스 보다 많이 진루할 수 있다. 안전진루권을 얻은 선 행주자가 본루를 밟기 전에 함께 안전진루권을 얻은 후 위 주 자 가 제 3 아 웃 을 당 하 더 라 도 그 득 점 은 인 정 된 다 . [예] 2사 만루. 타자가 4구를 얻자 2루주자가 성급하게 3루를 돌아 본루까지 넘보다가 포수의 송구에 의해 아웃되었다. 비록 아웃된 뒤라 하더라도 4구와 동시에 득점이 이루어 지고 모든 주자는 다음에 닿기만 하면 된다는 이론에 따 라 3루주자의 득점이 기록된다. [주] 이 [원주]는 타자가 4구를 얻음으로써 베이스에 있는 모 든 주자에게 다음 베이스로의 안전진루권이 주어졌을 때 만 적용된다. (C) 야수가 플라이 볼을 잡은 뒤 벤치 또는 스탠드 안으로 볼 데드 지역을 밟거나 넘어져 완전히 들어가게 된 경우 [원주] 야수가 정규의 포구를 한 뒤 볼 데드 지역을 밟거나 넘 어져 완전히 들어가게 된 경우 볼 데드가 선언되며, 각",
+        "rawContentSha256": "5befb74cc4ebda86471301a9b1b668948f8215c320d607db77fcd0964e23e79f"
+      },
+      "annotation": {
+        "canonicalUrl": "https://www.koreabaseball.com/kbo/board/ebook/ebookpublication.aspx",
+        "contentSha256": "4772108f45e51c596c485f18476140896e376ef810fc8ac8326a23424921018f",
+        "sourceRevision": "sha256:de8715105c8984be",
+        "sourceKey": "kbo:ebook:2026-공식야구규칙",
+        "chunkId": 192173,
+        "claimGeneration": 4,
+        "note": "괄호 직전 원문(적용 범위는 원문 전체로 판단): (A) 보크가 선언되었을 경우 (B) 타자가 다음의 이유로 주자가 되어 1루에 진루하기 위해, 그 주자가 루를 비워줄 의무가 생긴 경우 ① 타자가 아웃될 염려 없이, 1루에 나갈 수 있게 된 경우 ② 타자가 타격한 페어 볼이, 야수(투수 포함)에 닿기 전 또는 야수\n괄호 안 제외 항목 A: 투수.\n나머지 적용 조건과 효과: 위 원문 그대로.",
+        "structure": {
+          "version": "official-parenthetical-v2",
+          "sourceRevision": "sha256:de8715105c8984be",
+          "contentSha256": "5befb74cc4ebda86471301a9b1b668948f8215c320d607db77fcd0964e23e79f",
+          "relations": [
+            {
+              "kind": "exclusion",
+              "parenthetical": {
+                "start": 309,
+                "end": 316,
+                "quote": "(투수 제외)"
+              },
+              "context": {
+                "start": 160,
+                "end": 309,
+                "quote": " (A) 보크가 선언되었을 경우 (B) 타자가 다음의 이유로 주자가 되어 1루에 진루하기 위해, 그 주자가 루를 비워줄 의무가 생긴 경우 ① 타자가 아웃될 염려 없이, 1루에 나갈 수 있게 된 경우 ② 타자가 타격한 페어 볼이, 야수(투수 포함)에 닿기 전 또는 야수"
+              },
+              "coordination": "unsplit",
+              "items": [
+                {
+                  "start": 310,
+                  "end": 312,
+                  "quote": "투수"
+                }
+              ]
+            }
+          ],
+          "unresolved": []
+        },
+        "section": "2026 공식야구규칙#p46"
+      }
+    },
+    {
+      "row": {
+        "source": "kbo_official",
+        "inputKind": "serving_chunk",
+        "id": 192190,
+        "sourceKey": "kbo:ebook:2026-공식야구규칙",
+        "claimGeneration": 4,
+        "revision": "sha256:de8715105c8984be",
+        "canonicalUrl": "https://www.koreabaseball.com/kbo/board/ebook/ebookpublication.aspx",
+        "section": "2026 공식야구규칙#p74",
+        "text": "5.10 선수교체·마운드 방문 (이어짐)\n여러 가지 경우의 상황에서 이 항은 다음과 같이 적용한다. ① 5. 10(i)에 따른 이닝의 첫 타자에 대한 투구 완료에도 불구하고 이 항의 세 타자 요건을 충족하지 않았다면 투수를 교체할 수 없다. ② 세 타자 요건을 충족하지 못한 상황에서 감독이나 코치가 2회 를 초과하여 투수 마운드에 올라갈 경우 즉시 투수를 교체해야 하는 규정에도 불구하고, 투수는 세 타자 요건을 충족할 때까지 (또는 그에 앞서 이닝이 종료된 경우는 이닝 종료 시까지)는 투",
+        "rawContentSha256": "d805f6d1d220b0b96ca61041e42a0c7f39208bb6e55c46396425684910ed045c"
+      },
+      "annotation": {
+        "canonicalUrl": "https://www.koreabaseball.com/kbo/board/ebook/ebookpublication.aspx",
+        "contentSha256": "5423df1af59e021bffd459136a563f84766e1a60c4e57e5b97332d23e4d536ea",
+        "sourceRevision": "sha256:de8715105c8984be",
+        "sourceKey": "kbo:ebook:2026-공식야구규칙",
+        "chunkId": 192190,
+        "claimGeneration": 4,
+        "note": "괄호 직전 원문(적용 범위는 원문 전체로 판단): ② 세 타자 요건을 충족하지 못한 상황에서 감독이나 코치가 2회 를 초과하여 투수 마운드에 올라갈 경우 즉시 투수를 교체해야 하는 규정에도 불구하고, 투수는 세 타자 요건을 충족할 때까지\n단서 원문(분해하지 않음): (또는 그에 앞서 이닝이 종료된 경우는 이닝 종료 시까지)",
+        "structure": {
+          "version": "official-parenthetical-v2",
+          "sourceRevision": "sha256:de8715105c8984be",
+          "contentSha256": "d805f6d1d220b0b96ca61041e42a0c7f39208bb6e55c46396425684910ed045c",
+          "relations": [
+            {
+              "kind": "qualifier-quote",
+              "parenthetical": {
+                "start": 240,
+                "end": 272,
+                "quote": "(또는 그에 앞서 이닝이 종료된 경우는 이닝 종료 시까지)"
+              },
+              "context": {
+                "start": 134,
+                "end": 240,
+                "quote": " ② 세 타자 요건을 충족하지 못한 상황에서 감독이나 코치가 2회 를 초과하여 투수 마운드에 올라갈 경우 즉시 투수를 교체해야 하는 규정에도 불구하고, 투수는 세 타자 요건을 충족할 때까지 "
+              },
+              "coordination": "unsplit",
+              "items": [
+                {
+                  "start": 241,
+                  "end": 271,
+                  "quote": "또는 그에 앞서 이닝이 종료된 경우는 이닝 종료 시까지"
+                }
+              ]
+            }
+          ],
+          "unresolved": []
+        },
+        "section": "2026 공식야구규칙#p74"
+      }
+    },
+    {
+      "row": {
+        "source": "kbo_official",
+        "inputKind": "serving_chunk",
+        "id": 192199,
+        "sourceKey": "kbo:ebook:2026-공식야구규칙",
+        "claimGeneration": 4,
+        "revision": "sha256:de8715105c8984be",
+        "canonicalUrl": "https://www.koreabaseball.com/kbo/board/ebook/ebookpublication.aspx",
+        "section": "2026 공식야구규칙#p93",
+        "text": "6. 01 방해, 업스트럭션 로 도움을 주었다고 심판원이 판단하였을 경우 ⑼ 3루에 주자가 있을 때 베이스 코치가 코치석을 떠나 어떠한 동 작으로든지 야수의 송구를 유도하였을 경우 ⑽ 1루에서 수비가 벌어지고 있을 때 주자가 본루~1루 사이의 후 반부를 달리면서 3피트 라인의 바깥쪽(오른쪽) 또는 파울 라인 의 안쪽(왼쪽) 내야 잔디로 달림으로써 1루로 던진 공을 받거 나 타구를 처리하는 야수에게 방해가 되었다고 심판원이 인정 하였을 경우 (5. 09⒜⑻ 참조) ⑾ 주자가 타구를 처리하려고 하는 야수를 피하지 않거나 송구를 고의로 방해하였을 경우 단, 2명 이상의 야수가 몰려들어 타구를 처리하고 있는 상황에 서 주자가 그 중 한 명 또는 여러 명과 부딪쳤을 때 심판원은 그 야수들 중에서 이 규칙을 적용하는 데 가장 적합한 위치에 있었던 야수 1명을 정하여 그 야수에게 닿았을 경우에만 아웃 을 선고한다. (5. 09⒝⑶ 참조) 타자의 파울 타구로 인해 주자가 수비방해로 아웃되어 제3아웃 이 된 경우 타자는 타석을 마친 것으로 간주되고, 다음 이닝의 선두타자는 다음 타순의 타자가 된다(2아웃 미만인 경우 타자는 타석에 들어가 타격을 완료한다). [원주] 타구를 처리하려는 포수와 1루로 달리려는 타자주자가 부딪 쳤을 경우 일반적으로 수비방해도, 주루방해도 없었던 것으 로 보고 아무런 선고도 하지 않는다. 타구를 처리하려는 야 수에 의한 주루방해는 매우 악의적이거나 난폭한 경우에 한 하여 선고되어야 한다. 왜냐하면 규칙은 야수에게도 공정한 권리를 주기 때문이다. 그러나 공정한 권리가 있다고 해서 아무렇게나 해도 된다는 뜻은 아니다. 가령 타구를 처리한다 면서 고의로 주자의 발을 걸면 주루방해가 선고된다. 한편 포수가 타구를 처리하는 중에 1루수나 투수가 타자주자를",
+        "rawContentSha256": "b36573d1b70f4f501cb32adf2b1aa4d439d1875d2c5bab943b7a01bd2f75bd6b"
+      },
+      "annotation": {
+        "canonicalUrl": "https://www.koreabaseball.com/kbo/board/ebook/ebookpublication.aspx",
+        "contentSha256": "77a46ab08574920c76012cb862dd5ac64085dda7dabd5bfe359c5cefdf820112",
+        "sourceRevision": "sha256:de8715105c8984be",
+        "sourceKey": "kbo:ebook:2026-공식야구규칙",
+        "chunkId": 192199,
+        "claimGeneration": 4,
+        "note": "괄호 직전 원문(적용 범위는 원문 전체로 판단): 09⒝⑶ 참조) 타자의 파울 타구로 인해 주자가 수비방해로 아웃되어 제3아웃 이 된 경우 타자는 타석을 마친 것으로 간주되고, 다음 이닝의 선두타자는 다음 타순의 타자가 된다\n단서 원문(분해하지 않음): (2아웃 미만인 경우 타자는 타석에 들어가 타격을 완료한다)",
+        "structure": {
+          "version": "official-parenthetical-v2",
+          "sourceRevision": "sha256:de8715105c8984be",
+          "contentSha256": "b36573d1b70f4f501cb32adf2b1aa4d439d1875d2c5bab943b7a01bd2f75bd6b",
+          "relations": [
+            {
+              "kind": "qualifier-quote",
+              "parenthetical": {
+                "start": 556,
+                "end": 589,
+                "quote": "(2아웃 미만인 경우 타자는 타석에 들어가 타격을 완료한다)"
+              },
+              "context": {
+                "start": 458,
+                "end": 556,
+                "quote": " 09⒝⑶ 참조) 타자의 파울 타구로 인해 주자가 수비방해로 아웃되어 제3아웃 이 된 경우 타자는 타석을 마친 것으로 간주되고, 다음 이닝의 선두타자는 다음 타순의 타자가 된다"
+              },
+              "coordination": "unsplit",
+              "items": [
+                {
+                  "start": 557,
+                  "end": 588,
+                  "quote": "2아웃 미만인 경우 타자는 타석에 들어가 타격을 완료한다"
+                }
+              ]
+            }
+          ],
+          "unresolved": []
+        },
+        "section": "2026 공식야구규칙#p93"
+      }
+    },
+    {
+      "row": {
+        "source": "kbo_official",
+        "inputKind": "serving_chunk",
+        "id": 192203,
+        "sourceKey": "kbo:ebook:2026-공식야구규칙",
+        "claimGeneration": 4,
+        "revision": "sha256:de8715105c8984be",
+        "canonicalUrl": "https://www.koreabaseball.com/kbo/board/ebook/ebookpublication.aspx",
+        "section": "2026 공식야구규칙#p100",
+        "text": "6.01 방해, 업스트럭션 (이어짐)\n이딩’이 아닌 방식으로 야수에 접촉하거나 접촉을 시도할 경우\n6. 01에 따라 해당 주자에게 방해가 선고된다. 이 항의 ‘정당한 슬 라이딩’이란 다음과 같다. ⑴ 베이스에 도달하기 전에 슬라이딩을 시작(몸이 지면에 닿아야 투수 반칙행위 6. 02 함)하는 경우 ⑵ 손과 발로 베이스에 도달하려고 하는 경우 ⑶ 슬라이딩 후 베이스(홈 플레이트 제외)에 머무르려고 하는 경우 ⑷ 야수와의 접촉을 목적으로 주로를 변경하지 않고 베이스에 도달 하는 슬라이딩을 하는 경우 ‘정당한 슬라이딩’을 시도하는 주자는 6. 01에 따라 방해가 선고되 지 않으며, 이는 허용되는 슬라이딩에 따른 결과에 의해 야수와 접 촉하는 경우도 포함한다. 또한 주자와 야수의 접촉이 베이스를 향 한 주자의 정규 주로에 야수가 위치하여(또는 움직여서) 발생하는 경우도 방해로 선고되지 않는다. 상기 예외 규칙에도 불구하고, 주 자가 롤블록을 하거나 야수의 무릎 위로 다리를 들어 올리거나 차 는 경우 또는 팔이나 상체를 던져 고의적으로 접촉할 경우(또는 시 도할 경우)에는 ‘정당한 슬라이딩’으로 인정하지 않는다. 심판원이 주자가 6. 01(j)를 위반했다고 판단한 경우 주자와 타자 모두에게 아웃을 선고한다. 단, 주자가 이미 아웃이 된 경우에는 수비 측이 플레이를 시도하려고 한 주자에게 아웃이 선고된다.",
+        "rawContentSha256": "fd2daf5fbd0a30c382a7a47d40637244528365a7983655e788655c0e5752b21c"
+      },
+      "annotation": {
+        "canonicalUrl": "https://www.koreabaseball.com/kbo/board/ebook/ebookpublication.aspx",
+        "contentSha256": "b4c776535d00cbf36771d71ca98690cdb4432b50a2ea0c56072a7b0fafdcbf04",
+        "sourceRevision": "sha256:de8715105c8984be",
+        "sourceKey": "kbo:ebook:2026-공식야구규칙",
+        "chunkId": 192203,
+        "claimGeneration": 4,
+        "note": "괄호 직전 원문(적용 범위는 원문 전체로 판단): 02 함)하는 경우 ⑵ 손과 발로 베이스에 도달하려고 하는 경우 ⑶ 슬라이딩 후 베이스\n괄호 안 제외 항목 A: 홈 플레이트.\n나머지 적용 조건과 효과: 위 원문 그대로.\n괄호 직전 원문(적용 범위는 원문 전체로 판단): 상기 예외 규칙에도 불구하고, 주 자가 롤블록을 하거나 야수의 무릎 위로 다리를 들어 올리거나 차 는 경우 또는 팔이나 상체를 던져 고의적으로 접촉할 경우\n단서 원문(분해하지 않음): (또는 시 도할 경우)",
+        "structure": {
+          "version": "official-parenthetical-v2",
+          "sourceRevision": "sha256:de8715105c8984be",
+          "contentSha256": "fd2daf5fbd0a30c382a7a47d40637244528365a7983655e788655c0e5752b21c",
+          "relations": [
+            {
+              "kind": "exclusion",
+              "parenthetical": {
+                "start": 204,
+                "end": 215,
+                "quote": "(홈 플레이트 제외)"
+              },
+              "context": {
+                "start": 155,
+                "end": 204,
+                "quote": " 02 함)하는 경우 ⑵ 손과 발로 베이스에 도달하려고 하는 경우 ⑶ 슬라이딩 후 베이스"
+              },
+              "coordination": "unsplit",
+              "items": [
+                {
+                  "start": 205,
+                  "end": 211,
+                  "quote": "홈 플레이트"
+                }
+              ]
+            },
+            {
+              "kind": "qualifier-quote",
+              "parenthetical": {
+                "start": 532,
+                "end": 544,
+                "quote": "(또는 시 도할 경우)"
+              },
+              "context": {
+                "start": 445,
+                "end": 532,
+                "quote": " 상기 예외 규칙에도 불구하고, 주 자가 롤블록을 하거나 야수의 무릎 위로 다리를 들어 올리거나 차 는 경우 또는 팔이나 상체를 던져 고의적으로 접촉할 경우"
+              },
+              "coordination": "unsplit",
+              "items": [
+                {
+                  "start": 533,
+                  "end": 543,
+                  "quote": "또는 시 도할 경우"
+                }
+              ]
+            }
+          ],
+          "unresolved": []
+        },
+        "section": "2026 공식야구규칙#p100"
+      }
+    },
+    {
+      "row": {
+        "source": "kbo_official",
+        "inputKind": "serving_chunk",
+        "id": 192240,
+        "sourceKey": "kbo:ebook:2026-공식야구규칙",
+        "claimGeneration": 4,
+        "revision": "sha256:de8715105c8984be",
+        "canonicalUrl": "https://www.koreabaseball.com/kbo/board/ebook/ebookpublication.aspx",
+        "section": "2026 공식야구규칙#p158",
+        "text": "9.12 실 책 (이어짐)\n록할 수 있다(다른 야수의 포구 방해로 글러브에서 공이 떨어지\n는 경우 등). 공식기록원은 방해를 받은 야수에게 실책을 기록 하지 않는다.",
+        "rawContentSha256": "9424526c698310fafe534cad4b0445e6403de34eb90d38df4d0879dc4dd51065"
+      },
+      "annotation": {
+        "canonicalUrl": "https://www.koreabaseball.com/kbo/board/ebook/ebookpublication.aspx",
+        "contentSha256": "c97e7455f66513f63f55d8dfcd77ab8cbc1541ea1f49b46096e7883a02674717",
+        "sourceRevision": "sha256:de8715105c8984be",
+        "sourceKey": "kbo:ebook:2026-공식야구규칙",
+        "chunkId": 192240,
+        "claimGeneration": 4,
+        "note": "괄호 직전 원문(적용 범위는 원문 전체로 판단): 록할 수 있다\n단서 원문(분해하지 않음): (다른 야수의 포구 방해로 글러브에서 공이 떨어지\n는 경우 등)",
+        "structure": {
+          "version": "official-parenthetical-v2",
+          "sourceRevision": "sha256:de8715105c8984be",
+          "contentSha256": "9424526c698310fafe534cad4b0445e6403de34eb90d38df4d0879dc4dd51065",
+          "relations": [
+            {
+              "kind": "qualifier-quote",
+              "parenthetical": {
+                "start": 22,
+                "end": 57,
+                "quote": "(다른 야수의 포구 방해로 글러브에서 공이 떨어지\n는 경우 등)"
+              },
+              "context": {
+                "start": 15,
+                "end": 22,
+                "quote": "록할 수 있다"
+              },
+              "coordination": "unsplit",
+              "items": [
+                {
+                  "start": 23,
+                  "end": 56,
+                  "quote": "다른 야수의 포구 방해로 글러브에서 공이 떨어지\n는 경우 등"
+                }
+              ]
+            }
+          ],
+          "unresolved": []
+        },
+        "section": "2026 공식야구규칙#p158"
+      }
+    },
+    {
+      "row": {
+        "source": "kbo_official",
+        "inputKind": "serving_chunk",
+        "id": 192243,
+        "sourceKey": "kbo:ebook:2026-공식야구규칙",
+        "claimGeneration": 4,
+        "revision": "sha256:de8715105c8984be",
+        "canonicalUrl": "https://www.koreabaseball.com/kbo/board/ebook/ebookpublication.aspx",
+        "section": "2026 공식야구규칙#p164",
+        "text": "9.16 자책점(EARNED RUN 自責點)\n자책점이란 투수가 책임져야 할 실점을 말한다. 자책점을 결정하려면\n실책(포수의 타격방해 포함)과 패스트볼을 제외하고 그 이닝을 재구성\n하여야 한다. 실책 없이 진루한 베이스를 결정할 경우 의심스러운 것은\n투수에게 유리하도록 한다.\n자책점을 결정할 경우 고의4구는 보통의 4구와 같은 것으로 간주한다.\n⒜ 자책점은 안타, 희생번트, 희생플라이, 도루, 풋아웃, 야수선택, 4\n사구(고의4구 포함), 보크, 폭투(제3스트라이크가 폭투가 되어 타\n자가 1루에 살아나간 경우 포함)에 의하여 주자가 득점할 때마다\n기록된다. 그러나 수비 측이 3명을 아웃시킬 수 있는 기회를 얻기\n전에 기록된 실점에 한하며, 수비 측의 방해는 여기에서 말하는 아\n웃시킬 수 있는 기회에 포함된다.\n⑴ 폭투는 오로지 투수의 과실이며 4구나 보크처럼 자책점의 요소\n가 된다.\n[주1] 여기서 말하는 ‘아웃시킬 수 있는 기회’란 수비 측이 타자 또\n는 주자를 아웃시킨 것과 실책으로 아웃시키지 못한 것을 합\n친 것을 말하며, 이것을 앞으로는 ‘아웃 기회’라고 한다. 이\n항의 뒷부분은 수비 측이 상대팀 선수 2명을 아웃시킬 기회\n가 있고 나서 앞서 말한 바와 같이 실점하더라도 다음에 해당\n될 경우 투수의 자책점이 되지 않는다는 것을 규정하고 있다.\n① 그 실점이 세 번째 아웃 기회가 실제로 아웃이 되거나 그\n이후에 기록되었을 경우\n예를 들면 선두타자 A가 중전안타, B가 투수 앞에 번트하",
+        "rawContentSha256": "1b900a39a6ed3b3e22cb3cbcabbd712cb745f9d8db18ecfe5f89c951ff6cba40"
+      },
+      "annotation": {
+        "canonicalUrl": "https://www.koreabaseball.com/kbo/board/ebook/ebookpublication.aspx",
+        "contentSha256": "5cc857b870a8f6d3a523f449abcad7f092baf92d8105a53119642b58e714ca6f",
+        "sourceRevision": "sha256:de8715105c8984be",
+        "sourceKey": "kbo:ebook:2026-공식야구규칙",
+        "chunkId": 192243,
+        "claimGeneration": 4,
+        "note": "괄호 직전 원문(적용 범위는 원문 전체로 판단): 사구(고의4구 포함), 보크, 폭투\n단서 원문(분해하지 않음): (제3스트라이크가 폭투가 되어 타\n자가 1루에 살아나간 경우 포함)",
+        "structure": {
+          "version": "official-parenthetical-v2",
+          "sourceRevision": "sha256:de8715105c8984be",
+          "contentSha256": "1b900a39a6ed3b3e22cb3cbcabbd712cb745f9d8db18ecfe5f89c951ff6cba40",
+          "relations": [
+            {
+              "kind": "qualifier-quote",
+              "parenthetical": {
+                "start": 253,
+                "end": 290,
+                "quote": "(제3스트라이크가 폭투가 되어 타\n자가 1루에 살아나간 경우 포함)"
+              },
+              "context": {
+                "start": 234,
+                "end": 253,
+                "quote": "사구(고의4구 포함), 보크, 폭투"
+              },
+              "coordination": "unsplit",
+              "items": [
+                {
+                  "start": 254,
+                  "end": 289,
+                  "quote": "제3스트라이크가 폭투가 되어 타\n자가 1루에 살아나간 경우 포함"
+                }
+              ]
+            }
+          ],
+          "unresolved": []
+        },
+        "section": "2026 공식야구규칙#p164"
+      }
+    },
+    {
+      "row": {
+        "source": "kbo_official",
+        "inputKind": "serving_chunk",
+        "id": 192249,
+        "sourceKey": "kbo:ebook:2026-공식야구규칙",
+        "claimGeneration": 4,
+        "revision": "sha256:de8715105c8984be",
+        "canonicalUrl": "https://www.koreabaseball.com/kbo/board/ebook/ebookpublication.aspx",
+        "section": "2026 공식야구규칙#p171",
+        "text": "9.20 통계\n총재는 공식통계원을 임명하여 9.02에 규정되어 있는 바와 같이 정규\n시즌에 출전한 모든 선수의 타격, 수비, 주루 및 투수 성적을 집계하여\n보존하게 한다.\n통계원은 시즌이 끝난 뒤에는 정규시즌 경기의 개인 및 팀 기록이 기재\n되어 있는 보고서를 작성하여 총재에게 제출하여야 한다. 이 보고서에\n는 각 선수의 성명을 명시하고, 타자는 좌타·우타 및 스위치히터를 구\n별하고 야수와 투수는 우투·좌투를 구별하여 기재한다.\n원정구단의 타순표에 기재된 선수가 수비에 나가기 전에 교체 되었을\n경우 실제로 그 위치에서 수비하지 않는 한 수비에 관한 기록은 주어지\n지 않는다. 공식 타순표에 기재되거나 경기에 출전한다고 발표된 모든\n선수는 (타격에 관한 통계에서는) 경기에 출전한 것으로 기록된다.\n[주1] 홈구단의 타순표에 기재된 선수가 1회초 수비에 나가지 않고 교체 되\n었을 경우 수비에 관한 출전기록은 없는 것으로 한다(단, 출전경기로\n는 인정). 공동선두가 되어 우승결정전을 치러야 할 경우 그 경기 기\n록은 정규시즌 기록에 포함시킨다(단, 우리나라에서는 적용하지 않는\n다).\n[주2] 공식기록원은 야수가 적어도 한 투구 또는 한 플레이 동안 그라운드\n에 머물러 있을 경우 해당 야수에게 수비 출전기록을 부여해야 한다.\n공식기록원은 야수의 수비교체가 이뤄지고 한 투구 또는 한 플레이가\n끝나기 전 콜드게임이 선언될 경우 대체 야수에게 공격 출전기록은\n부여하되, 수비 통계기록은 부여하지 않는다. 공식기록원은 투수교체\n가 이뤄지고 한 투구 또는 한 플레이가 끝나기 전 콜드게임이 선언될\n경우 대체 투수에게 타격 통계기록은 부여하되, 수비 통계기록 또는\n투수 출전기록을 부여하지 않는다.",
+        "rawContentSha256": "e65d7669b55775900c205c9fe8c216f3a97b60685e3866bc4bd1758e976c80f6"
+      },
+      "annotation": {
+        "canonicalUrl": "https://www.koreabaseball.com/kbo/board/ebook/ebookpublication.aspx",
+        "contentSha256": "3466dd9b99bf9d341c4f18683190ef7173b0f28080cf43abef7fed4b030ca572",
+        "sourceRevision": "sha256:de8715105c8984be",
+        "sourceKey": "kbo:ebook:2026-공식야구규칙",
+        "chunkId": 192249,
+        "claimGeneration": 4,
+        "note": "괄호 직전 원문(적용 범위는 원문 전체로 판단): 었을 경우 수비에 관한 출전기록은 없는 것으로 한다\n단서 원문(분해하지 않음): (단, 출전경기로\n는 인정)\n괄호 직전 원문(적용 범위는 원문 전체로 판단): 록은 정규시즌 기록에 포함시킨다\n단서 원문(분해하지 않음): (단, 우리나라에서는 적용하지 않는\n다)",
+        "structure": {
+          "version": "official-parenthetical-v2",
+          "sourceRevision": "sha256:de8715105c8984be",
+          "contentSha256": "e65d7669b55775900c205c9fe8c216f3a97b60685e3866bc4bd1758e976c80f6",
+          "relations": [
+            {
+              "kind": "qualifier-quote",
+              "parenthetical": {
+                "start": 464,
+                "end": 479,
+                "quote": "(단, 출전경기로\n는 인정)"
+              },
+              "context": {
+                "start": 436,
+                "end": 464,
+                "quote": "었을 경우 수비에 관한 출전기록은 없는 것으로 한다"
+              },
+              "coordination": "unsplit",
+              "items": [
+                {
+                  "start": 465,
+                  "end": 478,
+                  "quote": "단, 출전경기로\n는 인정"
+                }
+              ]
+            },
+            {
+              "kind": "qualifier-quote",
+              "parenthetical": {
+                "start": 530,
+                "end": 552,
+                "quote": "(단, 우리나라에서는 적용하지 않는\n다)"
+              },
+              "context": {
+                "start": 513,
+                "end": 530,
+                "quote": "록은 정규시즌 기록에 포함시킨다"
+              },
+              "coordination": "unsplit",
+              "items": [
+                {
+                  "start": 531,
+                  "end": 551,
+                  "quote": "단, 우리나라에서는 적용하지 않는\n다"
+                }
+              ]
+            }
+          ],
+          "unresolved": []
+        },
+        "section": "2026 공식야구규칙#p171"
+      }
+    },
+    {
+      "row": {
+        "source": "kbo_official",
+        "inputKind": "serving_chunk",
+        "id": 192280,
+        "sourceKey": "kbo:ebook:2026-kbo-야구규약-필수-조항",
+        "claimGeneration": 1,
+        "revision": "sha256:5d9127c6799317bd",
+        "canonicalUrl": "https://6ptotvmi5753.edge.naverncp.com/KBO_FILE/ebook/pdf/2026_야구규약.pdf",
+        "section": "2026 KBO 야구규약#제17장 프리에이전트(FA) > 제162조 [FA자격요건]",
+        "text": "2026 KBO 야구규약 / 제17장 프리에이전트(FA) > 제162조 [FA자격요건]\n② 제1항을 적용함에 있어 “정규시즌”이란 연도별 KBO 리그 중 KBO 시범경기와 KBO 포스트시즌을 제외한 기간을 말하며, 선수 가 다음 각 호의 어느 하나에 해당하는 경우 1 정규시즌을 활동한 것으로 본다. 다만, 1997년 정규시즌까지는 제1호 또는 제2호를 적용하고 제3호를 적용하지 아니하며, 1998년 정규시즌부터는 제1 호부터 제3호 중 하나를 충족하여야 하는 것으로 하되, 2006년 정 규시즌 이후 최초로 현역선수로 등록한 선수에 대하여는 제3호만 적용한다. 천재지변, 전쟁, 코로나바이러스감염증-19 등 감염병, 법령의 규 정, 법원의 판결, 정부 기관 또는 지방자치단체의 명령 등과 같은 불가항력적인 사유로 인해 선수계약을 체결할 당시 예정되었던 리 그 일정이 변경되어 경기수 또는 시즌 일정이 축소된 경우 1 정규 시즌으로 인정하는 현역선수 등록일수를 축소된 경기수 또는 시즌 일정에 비례하여 조정한다. 1. 타자 – 당해 정규시즌의 총 경기수의 3분의 2이상을 출전한 경우 2. 투수 – 당해 정규시즌의 규정투구횟수(정규시즌 총 경기수⨉ 1이닝)의 3분의 2이상을 투구한 경우 3. 당해 정규시즌의 현역선수 등록일수가 150일 이상인 경우(다 만, 2006년 정규시즌부터는 145일 이상인 경우로 한다)",
+        "rawContentSha256": "6db8279cf8c828fe171128b135e4592c413a219dd8e48c7d7bef78545d42f2e1"
+      },
+      "annotation": {
+        "canonicalUrl": "https://6ptotvmi5753.edge.naverncp.com/KBO_FILE/ebook/pdf/2026_야구규약.pdf",
+        "contentSha256": "e7e3fe0ac8c93cbe357322b84812db3918413ebd4b12f033a4befd6b7c123cd9",
+        "sourceRevision": "sha256:5d9127c6799317bd",
+        "sourceKey": "kbo:ebook:2026-kbo-야구규약-필수-조항",
+        "chunkId": 192280,
+        "claimGeneration": 1,
+        "note": "괄호 직전 원문(적용 범위는 원문 전체로 판단): 당해 정규시즌의 현역선수 등록일수가 150일 이상인 경우\n단서 원문(분해하지 않음): (다 만, 2006년 정규시즌부터는 145일 이상인 경우로 한다)",
+        "structure": {
+          "version": "official-parenthetical-v2",
+          "sourceRevision": "sha256:5d9127c6799317bd",
+          "contentSha256": "6db8279cf8c828fe171128b135e4592c413a219dd8e48c7d7bef78545d42f2e1",
+          "relations": [
+            {
+              "kind": "qualifier-quote",
+              "parenthetical": {
+                "start": 644,
+                "end": 680,
+                "quote": "(다 만, 2006년 정규시즌부터는 145일 이상인 경우로 한다)"
+              },
+              "context": {
+                "start": 612,
+                "end": 644,
+                "quote": " 당해 정규시즌의 현역선수 등록일수가 150일 이상인 경우"
+              },
+              "coordination": "unsplit",
+              "items": [
+                {
+                  "start": 645,
+                  "end": 679,
+                  "quote": "다 만, 2006년 정규시즌부터는 145일 이상인 경우로 한다"
+                }
+              ]
+            }
+          ],
+          "unresolved": []
+        },
+        "section": "2026 KBO 야구규약#제17장 프리에이전트(FA) > 제162조 [FA자격요건]"
+      }
+    },
+    {
+      "row": {
+        "source": "kbo_official",
+        "inputKind": "serving_chunk",
+        "id": 192283,
+        "sourceKey": "kbo:ebook:2026-kbo-야구규약-필수-조항",
+        "claimGeneration": 1,
+        "revision": "sha256:5d9127c6799317bd",
+        "canonicalUrl": "https://6ptotvmi5753.edge.naverncp.com/KBO_FILE/ebook/pdf/2026_야구규약.pdf",
+        "section": "2026 KBO 야구규약#제17장 프리에이전트(FA) > 제162조 [FA자격요건]",
+        "text": "2026 KBO 야구규약 / 제17장 프리에이전트(FA) > 제162조 [FA자격요건]\n⑤ 4년제 대학을 졸업한 선수(대한야구소프트볼협회에 4년간 대 학선수로 등록한 선수에 한하며, 이하 같다)는 제1항에도 불구하 고 8 정규시즌(단, 2022년 시즌 종료 후부터 7 정규시즌으로 단축) 을 활동함으로써 FA자격을 취득한다. 다만, 4년제 대학을 졸업한 선수가 FA자격을 취득하여 외국에 진출하고자 하는 경우에는 제5 항 본문을 적용하지 아니하고 제1항을 적용한다(2022년 시즌 종료 후부터 삭제).",
+        "rawContentSha256": "07c9e9ac152f6b515e2eefeeee85e1becf46d09688be5e202d89a2fe2cec276c"
+      },
+      "annotation": {
+        "canonicalUrl": "https://6ptotvmi5753.edge.naverncp.com/KBO_FILE/ebook/pdf/2026_야구규약.pdf",
+        "contentSha256": "ad33504ec92e639de5b89eaf4502a341719266a1c12bdfbb258c970dac68e9bf",
+        "sourceRevision": "sha256:5d9127c6799317bd",
+        "sourceKey": "kbo:ebook:2026-kbo-야구규약-필수-조항",
+        "chunkId": 192283,
+        "claimGeneration": 1,
+        "note": "괄호 직전 원문(적용 범위는 원문 전체로 판단): ⑤ 4년제 대학을 졸업한 선수(대한야구소프트볼협회에 4년간 대 학선수로 등록한 선수에 한하며, 이하 같다)는 제1항에도 불구하 고 8 정규시즌\n단서 원문(분해하지 않음): (단, 2022년 시즌 종료 후부터 7 정규시즌으로 단축)",
+        "structure": {
+          "version": "official-parenthetical-v2",
+          "sourceRevision": "sha256:5d9127c6799317bd",
+          "contentSha256": "07c9e9ac152f6b515e2eefeeee85e1becf46d09688be5e202d89a2fe2cec276c",
+          "relations": [
+            {
+              "kind": "qualifier-quote",
+              "parenthetical": {
+                "start": 128,
+                "end": 160,
+                "quote": "(단, 2022년 시즌 종료 후부터 7 정규시즌으로 단축)"
+              },
+              "context": {
+                "start": 49,
+                "end": 128,
+                "quote": "⑤ 4년제 대학을 졸업한 선수(대한야구소프트볼협회에 4년간 대 학선수로 등록한 선수에 한하며, 이하 같다)는 제1항에도 불구하 고 8 정규시즌"
+              },
+              "coordination": "unsplit",
+              "items": [
+                {
+                  "start": 129,
+                  "end": 159,
+                  "quote": "단, 2022년 시즌 종료 후부터 7 정규시즌으로 단축"
+                }
+              ]
+            }
+          ],
+          "unresolved": []
+        },
+        "section": "2026 KBO 야구규약#제17장 프리에이전트(FA) > 제162조 [FA자격요건]"
+      }
+    },
+    {
+      "row": {
+        "source": "kbo_official",
+        "inputKind": "serving_chunk",
+        "id": 193607,
+        "sourceKey": "kbo:ebook:2026-공식야구규칙-필수-조항",
+        "claimGeneration": 1,
+        "revision": "sha256:07651ec70e392723",
+        "canonicalUrl": "https://6ptotvmi5753.edge.naverncp.com/KBO_FILE/ebook/pdf/2026_야구규칙.pdf",
+        "section": "2026 공식야구규칙#40. INFIELD FLY (인필드 플라이)",
+        "text": "2026 공식야구규칙 / 40. INFIELD FLY (인필드 플라이)\n무사 또는 1사에 주자 1·2루 또는 만루일 때 타자가 친 것이 플라이 볼 (직선타구 또는 번트한 것이 떠올라 플라이 볼이 된 것은 제외)이 되어 내 야수가 평범한 수비로 포구할 수 있는 것을 말한다. 이런 상황에서 투수, 포수는 물론 내야에 자리잡은 외야수는 이 규칙의 취 지에 따라 모두 내야수로 간주한다. 심판원은 타구가 명백히 인필드 플라이라고 판단했을 경우는 주자를 보호 하기 위해 곧바로 ‘인필드 플라이’를 선고하여야 한다. 그리고 타구가 베이 스 라인 부근으로 떠올랐을 때는 ‘인필드 플라이 이프 페어(Infield Fly if Fair)’를 선고하여야 한다. 인필드 플라이가 선고되더라도 볼 인 플레이다. 따라서 주자는 플라이 볼 이 잡힐 위험을 무릅쓰고 진루할 수 있고, 보통의 플라이 볼과 마찬가지로 리터치한 후 다음 베이스를 향해 뛸 수도 있다. 그리고 타구가 파울 볼이 되면 다른 파울 볼과 같이 취급된다. 인필드 플라이로 선고된 타구가 내야에 떨어진 후 아무에게도 닿지 않은 채 바운드를 일으켜 파울 볼이 됐다면 인필드 플라이가 성립되지 않는다. 반면 최초에 베이스 라인 밖에 떨어진 타구가 아무에게도 닿지 않은 채 바 운드를 일으켜 페어지역으로 들어와 페어 볼이 되면 인필드 플라이가 성립 된다. [원주] 심판원은 인필드 플라이 규칙을 적용할 때 내야수가 보통의 수비로 처 리할 수 있느냐 없느냐를 기준으로 삼아야 하며, 잔디선이나 베이스 라 인 등을 임의로 경계선으로 설정하여서는 안 된다.",
+        "rawContentSha256": "d549530b145f0329133b25f4a23469f38d4f01f0a3dcc6ca3417f9cdfd12b740"
+      },
+      "annotation": {
+        "canonicalUrl": "https://6ptotvmi5753.edge.naverncp.com/KBO_FILE/ebook/pdf/2026_야구규칙.pdf",
+        "contentSha256": "914ecaf32b87a73316ef9bce2d44ac0ac7f8ce1d7b04888206cce2bac0b47e44",
+        "sourceRevision": "sha256:07651ec70e392723",
+        "sourceKey": "kbo:ebook:2026-공식야구규칙-필수-조항",
+        "chunkId": 193607,
+        "claimGeneration": 1,
+        "note": "괄호 직전 원문(적용 범위는 원문 전체로 판단): 무사 또는 1사에 주자 1·2루 또는 만루일 때 타자가 친 것이 플라이 볼\n괄호 안 제외 항목 A: 직선타구.\n괄호 안 제외 항목 B: 번트한 것이 떠올라 플라이 볼이 된 것.\n제외 범위: 위 병렬 항목 각각이 제외됨.\n나머지 적용 조건과 효과: 위 원문 그대로.",
+        "structure": {
+          "version": "official-parenthetical-v2",
+          "sourceRevision": "sha256:07651ec70e392723",
+          "contentSha256": "d549530b145f0329133b25f4a23469f38d4f01f0a3dcc6ca3417f9cdfd12b740",
+          "relations": [
+            {
+              "kind": "exclusion",
+              "parenthetical": {
+                "start": 82,
+                "end": 117,
+                "quote": "(직선타구 또는 번트한 것이 떠올라 플라이 볼이 된 것은 제외)"
+              },
+              "context": {
+                "start": 40,
+                "end": 82,
+                "quote": "무사 또는 1사에 주자 1·2루 또는 만루일 때 타자가 친 것이 플라이 볼 "
+              },
+              "coordination": "explicit-or",
+              "items": [
+                {
+                  "start": 83,
+                  "end": 87,
+                  "quote": "직선타구"
+                },
+                {
+                  "start": 91,
+                  "end": 112,
+                  "quote": "번트한 것이 떠올라 플라이 볼이 된 것"
+                }
+              ]
+            }
+          ],
+          "unresolved": []
+        },
+        "section": "2026 공식야구규칙#40. INFIELD FLY (인필드 플라이)"
+      }
+    }
+  ]
+}
