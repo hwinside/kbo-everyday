@@ -8,6 +8,8 @@
  * No production accounts, conversations, logs, cache, or corpus writes.
  */
 import fs from "node:fs";
+import { createHash } from "node:crypto";
+import { officialModelEvidenceContent } from "../../src/lib/baseball-qa/rag/official-parenthetical-evidence";
 import { annotationContentDigest } from "../baseball-qa/rag/official-parenthetical-structure.mjs";
 import path from "node:path";
 import { answerQuestion, type QaDeps } from "../../src/lib/baseball-qa/pipeline";
@@ -60,16 +62,17 @@ async function main() {
   if (previousTurn && (!previousTurn.question || !previousTurn.answer || !previousTurn.answeredAt || !previousTurn.currentCreatedAt)) throw new Error("complete previous turn required");
   const out = option("out");
   const reps = Number(option("reps") ?? "3");
-  if (!out || !path.isAbsolute(out) || !Number.isInteger(reps) || reps < 1 || reps > 5) throw new Error("absolute --out and reps 1..5 required");
-  if (["exclusion-focus", "flyout-regression", "flyout-context"].includes(suite) && reps !== 5) throw new Error(`${suite} requires fixed --reps=5 budget`);
+  if (!out || !path.isAbsolute(out) || !Number.isInteger(reps) || reps < 1 || reps > 10) throw new Error("absolute --out and reps 1..10 required");
+  if (suite === "exclusion-focus" && reps !== 5) throw new Error(`${suite} requires fixed --reps=5 budget`);
   if (suite === "official-documents" && reps !== 3) throw new Error("official-documents requires --reps=3");
+  if (["flyout-regression", "flyout-context"].includes(suite) && reps !== 10) throw new Error("flyout suites require fixed --reps=10 budget");
   const server = await import("../../src/lib/baseball-qa/server");
   const production = server.makeDeps(0);
   const file = option("supplement");
   // Source-bound presentation experiment only; never changes stored corpus,
   // retrieval ranking, or the pipeline's original guard evidence.
   const annotationFile = option("annotations");
-  type Annotation = { contentSha256: string; canonicalUrl: string; note: string; sourceRevision?: string };
+  type Annotation = { rawContentSha256?: string; section?: string; contentSha256: string; canonicalUrl: string; note: string; sourceRevision?: string };
   const annotations: Annotation[] = annotationFile
     ? JSON.parse(fs.readFileSync(annotationFile, "utf8")) : [];
   if (!Array.isArray(annotations) || annotations.some(a => !a
@@ -77,6 +80,7 @@ async function main() {
     || typeof a.note !== "string" || !a.note.trim())) throw new Error("invalid annotation manifest");
   if (file && annotationFile) throw new Error("supplement and annotations cannot be combined");
   let annotatedCalls = 0;
+  let experimentCalls = 0;
   const digest = annotationContentDigest;
   const additions: Array<{ evidence: RagEvidence; vector: number[] }> = [];
   if (file) {
@@ -93,7 +97,7 @@ async function main() {
     }
   }
   const runs: unknown[] = [];
-  const save = () => fs.writeFileSync(out, JSON.stringify({ suite, plannedRuns: QUESTIONS.length * reps, mode: file ? "local-ranked-supplement" : annotationFile ? "source-bound-annotation-experiment" : "production-read-only", reps, previousTurn, annotations, annotatedCalls, questions: QUESTIONS, runs }, null, 2));
+  const save = () => fs.writeFileSync(out, JSON.stringify({ suite, plannedRuns: QUESTIONS.length * reps, mode: file ? "local-ranked-supplement" : annotationFile ? "source-bound-annotation-experiment" : "production-read-only", reps, previousTurn, annotations, annotatedCalls, experimentCalls, questions: QUESTIONS, runs }, null, 2));
   for (let rep = 0; rep < reps; rep++) for (const question of QUESTIONS) {
     const trace: unknown[] = [];
     const deps: QaDeps = {
@@ -125,16 +129,19 @@ async function main() {
           if (row.sourceKind !== "kbo_ebook" || row.sourceGrade !== "tier1") return row;
           const annotation = annotations.find(a => a.canonicalUrl === row.canonicalUrl
             && (!a.sourceRevision || a.sourceRevision === row.revision)
-            && a.contentSha256 === digest(row.content));
+            && a.contentSha256 === digest(row.content)
+            && (!a.rawContentSha256 || a.rawContentSha256 === createHash("sha256").update(row.content).digest("hex"))
+            && (!a.section || a.section === row.sectionPath));
           if (!annotation) return row;
           matched.push(index);
-          return { ...row, content: `${row.content}\n[원문 구조화 주석 — 파생 데이터]\n${annotation.note}` };
+          return { ...row, content: `${officialModelEvidenceContent(row)}\n[원문 구조화 주석 — 파생 데이터]\n${annotation.note}` };
         });
+        if (matched.length) experimentCalls++;
         const request = buildRagLlmRequest(q, modelEvidence, RAG_OFFICIAL_SYSTEM_PROMPT, extras);
         const servingAnnotationCount = request.contents[0].parts[0].text.split("[원문 구조화 주석 — 파생 데이터]").length - 1;
         if (servingAnnotationCount) annotatedCalls++;
         const raw = await server.callOfficialRagLlm(q, modelEvidence, extras);
-        trace.push({ stage: "official-generation", matchedAnnotations: matched,
+        trace.push({ stage: "official-generation", question: q, evidence, extras, matchedAnnotations: matched,
           request, servingAnnotationCount, raw });
         return raw;
       },
@@ -153,7 +160,8 @@ async function main() {
     }
     save();
   }
-  if ((annotationFile || option("require-annotations") === "1") && annotatedCalls === 0) throw new Error("HOLD: no source-bound annotation reached generation");
+  if (annotationFile && experimentCalls === 0) throw new Error("HOLD: no experimental annotation reached generation");
+  if (option("require-annotations") === "1" && annotatedCalls === 0) throw new Error("HOLD: no source-bound annotation reached generation");
   console.log(`Saved ${runs.length} observations; semantic judgement required: ${out}`);
 }
 main().catch(error => { console.error(error instanceof Error ? error.message : "diagnostic failed"); process.exitCode = 1; });
