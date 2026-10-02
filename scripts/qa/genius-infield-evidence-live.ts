@@ -9,6 +9,7 @@
  */
 import { contextRoutingRequest, callContextRouting, CONTEXT_ROUTING_NOTE } from "../baseball-qa/rag/experimental-context-routing";
 import fs from "node:fs";
+import { siblingEvidence, validateSiblingManifest, type SiblingManifest } from "../baseball-qa/rag/experimental-sibling-evidence";
 import { createHash } from "node:crypto";
 import { officialModelEvidenceContent } from "../../src/lib/baseball-qa/rag/official-parenthetical-evidence";
 import { annotationContentDigest } from "../baseball-qa/rag/official-parenthetical-structure.mjs";
@@ -38,6 +39,11 @@ async function main() {
   if (!["context-rules", "original", "exclusions", "exclusion-focus", "flyout-regression", "flyout-context", "official-documents", "official81"].includes(suite)) throw new Error("unknown suite");
   const routingMode = option("routing");
   if (routingMode && routingMode !== "context") throw new Error("unknown routing mode");
+  const siblingFile = option("siblings");
+  if (siblingFile && ["routing", "selection", "annotations", "supplement"].some(option)) throw new Error("sibling experiment must be isolated");
+  const siblings: SiblingManifest[] = siblingFile ? JSON.parse(fs.readFileSync(siblingFile,"utf8")) : [];
+  validateSiblingManifest(siblings);
+  let siblingCalls = 0;
   const selectionMode = option("selection");
   if (routingMode && (selectionMode || option("annotations") || option("supplement"))) throw new Error("routing experiment must be isolated");
   if (selectionMode && selectionMode !== "contextual") throw new Error("unknown selection experiment");
@@ -120,9 +126,10 @@ async function main() {
     }
   }
   const runs: unknown[] = [];
-  const save = () => fs.writeFileSync(out, JSON.stringify({ suite, plannedRuns: QUESTIONS.length * reps, mode: routingMode ? "context-routing-experiment" : selectionMode ? "contextual-selection-experiment" : file ? "local-ranked-supplement" : annotationFile ? "source-bound-annotation-experiment" : "production-read-only", reps, previousTurn, annotations, annotatedCalls, experimentCalls, questions: QUESTIONS, runs }, null, 2));
+  const save = () => fs.writeFileSync(out, JSON.stringify({ suite, plannedRuns: QUESTIONS.length * reps, siblingCalls, mode: siblingFile ? "sibling-bundle-experiment" : routingMode ? "context-routing-experiment" : selectionMode ? "contextual-selection-experiment" : file ? "local-ranked-supplement" : annotationFile ? "source-bound-annotation-experiment" : "production-read-only", reps, previousTurn, annotations, annotatedCalls, experimentCalls, questions: QUESTIONS, runs }, null, 2));
   for (let rep = 0; rep < reps; rep++) for (const question of QUESTIONS) {
     const trace: unknown[] = [];
+    let retrieved: RagEvidence[] = [];
     const deps: QaDeps = {
       // Explicit read/model allowlist. Never spread makeDeps: it contains writes.
       loadPreviousTurn: async () => previousTurn,
@@ -148,12 +155,13 @@ async function main() {
           selected = choice.selected;
           trace.push({stage:"evidence-selection",...choice.trace});
         }
+        retrieved = baseline;
         trace.push({ stage: "retrieval", query, baseline, selected });
         return selected;
       },
       callOfficialRagLlm: async (q, evidence, extras) => {
         const matched: number[] = [];
-        const modelEvidence = evidence.map((row, index) => {
+        let modelEvidence = evidence.map((row, index) => {
           if (row.sourceKind !== "kbo_ebook" || row.sourceGrade !== "tier1") return row;
           const annotation = annotations.find(a => a.canonicalUrl === row.canonicalUrl
             && (!a.sourceRevision || a.sourceRevision === row.revision)
@@ -164,6 +172,12 @@ async function main() {
           matched.push(index);
           return { ...row, content: `${officialModelEvidenceContent(row)}\n[원문 구조화 주석 — 파생 데이터]\n${annotation.note}` };
         });
+        if (siblingFile) {
+          const bundled = siblingEvidence(evidence, retrieved, siblings);
+          modelEvidence = bundled.modelEvidence;
+          if (bundled.trace.length) siblingCalls++;
+          trace.push({stage:"sibling-bundle",...bundled});
+        }
         if (matched.length) experimentCalls++;
         const request = routingMode && extras?.context ? contextRoutingRequest(q, modelEvidence, extras) : server.buildProductionRagRequest(q, modelEvidence, RAG_OFFICIAL_SYSTEM_PROMPT, extras);
         const routingApplied = request.systemInstruction.parts[0].text.includes(CONTEXT_ROUTING_NOTE);
@@ -189,6 +203,7 @@ async function main() {
     }
     save();
   }
+  if (siblingFile && siblingCalls === 0) throw new Error("HOLD: no sibling reached generation");
   if (annotationFile && experimentCalls === 0) throw new Error("HOLD: no experimental annotation reached generation");
   if (option("require-annotations") === "1" && annotatedCalls === 0) throw new Error("HOLD: no source-bound annotation reached generation");
   console.log(`Saved ${runs.length} observations; semantic judgement required: ${out}`);
