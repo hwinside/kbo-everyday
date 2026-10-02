@@ -43,9 +43,9 @@ export function formatGapMessage(gaps: RosterGap[]): string {
     .map((g) => `• ${g.name} (${g.teamName}, ${g.playerType === "pitcher" ? "투수" : "타자"})`)
     .join("\n");
   return (
-    `🆕 *박스스코어에 출전했지만 로스터 미등록 선수 ${gaps.length}명* — 등록 필요\n` +
+    `🆕 *박스스코어에 출전했지만 선수 식별 미해결 ${gaps.length}명* — ID·로스터 확인 필요\n` +
     `${lines}\n` +
-    `_신규/시즌중 합류 선수로 추정. 로스터 등록 전까지 누적 스탯·선수 프로필·경기별 기록에서 빠집니다._`
+    `_미등록 또는 동명이인·ID 불일치일 수 있습니다. 원본 선수 ID를 확인해 주세요. 해결 전까지 경기 기록이 불완전할 수 있습니다._`
   );
 }
 

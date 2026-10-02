@@ -1,0 +1,412 @@
+[
+  {
+    "gameId": "20260902LTSS0",
+    "before": [
+      {
+        "name": "이승현",
+        "teamId": 8,
+        "teamCode": "SS",
+        "playerType": "pitcher"
+      }
+    ],
+    "after": [],
+    "raw": 34,
+    "rows": 34,
+    "missing": []
+  },
+  {
+    "gameId": "20260903LTSS0",
+    "before": [
+      {
+        "name": "김태훈",
+        "teamId": 8,
+        "teamCode": "SS",
+        "playerType": "batter"
+      },
+      {
+        "name": "김태훈",
+        "teamId": 8,
+        "teamCode": "SS",
+        "playerType": "pitcher"
+      }
+    ],
+    "after": [],
+    "raw": 36,
+    "rows": 36,
+    "missing": []
+  },
+  {
+    "gameId": "20260904HHLT0",
+    "before": [
+      {
+        "name": "박준영",
+        "teamId": 9,
+        "teamCode": "HH",
+        "playerType": "pitcher"
+      }
+    ],
+    "after": [],
+    "raw": 44,
+    "rows": 44,
+    "missing": []
+  },
+  {
+    "gameId": "20260904SSLG0",
+    "before": [
+      {
+        "name": "이승현",
+        "teamId": 8,
+        "teamCode": "SS",
+        "playerType": "pitcher"
+      },
+      {
+        "name": "김태훈",
+        "teamId": 8,
+        "teamCode": "SS",
+        "playerType": "pitcher"
+      }
+    ],
+    "after": [],
+    "raw": 35,
+    "rows": 35,
+    "missing": []
+  },
+  {
+    "gameId": "20260905OBSK0",
+    "before": [
+      {
+        "name": "김민준",
+        "teamId": 4,
+        "teamCode": "SK",
+        "playerType": "pitcher"
+      }
+    ],
+    "after": [],
+    "raw": 33,
+    "rows": 33,
+    "missing": []
+  },
+  {
+    "gameId": "20260905SSLG0",
+    "before": [
+      {
+        "name": "김태훈",
+        "teamId": 8,
+        "teamCode": "SS",
+        "playerType": "batter"
+      },
+      {
+        "name": "이승현",
+        "teamId": 8,
+        "teamCode": "SS",
+        "playerType": "pitcher"
+      },
+      {
+        "name": "이승현",
+        "teamId": 8,
+        "teamCode": "SS",
+        "playerType": "pitcher"
+      }
+    ],
+    "after": [],
+    "raw": 44,
+    "rows": 44,
+    "missing": []
+  },
+  {
+    "gameId": "20260906SSLG0",
+    "before": [
+      {
+        "name": "김태훈",
+        "teamId": 8,
+        "teamCode": "SS",
+        "playerType": "pitcher"
+      }
+    ],
+    "after": [],
+    "raw": 39,
+    "rows": 39,
+    "missing": []
+  },
+  {
+    "gameId": "20260909KTSS0",
+    "before": [
+      {
+        "name": "김태훈",
+        "teamId": 8,
+        "teamCode": "SS",
+        "playerType": "pitcher"
+      }
+    ],
+    "after": [],
+    "raw": 34,
+    "rows": 34,
+    "missing": []
+  },
+  {
+    "gameId": "20260910HHSK0",
+    "before": [
+      {
+        "name": "박준영",
+        "teamId": 9,
+        "teamCode": "HH",
+        "playerType": "pitcher"
+      }
+    ],
+    "after": [],
+    "raw": 31,
+    "rows": 31,
+    "missing": []
+  },
+  {
+    "gameId": "20260911WOSS0",
+    "before": [
+      {
+        "name": "김태훈",
+        "teamId": 8,
+        "teamCode": "SS",
+        "playerType": "batter"
+      },
+      {
+        "name": "김태훈",
+        "teamId": 8,
+        "teamCode": "SS",
+        "playerType": "pitcher"
+      }
+    ],
+    "after": [],
+    "raw": 32,
+    "rows": 32,
+    "missing": []
+  },
+  {
+    "gameId": "20260912LGSS0",
+    "before": [
+      {
+        "name": "김태훈",
+        "teamId": 8,
+        "teamCode": "SS",
+        "playerType": "pitcher"
+      }
+    ],
+    "after": [],
+    "raw": 36,
+    "rows": 36,
+    "missing": []
+  },
+  {
+    "gameId": "20260913LGSS0",
+    "before": [
+      {
+        "name": "김태훈",
+        "teamId": 8,
+        "teamCode": "SS",
+        "playerType": "batter"
+      },
+      {
+        "name": "이승현",
+        "teamId": 8,
+        "teamCode": "SS",
+        "playerType": "pitcher"
+      }
+    ],
+    "after": [],
+    "raw": 42,
+    "rows": 42,
+    "missing": []
+  },
+  {
+    "gameId": "20260913LTKT0",
+    "before": [],
+    "after": [],
+    "raw": 33,
+    "rows": 33,
+    "missing": []
+  },
+  {
+    "gameId": "20260915HTSK0",
+    "before": [
+      {
+        "name": "김민준",
+        "teamId": 4,
+        "teamCode": "SK",
+        "playerType": "pitcher"
+      }
+    ],
+    "after": [],
+    "raw": 36,
+    "rows": 36,
+    "missing": []
+  },
+  {
+    "gameId": "20260916SSOB0",
+    "before": [
+      {
+        "name": "이승현",
+        "teamId": 8,
+        "teamCode": "SS",
+        "playerType": "pitcher"
+      },
+      {
+        "name": "김태훈",
+        "teamId": 8,
+        "teamCode": "SS",
+        "playerType": "pitcher"
+      }
+    ],
+    "after": [],
+    "raw": 31,
+    "rows": 31,
+    "missing": []
+  },
+  {
+    "gameId": "20260918SSHH0",
+    "before": [
+      {
+        "name": "박준영",
+        "teamId": 9,
+        "teamCode": "HH",
+        "playerType": "pitcher"
+      },
+      {
+        "name": "박준영",
+        "teamId": 9,
+        "teamCode": "HH",
+        "playerType": "pitcher"
+      }
+    ],
+    "after": [],
+    "raw": 39,
+    "rows": 39,
+    "missing": []
+  },
+  {
+    "gameId": "20260920SSLT0",
+    "before": [
+      {
+        "name": "이승현",
+        "teamId": 8,
+        "teamCode": "SS",
+        "playerType": "pitcher"
+      },
+      {
+        "name": "이승현",
+        "teamId": 8,
+        "teamCode": "SS",
+        "playerType": "pitcher"
+      }
+    ],
+    "after": [],
+    "raw": 39,
+    "rows": 39,
+    "missing": []
+  },
+  {
+    "gameId": "20260922NCSS0",
+    "before": [
+      {
+        "name": "김태훈",
+        "teamId": 8,
+        "teamCode": "SS",
+        "playerType": "batter"
+      },
+      {
+        "name": "김태훈",
+        "teamId": 8,
+        "teamCode": "SS",
+        "playerType": "pitcher"
+      }
+    ],
+    "after": [],
+    "raw": 41,
+    "rows": 41,
+    "missing": []
+  },
+  {
+    "gameId": "20260923LTHH0",
+    "before": [
+      {
+        "name": "박준영",
+        "teamId": 9,
+        "teamCode": "HH",
+        "playerType": "pitcher"
+      }
+    ],
+    "after": [],
+    "raw": 39,
+    "rows": 39,
+    "missing": []
+  },
+  {
+    "gameId": "20260924SSSK0",
+    "before": [
+      {
+        "name": "김민준",
+        "teamId": 4,
+        "teamCode": "SK",
+        "playerType": "pitcher"
+      },
+      {
+        "name": "김태훈",
+        "teamId": 8,
+        "teamCode": "SS",
+        "playerType": "pitcher"
+      }
+    ],
+    "after": [],
+    "raw": 34,
+    "rows": 34,
+    "missing": []
+  },
+  {
+    "gameId": "20260929HHSS0",
+    "before": [
+      {
+        "name": "이승현",
+        "teamId": 8,
+        "teamCode": "SS",
+        "playerType": "pitcher"
+      },
+      {
+        "name": "박준영",
+        "teamId": 9,
+        "teamCode": "HH",
+        "playerType": "pitcher"
+      }
+    ],
+    "after": [],
+    "raw": 42,
+    "rows": 42,
+    "missing": []
+  },
+  {
+    "gameId": "20260930HHSS0",
+    "before": [
+      {
+        "name": "김태훈",
+        "teamId": 8,
+        "teamCode": "SS",
+        "playerType": "pitcher"
+      }
+    ],
+    "after": [],
+    "raw": 34,
+    "rows": 34,
+    "missing": []
+  },
+  {
+    "gameId": "20261001LGSK0",
+    "before": [
+      {
+        "name": "김민준",
+        "teamId": 4,
+        "teamCode": "SK",
+        "playerType": "pitcher"
+      }
+    ],
+    "after": [],
+    "raw": 38,
+    "rows": 38,
+    "missing": []
+  }
+]
