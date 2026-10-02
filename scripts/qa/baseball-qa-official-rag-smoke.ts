@@ -141,6 +141,50 @@ check("숫자 토큰 대조 — 쉼표 표기 차이는 같은 값으로 본다"
   assert.equal(numericTokensGrounded("1,000명입니다", ev), true);
 });
 
+check("공유 단위 — 병렬 정수 표기를 양쪽에서 같은 수량으로 검증", () => {
+  const evidence = [{ ...OFFICIAL, content: "주자가 1·2루 또는 1·2·3루에 있을 때 적용한다." }];
+  for (const answer of ["1루와 2루", "2루와 1루", "1·2루", "1루, 2루, 3루"]) {
+    assert.equal(numericTokensGrounded(answer, evidence), true, answer);
+  }
+  for (const answer of ["1·3루", "2·3루", "1루와 3루", "2루와 3루"]) {
+    assert.equal(numericTokensGrounded(answer, evidence), false, answer);
+  }
+  assert.equal(numericTokensGrounded("1루와 2루", [{ ...OFFICIAL, content: "주자가 1 · 2루에 있다." }]), true);
+});
+
+check("공유 단위 — 다른 문장의 숫자로 미등재 조합을 만들지 않는다", () => {
+  const evidence = [{ ...OFFICIAL, content: "주자가 1·2루에 있을 때 적용한다. 다른 플레이에서는 3루로 간다." }];
+  for (const answer of ["1·3루", "2·3루", "1루와 3루", "2루와 3루"]) {
+    assert.equal(numericTokensGrounded(answer, evidence), false, answer);
+  }
+  assert.equal(numericTokensGrounded("1·2루", [{ ...OFFICIAL, content: "제1조. 2루에 있다." }]), false);
+});
+
+check("공유 단위 — 단위·범위·소수·조문은 임의 변환하지 않는다", () => {
+  assert.equal(numericTokensGrounded("1명", [{ ...OFFICIAL, content: "1·2루" }]), false);
+  assert.equal(numericTokensGrounded("1루", [{ ...OFFICIAL, content: "1.2루" }]), false);
+  assert.equal(numericTokensGrounded("2루", [{ ...OFFICIAL, content: "1~3루" }]), false);
+  assert.equal(numericTokensGrounded("5루", [{ ...OFFICIAL, content: "5.09 규정. 2루" }]), false);
+  assert.equal(numericTokensGrounded("4명", [{ ...OFFICIAL, content: "3·4명" }]), true);
+  assert.equal(numericTokensGrounded("3명", [{ ...OFFICIAL, content: "3·4명" }]), true);
+});
+
+check("질문 숫자 — 긍정·부정 어느 쪽도 질문만으로 근거가 되지 않는다", () => {
+  const evidence = [{ ...OFFICIAL, content: "무사 또는 1사에 주자가 1·2루 또는 1·2·3루에 있을 때 적용한다." }];
+  for (const answer of ["2아웃에서도 적용돼요.", "2아웃에서는 적용되지 않아요."]) {
+    const result = validateRagResponse(JSON.stringify({ status: "GROUNDED", answer, calendarClaims: [] }), {
+      numericEvidence: true, evidence, officialQuestion: "2아웃 만루에도 인필드플라이야?",
+    });
+    assert.equal(result.kind, "insufficient", answer);
+    assert.equal((result as { reason: string }).reason, "numeric_not_in_evidence");
+  }
+  const result = validateRagResponse(JSON.stringify({
+    status: "GROUNDED", calendarClaims: [],
+    answer: "질문하신 상황에서는 적용되지 않아요. 무사 또는 1사에 주자가 1루와 2루에 있거나 만루일 때 적용돼요.",
+  }), { numericEvidence: true, evidence, officialQuestion: "2아웃 만루에도 인필드플라이야?" });
+  assert.equal(result.kind, "grounded");
+});
+
 check("숫자 없는 답은 근거 대조를 요구하지 않는다", () => {
   assert.equal(numericTokensGrounded("타자와 주자가 모두 아웃입니다.", []), true);
 });
