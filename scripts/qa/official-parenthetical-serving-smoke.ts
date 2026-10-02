@@ -1,8 +1,7 @@
 /** Reviewer-run production request boundary checks. No DB/model calls. */
 import assert from "node:assert/strict";
 import fs from "node:fs";
-import { buildProductionRagRequest } from "../../src/lib/baseball-qa/server";
-import { RAG_OFFICIAL_SYSTEM_PROMPT, RAG_SYSTEM_PROMPT, type RagEvidence } from "../../src/lib/baseball-qa/rag/retrieve";
+import { buildRagLlmRequest, RAG_OFFICIAL_SYSTEM_PROMPT, RAG_SYSTEM_PROMPT, type RagEvidence } from "../../src/lib/baseball-qa/rag/retrieve";
 import { officialParentheticalNote } from "../../src/lib/baseball-qa/rag/official-parenthetical-evidence";
 import sidecar from "../../src/lib/baseball-qa/rag/official-parenthetical-sidecar.json";
 
@@ -15,7 +14,7 @@ const row: RagEvidence = Object.freeze({
   sourceGrade: "tier1", sourceKind: "kbo_ebook", asOf: "2026-10-02",
 });
 const before = JSON.stringify(row);
-const request = (r: RagEvidence, official = true) => buildProductionRagRequest(
+const request = (r: RagEvidence, official = true) => buildRagLlmRequest(
   "내야 타구 질문", [r], official ? RAG_OFFICIAL_SYSTEM_PROMPT : RAG_SYSTEM_PROMPT,
 ).contents[0].parts[0].text;
 const note = officialParentheticalNote(row);
@@ -45,4 +44,4 @@ item.quote = "FORGED SPAN";
 assert.equal(officialParentheticalNote(row), "", "forged span must drop annotation");
 item.quote = originalQuote;
 assert.equal(officialParentheticalNote(row), note);
-console.log("PASS: production builder, original evidence preservation, source/version/span fail-closed");
+console.log("PASS: pure production request builder, original evidence preservation, source/version/span fail-closed");
