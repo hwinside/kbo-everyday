@@ -322,5 +322,36 @@ async function verifyWinParaphrases() {
   assert.ok(JSON.stringify(stored).includes(result.answer),"durable final mismatch");
 }
 
-async function main() { await verifyWinParaphrases(); await verifyQuantityGrounding(); verifyArtifact(); verifyLoader(); await verifyRuntime(); console.log("Required-rule corpus artifact/loader/runtime contracts PASS; live semantic/UI QA remains reviewer-owned."); }
+function verifyRulebookSupplement() {
+  const file = path.resolve("data/baseball-qa/kbo-rulebook-supplement-2026.jsonl");
+  const manifestFile = path.resolve("data/baseball-qa/kbo-rulebook-supplement-2026.manifest.json");
+  const bytes = fs.readFileSync(file, "utf8");
+  assert.equal(crypto.createHash("sha256").update(bytes).digest("hex"), "9bb03ae5dc30c94c84541a5f1e0edb5c82538967dcfbfa6ba94768a6189df97e");
+  const supplement = bytes.trim().split("\n").map(s => JSON.parse(s));
+  assert.equal(supplement.length, 2);
+  assert.ok(supplement.every(r => r.entity === "2026 공식야구규칙 필수 조항" && r.page === 201 && r.page_end === 202));
+  const text = normalized(supplement.map(r => r.text).join("\n"));
+  for (const clause of ["무사또는1사", "주자1·2루또는만루", "직선타구또는번트", "볼인플레이다", "심판원이선고하여야효력이발생한다"]) assert.ok(text.includes(clause), clause);
+  const loaded = execFileSync(process.execPath, [loader, "--corpus=" + file, "--manifest=" + manifestFile], { encoding: "utf8" });
+  assert.match(loaded, /총 chunk\s+: 2/);
+  assert.match(loaded, /DRY-RUN 종료/);
+  assert.match(loaded, /공식야구규칙-필수-조항/);
+  const temp = fs.mkdtempSync(path.join(os.tmpdir(), "rulebook-supplement-"));
+  try {
+    for (const [name, mutate] of [
+      ["partial", (r: typeof supplement) => { r.pop(); }],
+      ["overwrite-original", (r: typeof supplement) => { r.forEach(x => { x.entity = x.title; }); }],
+      ["wrong-pdf", (r: typeof supplement) => { r[0].sourcePdfSha256 = "0".repeat(64); }],
+      ["duplicate", (r: typeof supplement) => { r[1] = r[0]; }],
+    ] as const) {
+      const changed = structuredClone(supplement); mutate(changed);
+      const bad = path.join(temp, name + ".jsonl");
+      fs.writeFileSync(bad, changed.map(r => JSON.stringify(r)).join("\n") + "\n");
+      const run = spawnSync(process.execPath, [loader, "--corpus=" + bad, "--manifest=" + manifestFile], { encoding: "utf8" });
+      assert.notEqual(run.status, 0, name + " accepted");
+    }
+  } finally { fs.rmSync(temp, { recursive: true, force: true }); }
+}
+
+async function main() { verifyRulebookSupplement(); await verifyWinParaphrases(); await verifyQuantityGrounding(); verifyArtifact(); verifyLoader(); await verifyRuntime(); console.log("Required-rule corpus artifact/loader/runtime contracts PASS; live semantic/UI QA remains reviewer-owned."); }
 main().catch((error) => { console.error(error); process.exitCode = 1; });
