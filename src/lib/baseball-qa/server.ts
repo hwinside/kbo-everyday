@@ -1,3 +1,4 @@
+import { buildOfficialContextRequest } from "./rag/official-context-request";
 import { normalizeKey, originalSpellingScope } from "./normalize";
 import type { OriginalSpellingAssessment } from "./correction-term-identity";
 import { renderTeamCorrection } from "./rag/correction";
@@ -792,6 +793,9 @@ export function buildProductionRagRequest(
   extras?: RagLlmExtras,
 ): ReturnType<typeof buildRagLlmRequest> {
   // ⚠️ 여기서 필드를 골라 적지 않는다. `extras` 를 통째로 넘긴다 — 그게 계약이다.
+  if (systemPrompt === RAG_OFFICIAL_SYSTEM_PROMPT) {
+    return buildOfficialContextRequest(question, evidence, extras);
+  }
   return buildRagLlmRequest(question, evidence, systemPrompt ?? RAG_SYSTEM_PROMPT, extras ?? {});
 }
 

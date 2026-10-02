@@ -17,7 +17,7 @@ import { selectContextTurn } from "../../src/lib/baseball-qa/context";
 import { experimentalOfficialSelection } from "../baseball-qa/rag/experimental-official-selector";
 import { answerQuestion, type QaDeps } from "../../src/lib/baseball-qa/pipeline";
 import { embedText } from "../../src/lib/baseball-qa/rag/embed";
-import { buildRagLlmRequest, RAG_OFFICIAL_SYSTEM_PROMPT, RAG_DOCUMENT_CANDIDATE_LIMIT,
+import { RAG_OFFICIAL_SYSTEM_PROMPT, RAG_DOCUMENT_CANDIDATE_LIMIT,
   RAG_DOCUMENT_MAX_DISTANCE, type RagEvidence } from "../../src/lib/baseball-qa/rag/retrieve";
 
 const QUESTIONS = [
@@ -165,11 +165,11 @@ async function main() {
           return { ...row, content: `${officialModelEvidenceContent(row)}\n[원문 구조화 주석 — 파생 데이터]\n${annotation.note}` };
         });
         if (matched.length) experimentCalls++;
-        const request = routingMode && extras?.context ? contextRoutingRequest(q, modelEvidence, extras) : buildRagLlmRequest(q, modelEvidence, RAG_OFFICIAL_SYSTEM_PROMPT, extras);
-        const routingApplied = Boolean(routingMode && request.systemInstruction.parts[0].text.includes(CONTEXT_ROUTING_NOTE));
+        const request = routingMode && extras?.context ? contextRoutingRequest(q, modelEvidence, extras) : server.buildProductionRagRequest(q, modelEvidence, RAG_OFFICIAL_SYSTEM_PROMPT, extras);
+        const routingApplied = request.systemInstruction.parts[0].text.includes(CONTEXT_ROUTING_NOTE);
         const servingAnnotationCount = request.contents[0].parts[0].text.split("[원문 구조화 주석 — 파생 데이터]").length - 1;
         if (servingAnnotationCount) annotatedCalls++;
-        const raw = routingApplied ? await callContextRouting(request, extras) : await server.callOfficialRagLlm(q, modelEvidence, extras);
+        const raw = routingMode && routingApplied ? await callContextRouting(request, extras) : await server.callOfficialRagLlm(q, modelEvidence, extras);
         trace.push({ stage: "official-generation", question: q, evidence, extras, matchedAnnotations: matched,
           request, routingApplied, servingAnnotationCount, raw });
         return raw;
