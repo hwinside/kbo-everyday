@@ -38,6 +38,7 @@ const TARGET_IDS: string[] | null = idsArg < 0 ? null : (() => {
   }
   return value;
 })();
+// Explicit targets must run serially: throwing on the first incomplete must prevent the next write.
 const CONCURRENCY = TARGET_IDS ? 1 : 4;
 
 async function mapPool<T, R>(items: T[], limit: number, fn: (item: T) => Promise<R>): Promise<R[]> {

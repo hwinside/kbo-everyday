@@ -14,6 +14,12 @@ for (const [name, teamId, sourceId] of [
   assert.equal(resolveBoxscorePlayer({name,teamId,sourceId})?.kboId, sourceId);
 }
 assert.equal(resolveBoxscorePlayer({name:"디아즈",teamId:8,sourceId:"54400"})?.numericId,"54400");
+// Non-vacuous fallback guard: this name resolves uniquely when the ID is absent.
+assert.equal(resolveBoxscorePlayer({name:"디아즈",teamId:8})?.numericId,"54400");
+for (const sourceId of ["99999", "abc", {}, "5440x"]) {
+  assert.equal(resolveBoxscorePlayer({name:"디아즈",teamId:8,sourceId}),null,
+    `invalid ID must not fall back to unique name: ${JSON.stringify(sourceId)}`);
+}
 assert.equal(resolveBoxscorePlayer({name:"김민준",teamId:4}),null);
 for (const sourceId of ["99999", "김민준", {}, " ", "56840oops"]) {
   assert.equal(resolveBoxscorePlayer({name:"김민준",teamId:4,sourceId}),null);
