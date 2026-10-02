@@ -12,6 +12,8 @@ import { createHash } from "node:crypto";
 import { officialModelEvidenceContent } from "../../src/lib/baseball-qa/rag/official-parenthetical-evidence";
 import { annotationContentDigest } from "../baseball-qa/rag/official-parenthetical-structure.mjs";
 import path from "node:path";
+import { selectContextTurn } from "../../src/lib/baseball-qa/context";
+import { experimentalOfficialSelection } from "../baseball-qa/rag/experimental-official-selector";
 import { answerQuestion, type QaDeps } from "../../src/lib/baseball-qa/pipeline";
 import { embedText } from "../../src/lib/baseball-qa/rag/embed";
 import { buildRagLlmRequest, RAG_OFFICIAL_SYSTEM_PROMPT, RAG_DOCUMENT_CANDIDATE_LIMIT,
@@ -32,7 +34,16 @@ const distance = (a: number[], b: number[]) => 1 - a.reduce((s, n, i) => s + n *
 
 async function main() {
   const suite = option("suite") ?? "original";
-  if (!["original", "exclusions", "exclusion-focus", "flyout-regression", "flyout-context", "official-documents"].includes(suite)) throw new Error("unknown suite");
+  if (!["original", "exclusions", "exclusion-focus", "flyout-regression", "flyout-context", "official-documents", "official81"].includes(suite)) throw new Error("unknown suite");
+  const selectionMode = option("selection");
+  if (selectionMode && selectionMode !== "contextual") throw new Error("unknown selection experiment");
+  const questionsFile = option("questions-file");
+  if ((suite === "official81") !== Boolean(questionsFile)) throw new Error("official81 requires questions-file; other suites forbid it");
+  if (questionsFile) {
+    const questions: unknown = JSON.parse(fs.readFileSync(questionsFile,"utf8"));
+    if (!Array.isArray(questions) || questions.length !== 81 || questions.some(q => typeof q !== "string" || !q.trim())) throw new Error("exact fixed 81-question string array required");
+    QUESTIONS.splice(0,QUESTIONS.length,...questions);
+  }
   if (suite === "exclusions") QUESTIONS.push(
     "무사 1·2루 직선타구도 인필드플라이야?",
     "1사 1·2루 직선타구도 인필드플라이야?",
@@ -62,7 +73,8 @@ async function main() {
   if (previousTurn && (!previousTurn.question || !previousTurn.answer || !previousTurn.answeredAt || !previousTurn.currentCreatedAt)) throw new Error("complete previous turn required");
   const out = option("out");
   const reps = Number(option("reps") ?? "3");
-  if (!out || !path.isAbsolute(out) || !Number.isInteger(reps) || reps < 1 || reps > 10) throw new Error("absolute --out and reps 1..10 required");
+  if (!out || !path.isAbsolute(out) || fs.existsSync(out) || !Number.isInteger(reps) || reps < 1 || reps > 10) throw new Error("new absolute --out and reps 1..10 required");
+  if (suite === "official81" && reps !== 1) throw new Error("official81 requires reps=1");
   if (suite === "exclusion-focus" && reps !== 5) throw new Error(`${suite} requires fixed --reps=5 budget`);
   if (suite === "official-documents" && reps !== 3) throw new Error("official-documents requires --reps=3");
   if (["flyout-regression", "flyout-context"].includes(suite) && reps !== 10) throw new Error("flyout suites require fixed --reps=10 budget");
@@ -72,6 +84,7 @@ async function main() {
   // Source-bound presentation experiment only; never changes stored corpus,
   // retrieval ranking, or the pipeline's original guard evidence.
   const annotationFile = option("annotations");
+  if (selectionMode && (file || annotationFile)) throw new Error("selection experiment forbids supplement and annotation interventions");
   type Annotation = { rawContentSha256?: string; section?: string; contentSha256: string; canonicalUrl: string; note: string; sourceRevision?: string };
   const annotations: Annotation[] = annotationFile
     ? JSON.parse(fs.readFileSync(annotationFile, "utf8")) : [];
@@ -97,7 +110,7 @@ async function main() {
     }
   }
   const runs: unknown[] = [];
-  const save = () => fs.writeFileSync(out, JSON.stringify({ suite, plannedRuns: QUESTIONS.length * reps, mode: file ? "local-ranked-supplement" : annotationFile ? "source-bound-annotation-experiment" : "production-read-only", reps, previousTurn, annotations, annotatedCalls, experimentCalls, questions: QUESTIONS, runs }, null, 2));
+  const save = () => fs.writeFileSync(out, JSON.stringify({ suite, plannedRuns: QUESTIONS.length * reps, mode: selectionMode ? "contextual-selection-experiment" : file ? "local-ranked-supplement" : annotationFile ? "source-bound-annotation-experiment" : "production-read-only", reps, previousTurn, annotations, annotatedCalls, experimentCalls, questions: QUESTIONS, runs }, null, 2));
   for (let rep = 0; rep < reps; rep++) for (const question of QUESTIONS) {
     const trace: unknown[] = [];
     const deps: QaDeps = {
@@ -119,6 +132,11 @@ async function main() {
           selected = [...baseline, ...additions.map(a => ({ ...a.evidence, distance: distance(embedded.vector, a.vector) }))]
             .filter(e => e.distance! <= RAG_DOCUMENT_MAX_DISTANCE)
             .sort((a, b) => a.distance! - b.distance!).slice(0, RAG_DOCUMENT_CANDIDATE_LIMIT);
+        }
+        if (selectionMode) {
+          const choice = await experimentalOfficialSelection(question,query,baseline,selectContextTurn(previousTurn));
+          selected = choice.selected;
+          trace.push({stage:"evidence-selection",...choice.trace});
         }
         trace.push({ stage: "retrieval", query, baseline, selected });
         return selected;
@@ -156,7 +174,7 @@ async function main() {
       const result = await answerQuestion("qa-local-infield", question, deps);
       runs.push({ rep, question, result, trace, elapsedMs: Date.now() - started });
     } catch (error) {
-      runs.push({ rep, question, error: error instanceof Error ? error.name : "error", trace });
+      runs.push({ rep, question, error: error instanceof Error ? error.name : "error", trace, elapsedMs:Date.now()-started });
     }
     save();
   }
