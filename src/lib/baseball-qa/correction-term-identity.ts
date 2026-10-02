@@ -6,6 +6,7 @@ import { normalizeKey } from "./normalize";
 export interface OriginalSpellingAssessment {
   status: "valid" | "typo" | "unknown";
   quote: string;
+  intent?: "definition" | "other" | "unknown";
 }
 
 export function permitsLexicalCorrection(question: string, assessment?: OriginalSpellingAssessment, candidate?: string): boolean {
@@ -21,11 +22,11 @@ export function permitsLexicalCorrection(question: string, assessment?: Original
     && proposed.startsWith(prefix) && proposed.endsWith(suffix);
 }
 
-/** Closed-glossary repair retains the pre-existing fail-open contract when the
- * provider is unavailable or omits assessment. Explicit valid/unknown evidence
- * still vetoes repair; a typo assessment must authorize the exact edited span.
- * This never authorizes a model candidate or automatically applies a repair. */
+/** Intent never proves misspelling. An explicit valid/unknown verdict vetoes
+ * deterministic repair as well as model correction. Provider outage retains
+ * the existing fail-open contract, not a successful-provider override. */
 export function permitsGlossaryRepair(question: string, assessment?: OriginalSpellingAssessment, candidate?: string): boolean {
+  if (assessment?.intent === "other" || assessment?.intent === "unknown") return false;
   return assessment === undefined || permitsLexicalCorrection(question, assessment, candidate);
 }
 
@@ -74,10 +75,33 @@ export function preservesCorrectionTermIdentity(question: string, candidate: str
     keys: [...new Set([entry.term, ...entry.aliases].map(normalizeKey))].filter(key => key.length >= 2),
   }));
   const present = (text: string, keys: string[]) => keys.some(key => text.includes(key));
+  // A pure deletion can retain a nested glossary word (낙아웃 → 아웃), so
+  // checking only newly introduced identities misses this semantic rewrite.
+  if (proposed.length < original.length && terms.some(entry => present(proposed, entry.keys))) {
+    let at = 0;
+    for (const char of original) if (char === proposed[at]) at++;
+    if (at === proposed.length) return false;
+  }
   const existing = terms.filter(entry => present(original, entry.keys));
   if (existing.some(entry => !present(proposed, entry.keys))) return false;
   const introduced = terms.filter(entry => present(proposed, entry.keys) && !present(original, entry.keys));
   if (introduced.length === 0) return true;
+  // An intact known term followed by another word is not evidence for a longer
+  // compound term made by rewriting that word (a predicate may live there).
+  // Whitespace alone remains Tier A; this only vetoes lexical identity expansion.
+  const sourceWords = question.normalize("NFKC").split(/\s+/u).map(normalizeKey);
+  // Conservatively preserve standalone words from reviewed multiword names.
+  // These are SSOT components, not fuzzy prefixes or a hand-written exception list.
+  // They only veto a lexical edit; they never authorize a definition or correction.
+  const reviewedWords = entries.flatMap(entry => [entry.term, ...entry.aliases])
+    .flatMap(name => name.normalize("NFKC").trim().split(/\s+/u))
+    .map(normalizeKey).filter(word => word.length >= 2);
+  if (reviewedWords.some(word => sourceWords.includes(word) && !proposed.includes(word))) return false;
+  // Only the spelling actually proposed can expand an anchor. Another alias
+  // of the same entry (e.g. 히트포더사이클) is not part of this edit.
+  if (introduced.some(entry => entry.keys.some(key => proposed.includes(key) && existing.some(known =>
+    known.keys.some(anchor => sourceWords.includes(anchor) && key !== anchor && key.startsWith(anchor)),
+  )))) return false;
   // Check only identities actually introduced by this candidate. Unchanged
   // question endings and other glossary entries cannot make a repair ambiguous.
   const positions = originalPositions(original, proposed);

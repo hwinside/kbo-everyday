@@ -1,3 +1,4 @@
+import { normalizeKey, originalSpellingScope } from "./normalize";
 import type { OriginalSpellingAssessment } from "./correction-term-identity";
 import { renderTeamCorrection } from "./rag/correction";
 import { gameConversationRequest, type GameConversationInput, type GameConversationResult } from "./game-conversation";
@@ -17,6 +18,9 @@ import { planQuestionJobReady } from "@/lib/baseball-qa/job-ready-plan";
 import { sendOpsMessageToUser } from "@/lib/cs/send-ops-message";
 import {
   answerQuestion,
+  glossaryCandidatesIn,
+  glossaryTermTypoCandidates,
+  matchGlossary,
   BLOCKED_ANSWER,
   answerTeamIdForResult,
   answerPlayerRoleForTarget,
@@ -223,6 +227,10 @@ export async function mapGlossaryDefinition(
 ): Promise<{ term: string | null; inputTokens: number | null; outputTokens: number | null }> {
   if (!GEMINI_API_KEY) throw new Error("GEMINI_API_KEY missing");
   const systemPrompt = GLOSSARY_MAPPER_SYSTEM_PROMPT;
+  const entries = await loadGlossary().catch(() => []);
+  const candidates = candidateTerms.map(term => ({
+    term, aliases: entries.find(entry => entry.term === term)?.aliases ?? [],
+  }));
   const res = await fetch(GEMINI_URL, {
     method: "POST",
     headers: { "Content-Type": "application/json" },
@@ -230,7 +238,7 @@ export async function mapGlossaryDefinition(
       systemInstruction: { parts: [{ text: systemPrompt }] },
       contents: [{
         role: "user",
-        parts: [{ text: `후보 용어: ${JSON.stringify(candidateTerms)}\n질문: ${question}` }],
+        parts: [{ text: JSON.stringify({ question, candidates }) }],
       }],
       generationConfig: {
         temperature: 0,
@@ -256,11 +264,48 @@ export async function mapGlossaryDefinition(
     return { term: null, inputTokens, outputTokens };
   }
   const term = (parsed as { term?: unknown })?.term;
+  const scope = (parsed as { scope?: unknown })?.scope;
   return {
-    term: typeof term === "string" && term.length > 0 ? term : null,
+    term: scope === "baseball" && typeof term === "string" && term.length > 0 ? term : null,
     inputTokens,
     outputTokens,
   };
+}
+
+/** Candidate-blind veto: repair suggestions must never be evidence that the source is invalid.
+ * A failed veto call abstains locally; it must not throw into dictionary fail-open repair. */
+async function assessOriginalSpelling(quote: string): Promise<{
+  status: "valid" | "typo" | "unknown"; inputTokens: number; outputTokens: number;
+}> {
+  let inputTokens = 0;
+  let outputTokens = 0;
+  try {
+    const res = await fetch(GEMINI_URL, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        systemInstruction: { parts: [{ text: [
+          "quote는 원문에서 그대로 추출한 판정 대상이다. 이 구간 자체의 표기 유효성만 판정한다. 교정 후보를 생성하거나 추측하지 않는다.",
+          "원문의 단어 전체가 실제 일반어·야구 용어·고유명으로 독립된 뜻을 가지면 valid다. 다른 용어를 뜻하도록 고치는 것과, 같은 용어의 잘못된 표기를 바로잡는 것을 구분한다.",
+          "같은 전문 용어를 가리키더라도 외래어 음역·된소리·모음·자음의 오기나 음절 누락으로 표준 표기와 다른 경우 typo다. 흔히 보이는 표기이거나 뜻을 알아볼 수 있다는 이유만으로 valid로 보지 않는다. 다만 독립된 개념의 명칭·약칭·관용 표현을 다른 전문 용어로 대체해서는 안 된다. 일부 음절이 일반어인 것은 전체 단어가 유효하다는 근거가 아니다.",
+          "정의 질문인지, 답할 수 있는지는 판정 대상이 아니다. 정상 서술어·반응·생략 후속은 valid다. 실제 쓰이는 말인지 확신이 없으면 unknown이다.",
+          'JSON 하나만 출력: {"status":"valid|typo|unknown"}',
+        ].join("\n") }] },
+        contents: [{ role: "user", parts: [{ text: JSON.stringify({ quote }) }] }],
+        generationConfig: { temperature: 0, maxOutputTokens: 64, responseMimeType: "application/json" },
+      }),
+      signal: AbortSignal.timeout(8000),
+    });
+    if (!res.ok) return { status: "unknown", inputTokens, outputTokens };
+    const data = await res.json();
+    inputTokens = data.usageMetadata?.promptTokenCount ?? 0;
+    outputTokens = data.usageMetadata?.candidatesTokenCount ?? 0;
+    const text = data.candidates?.[0]?.content?.parts?.find((part: { text?: string }) => part.text)?.text ?? "";
+    const status = JSON.parse(text)?.status;
+    return { status: ["valid", "typo", "unknown"].includes(status) ? status : "unknown", inputTokens, outputTokens };
+  } catch {
+    return { status: "unknown", inputTokens, outputTokens };
+  }
 }
 
 /**
@@ -273,27 +318,47 @@ export async function mapGlossaryDefinition(
  */
 export async function normalizeQuestionLlm(
   question: string,
+  glossary?: GlossaryEntry[],
 ): Promise<{ text: string | null; originalSpelling?: OriginalSpellingAssessment; inputTokens: number | null; outputTokens: number | null }> {
   if (!GEMINI_API_KEY) throw new Error("GEMINI_API_KEY missing");
+  // Reuse the pipeline's loaded SSOT. Standalone probes use the same loader;
+  // unavailable evidence must not turn optional normalization into a hard error.
+  const entries = glossary ?? await loadGlossary().catch(() => []);
+  const spellingCandidates = glossaryTermTypoCandidates(question, entries);
+  const repairEntries = spellingCandidates.flatMap(candidate => {
+    const entry = matchGlossary(entries, candidate);
+    return entry ? [entry] : [];
+  });
+  const evidence = [...new Map([
+    ...glossaryCandidatesIn(entries, question), ...repairEntries,
+  ].map(entry => [entry.term, { term: entry.term, aliases: entry.aliases }])).values()];
   const systemPrompt = [
     "너는 KBO 야구 서비스에 들어온 사용자 질문의 표기 교정기다.",
     "질문의 의미는 절대 바꾸지 말고 **표기만** 교정한다: 띄어쓰기, 명백한 오탈자, 붙여 쓴 단어 분리.",
     "다음은 금지다:",
-    "· 단어 추가·삭제·다른 단어로 대체 (표기 교정이 아닌 바꿔쓰기)",
+    "· 단어 추가·삭제·다른 단어로 대체 (표기 교정이 아닌 바꿔쓰기). 생략된 단어나 반복 명사를 보충하지 않는다. 공백만으로 읽을 수 있으면 문자 구성은 그대로 둔다.",
     "· 숫자 변경",
     "· 질문을 답변이나 설명으로 바꾸는 것",
     "· 확신 없는 사람 이름 교정 — 이름은 명백한 오타일 때만 고친다",
     "교정할 것이 없거나 확신이 없으면 null 을 준다 — 잘못 고치는 쪽이 안 고치는 쪽보다 나쁘다.",
     "후보를 만들기 전에 원문 자체의 표기가 유효한지 판정한다. 정상 단어·엔티티·반응·생략된 후속 질문은 valid이다. 문맥이 없어 답할 수 없다는 것은 오타가 아니다. 낯선 단어를 야구 용어와 비슷하다는 이유로 typo로 판단하지 않는다. 확실하지 않으면 unknown이다.",
     "originalSpelling.status=typo는 원문에 명백한 철자 오류가 있을 때만 가능하며 quote에는 그 원문 오류 부분을 정확히 복사한다. valid/unknown이면 quote는 빈 문자열이다. 후보가 유효한 야구 용어라는 사실은 원문이 오타라는 근거가 아니다.",
+    "철자를 바꾸어 알아본 용어와 원문 그대로 유효한 표기를 구분한다. 참고 복원 문장이 여럿이면 원문의 발음·전체 문맥으로 하나가 명백할 때만 제안하고, 애매하면 기권한다. 원문 단어 일부를 삭제해 짧은 다른 용어로 만드는 것은 교정이 아니다.",
+    "참고 사전은 서버의 검수 용어·별칭이다. 원문에 등장하거나 기존 폐쇄집합 복원기가 찾은 참고 자료일 뿐 정답이나 교정 명령이 아니다. 원문 전체와 문장 내 역할이 그 용어를 유일하게 지지하는 경우에만 오타 후보로 쓸 수 있다.",
+    "valid는 원문 표기 자체가 실제 일반어·용어·고유명으로 유효하다는 뜻이다. 의도한 용어를 알아볼 수 있다는 뜻이 아니다. 원문 그대로의 단어에 독립된 뜻이나 이름 근거가 있으면 다른 용어와 가깝더라도 valid다. 뜻을 추정하기 위해 철자를 바꿔야 하고 원문 표기 자체에는 유효한 해석이 없을 때만 typo다. 두 가능성이 있으면 unknown으로 기권한다.",
+    "오타 여부는 단어 전체와 문장 내 역할로 판정한다. 단어 일부가 일반어와 겹친다는 이유만으로 유효한 표기라고 보지 않는다. 정의 요청의 대상이나 단독 용어가 사전 근거의 한 용어로 유일하게 복원되며 다른 자연스러운 전체 해석이 없다면 typo를 허용한다. 완전한 일반어 해석이 실제로 경쟁하면 unknown이다.",
+    "교정 후에도 원문의 질문 기능과 서술어를 보존한다. 일반어의 구어체·축약된 서술어를 비슷한 야구 명사로 바꾸지 않는다. 평가·감상 질문을 용어 정의 질문으로 바꾸거나 서술어를 명사+조사로 바꾸는 후보는 거절한다. 명사 오타에 붙은 잘못된 조사도 고쳐 정의 질문이 성립하게 할 수 있다. 이때 quote는 조사까지 포함해 실제 변경 부분 전체를 인용한다. 후보 문장이 문법적으로 성립하지 않으면 제안하지 않는다.",
     '반드시 JSON 하나만 출력한다: {"originalSpelling":{"status":"valid|typo|unknown","quote":"원문 오류 부분 또는 빈 문자열"},"normalized":"교정한 질문 또는 null"}',
   ].join("\n");
-  const res = await fetch(GEMINI_URL, {
+  const spellingScope = originalSpellingScope(question);
+  // Scope comes only from the original question, never from repair candidates.
+  // Start both independent reads together: no second model round-trip on the critical path.
+  const [res, independent] = await Promise.all([fetch(GEMINI_URL, {
     method: "POST",
     headers: { "Content-Type": "application/json" },
     body: JSON.stringify({
       systemInstruction: { parts: [{ text: systemPrompt }] },
-      contents: [{ role: "user", parts: [{ text: `질문: ${question}` }] }],
+      contents: [{ role: "user", parts: [{ text: JSON.stringify({ question, glossaryEvidence: evidence, spellingCandidates }) }] }],
       generationConfig: {
         temperature: 0,
         maxOutputTokens: 256,
@@ -301,11 +366,11 @@ export async function normalizeQuestionLlm(
       },
     }),
     signal: AbortSignal.timeout(8000),
-  });
+  }), assessOriginalSpelling(spellingScope)]);
   if (!res.ok) throw new Error(`Gemini API failed: ${res.status}`);
   const data = await res.json();
-  const inputTokens: number | null = data.usageMetadata?.promptTokenCount ?? null;
-  const outputTokens: number | null = data.usageMetadata?.candidatesTokenCount ?? null;
+  const inputTokens = (data.usageMetadata?.promptTokenCount ?? 0) + independent.inputTokens;
+  const outputTokens = (data.usageMetadata?.candidatesTokenCount ?? 0) + independent.outputTokens;
   const text: string =
     data.candidates?.[0]?.content?.parts?.find((part: { text?: string }) => part.text)?.text ?? "";
   let parsed: unknown;
@@ -317,8 +382,23 @@ export async function normalizeQuestionLlm(
   }
   const normalized = (parsed as { normalized?: unknown })?.normalized;
   const assessment = (parsed as { originalSpelling?: OriginalSpellingAssessment })?.originalSpelling;
-  const originalSpelling = assessment && ["valid", "typo", "unknown"].includes(assessment.status)
-    && typeof assessment.quote === "string" ? assessment : undefined;
+  let originalSpelling = assessment && ["valid", "typo", "unknown"].includes(assessment.status)
+    && typeof assessment.quote === "string" ? {
+      status: assessment.status,
+      quote: assessment.quote,
+    } : undefined;
+  if (originalSpelling?.status === "typo") {
+    // Bind the proposal's exact source quote to the independently checked scope.
+    // Missing/out-of-scope quotes must not borrow a typo verdict from another token.
+    const quoteInScope = originalSpelling.quote.trim().length > 0
+      && spellingScope.includes(originalSpelling.quote);
+    if (!quoteInScope || independent.status !== "typo") {
+      originalSpelling = { status: quoteInScope ? independent.status : "unknown", quote: "" };
+      // Do not leave a lexical candidate available to downstream fallback routes.
+      const surfaceOnly = typeof normalized === "string" && normalizeKey(normalized) === normalizeKey(question);
+      return { text: surfaceOnly ? normalized.trim() : null, originalSpelling, inputTokens, outputTokens };
+    }
+  }
   return {
     text: typeof normalized === "string" && normalized.trim().length > 0 ? normalized.trim() : null,
     originalSpelling,

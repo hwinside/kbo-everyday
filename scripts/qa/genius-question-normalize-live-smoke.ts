@@ -10,8 +10,8 @@
  *  · 수용 판정은 배포 SSOT(`evaluateNormalizedCandidate`) 그대로 — production 사전·로스터를
  *    로드해 파이프라인과 같은 입력으로 판정한다. mustInclude 류 자체 재구현 판정은
  *    반대 의미·타 선수 추가를 못 잡는 false-green 이라 쓰지 않는다(삼순 1차 지적 축).
- *  · 양성 반복: 붙여쓰기 질문이 3회 연속 `accepted_surface`(문자 구성 동일 = 드리프트
- *    구조적 불가)로 수용된다.
+ *  · 고정 5회/문항, 양성 재현율은 비차단 관측값이다. 붙여쓰기는 accepted_surface, 용어 오타는 기대 후보.
+ *    음성 오교정·양성의 잘못된 후보·숫자 변경은 0회여야 한다. 통과할 때까지 재시도하지 않는다.
  *  · 반대편: 이미 정상 표기인 질문은 SSOT 기준 미수용으로 수렴한다.
  *  · 숫자 포함 질문의 교정문은 숫자 시퀀스가 정확히 보존된다.
  *  · 키가 없으면 조용한 SKIP 이 아니라 명시적 실패(exit 1).
@@ -45,12 +45,91 @@ async function main() {
   // env 주입 후에 로드해야 server.ts 모듈 초기화가 산다.
   const { normalizeQuestionLlm, loadGlossary } = await import("../../src/lib/baseball-qa/server");
   const { loadRosterPlayers } = await import("../../src/lib/baseball-qa/roster/load-roster-players");
-  const { digitSequencesMatch, evaluateNormalizedCandidate } = await import("../../src/lib/baseball-qa/pipeline");
+  const { digitSequencesMatch, evaluateNormalizedCandidate, resolveQuestionNormalization } = await import("../../src/lib/baseball-qa/pipeline");
 
   // 판정 입력을 파이프라인과 동일하게 — production 사전 + 배포 로스터 로더.
   const [glossary, players] = await Promise.all([loadGlossary(), loadRosterPlayers()]);
   assert.ok(glossary.length >= 100, `사전 로드 실패: ${glossary.length}`);
   assert.ok(players.length >= 500, `로스터 로드 실패: ${players.length}`);
+
+  // Production provider boundary: a biased proposal must not contaminate the veto input.
+  // Execute with mocked transport, then restore it before the real-provider matrix.
+  const realFetch = globalThis.fetch;
+  try {
+    for (const status of ["valid", "unknown", "typo", "malformed", "unavailable"] as const) {
+      const requests: Array<Record<string, unknown>> = [];
+      globalThis.fetch = async (_url, init) => {
+        const body = JSON.parse(String(init?.body));
+        requests.push(JSON.parse(body.contents[0].parts[0].text));
+        if (requests.length === 2 && status === "unavailable") throw new Error("fixture unavailable");
+        const reply = requests.length === 1
+          ? { originalSpelling: { status: "typo", quote: "쿼터" }, normalized: "커터가 뭐야?" }
+          : { status };
+        return new Response(JSON.stringify({
+          candidates: [{ content: { parts: [{ text: JSON.stringify(reply) }] } }],
+          usageMetadata: { promptTokenCount: 10, candidatesTokenCount: 2 },
+        }), { status: 200 });
+      };
+      const out = await normalizeQuestionLlm("쿼터가 뭐야?", glossary);
+      assert.equal(requests.length, 2, "lexical assessment requires independent source check");
+      assert.deepEqual(requests[1], { quote: "쿼터" }, "veto sees only original subject, never candidates/evidence");
+      assert.equal(out.text, status === "typo" ? "커터가 뭐야?" : null);
+      assert.equal(out.originalSpelling?.status, status === "typo" || status === "valid" ? status : "unknown");
+      assert.equal(out.inputTokens, status === "unavailable" ? 10 : 20);
+      assert.equal(out.outputTokens, status === "unavailable" ? 2 : 4);
+    }
+    // Quoted evidence must belong to the scope assessed in parallel.
+    for (const quote of ["싸이클링", "싸이클링 히트", "뭐야", "", "없는말"]) {
+      const requests: Array<Record<string, unknown>> = [];
+      globalThis.fetch = async (_url, init) => {
+        const body = JSON.parse(String(init?.body));
+        const input = JSON.parse(body.contents[0].parts[0].text);
+        requests.push(input);
+        const reply = "spellingCandidates" in input
+          ? { originalSpelling: { status: "typo", quote }, normalized: "사이클링 히트가 뭐야?" }
+          : { status: "typo" };
+        return new Response(JSON.stringify({ candidates: [{ content: { parts: [{ text: JSON.stringify(reply) }] } }] }));
+      };
+      const out = await normalizeQuestionLlm("싸이클링 히트가 뭐야?", glossary);
+      assert.deepEqual(requests[1], { quote: "싸이클링 히트" });
+      assert.equal(out.text, quote.startsWith("싸이클링") ? "사이클링 히트가 뭐야?" : null);
+    }
+    // A proposal response is deliberately held until the blind read starts.
+    // Sequential execution must fail instead of silently reintroducing a round-trip.
+    let releaseProposal: () => void = () => {};
+    const blindStarted = new Promise<void>(resolve => { releaseProposal = resolve; });
+    const timer = setTimeout(releaseProposal, 1000);
+    let blindWasStarted = false;
+    let proposalObservedBlind = false;
+    globalThis.fetch = async (_url, init) => {
+      const body = JSON.parse(String(init?.body));
+      const input = JSON.parse(body.contents[0].parts[0].text);
+      const proposal = "spellingCandidates" in input;
+      if (proposal) {
+        await blindStarted;
+        proposalObservedBlind = blindWasStarted;
+      } else {
+        blindWasStarted = true;
+        releaseProposal();
+      }
+      return new Response(JSON.stringify({
+        candidates: [{ content: { parts: [{ text: JSON.stringify(proposal
+          ? { originalSpelling: { status: "valid", quote: "" }, normalized: null }
+          : { status: "valid" }) }] } }],
+        usageMetadata: { promptTokenCount: 10, candidatesTokenCount: 2 },
+      }), { status: 200 });
+    };
+    try {
+      const out = await normalizeQuestionLlm("콜드", glossary);
+      assert.ok(proposalObservedBlind, "blind read must start before proposal completes");
+      assert.equal(out.inputTokens, 20, "count both calls even when no correction is proposed");
+      assert.equal(out.outputTokens, 4);
+    } finally {
+      clearTimeout(timer);
+    }
+  } finally {
+    globalThis.fetch = realFetch;
+  }
 
   /** 배포 SSOT 판정 그대로 — 재구현 금지(검증기가 대상과 갈라지면 false-green). */
   function verdictOf(question: string, text: string | null) {
@@ -60,11 +139,17 @@ async function main() {
     return { ...v, candidate };
   }
 
+
+
   let pass = 0;
   let fail = 0;
   const report: string[] = [];
 
-  // ── 양성: 붙여쓰기 → accepted_surface 3회 연속 ────────────────────────────
+  // Fixed budget: no retry-until-green. Positive recall is observational;
+  // every negative and every wrong lexical suggestion must have zero violations.
+  const rounds = 5;
+
+  // ── 양성: 붙여쓰기 → accepted_surface 비차단 재현율 ──────────────────────
   // surface 는 문자 구성 동일이라 "반대 의미·타 선수 추가" false-green 이 구조적으로 없다.
   const positives = [
     "김도영홈런몇개",
@@ -72,17 +157,20 @@ async function main() {
     "수비시프트제한이언제부터야",
   ];
   for (const q of positives) {
-    for (let round = 1; round <= 3; round++) {
+    let successes = 0;
+    let unsafe = 0;
+    for (let round = 1; round <= rounds; round++) {
       const out = await normalizeQuestionLlm(q);
       const v = verdictOf(q, out.text);
-      if (v.accepted && v.status === "accepted_surface") {
-        pass++;
-        report.push(`PASS 양성 r${round} [${v.status}]: ${q} → ${v.candidate}`);
-      } else {
-        fail++;
-        report.push(`FAIL 양성 r${round} [${v.status}]: ${q} → ${JSON.stringify(out.text)}`);
-      }
+      const ok = v.accepted && v.status === "accepted_surface";
+      if (ok) successes++;
+      const decision = resolveQuestionNormalization(q, out, glossary, players);
+      if (decision.suggested) unsafe++;
+      report.push(`${ok ? "SAMPLE_PASS" : "SAMPLE_MISS"} 양성 r${round} [${v.status}]: ${q} → ${JSON.stringify(out.text)}`);
     }
+    const ok = unsafe === 0;
+    if (ok) pass++; else fail++;
+    report.push(`${ok ? "PASS" : "FAIL"} 양성: ${q} recall=${successes}/${rounds} (non-blocking), unsafe=${unsafe}`);
   }
 
   // ── 반대편: 정상 표기는 SSOT 기준 미수용으로 수렴 ────────────────────────
@@ -92,19 +180,21 @@ async function main() {
     "오늘 LG 경기 몇 시에 시작해?",
   ];
   for (const q of negatives) {
-    const out = await normalizeQuestionLlm(q);
-    const v = verdictOf(q, out.text);
-    if (!v.accepted) {
-      pass++;
-      report.push(`PASS 반대편(미수용 ${v.status}): ${q}`);
-    } else {
-      fail++;
-      report.push(`FAIL 반대편(수용됨 ${v.status}): ${q} → ${v.candidate}`);
+    for (let round = 1; round <= rounds; round++) {
+      const out = await normalizeQuestionLlm(q);
+      const v = verdictOf(q, out.text);
+      if (!v.accepted) {
+        pass++;
+        report.push(`PASS 반대편 r${round}(미수용 ${v.status}): ${q}`);
+      } else {
+        fail++;
+        report.push(`FAIL 반대편 r${round}(수용됨 ${v.status}): ${q} → ${v.candidate}`);
+      }
     }
   }
 
   // ── 숫자 보존: 숫자 포함 붙여쓰기 질문 ───────────────────────────────────
-  {
+  for (let round = 1; round <= rounds; round++) {
     const q = "30-30클럽이몬가요";
     const out = await normalizeQuestionLlm(q);
     const candidate = (out.text ?? "").trim();
@@ -116,6 +206,36 @@ async function main() {
       fail++;
       report.push(`FAIL 숫자 변경: ${q} → ${JSON.stringify(out.text)}`);
     }
+  }
+
+  // Evidence-assisted spelling must preserve valid/common-word interpretations.
+  for (const [question, expected] of [
+    ["낙아웃이 뭐야", "낫아웃이 뭐야"],
+    ["와일드업에 뭐야?", "와인드업이 뭐야?"],
+    ["폭추", "폭투"],
+    ["싸이클링 히트", "사이클링 히트"],
+    ["싸이클링 히트가 뭐야?", "사이클링 히트가 뭐야?"],
+    ["인플드플라이가 정확히 뭐야?", "인필드플라이가 정확히 뭐야?"],
+    ["퓨쳐스리그", "퓨처스리그"],
+    ["스트라이크 조은가?", null],
+    ["쿼터가 뭐야?", null], ["워닝", null], ["세잎은?", null],
+    ["삼성?", null], ["콜드", null], ["아하", null], ["내일은?", null],
+  ] as const) {
+    let successes = 0;
+    let unsafe = 0;
+    for (let round = 0; round < rounds; round++) {
+      const out = await normalizeQuestionLlm(question, glossary);
+      const decision = resolveQuestionNormalization(question, out, glossary, players);
+      const candidate = decision.suggestionText ?? "";
+      const suggests = decision.suggested;
+      const ok = expected === null ? !suggests : suggests && candidate.replace(/\s+/g, "") === expected.replace(/\s+/g, "");
+      if (ok) successes++;
+      if (suggests && !ok) unsafe++;
+      report.push(`${ok ? "SAMPLE_PASS" : "SAMPLE_MISS"} evidence r${round + 1}: ${question} → ${JSON.stringify({ provider: out, finalCandidate: candidate })}`);
+    }
+    const ok = unsafe === 0;
+    if (ok) pass++; else fail++;
+    report.push(`${ok ? "PASS" : "FAIL"} evidence: ${question} recall=${successes}/${rounds} (non-blocking), unsafe=${unsafe}`);
   }
 
   for (const line of report) console.log(line);

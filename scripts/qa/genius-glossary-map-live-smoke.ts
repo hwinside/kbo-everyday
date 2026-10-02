@@ -89,8 +89,18 @@ async function main() {
     else { fail += 1; console.log(`FAIL ${label}`); }
   };
 
+  // Definition answers must not replace evaluative predicates, including colloquial spelling.
+  for (const question of ["스트라이크 조은가?", "볼넷 조은가?", "홈런 좋은가?", "도루 나쁜가?"]) {
+    for (let round = 1; round <= 3; round++) {
+      const result = await run(question);
+      report(result.mapped === null, `평가 의도 r${round}: ${question} → ${result.mapped}`);
+    }
+  }
+
   // ── 양성 반복 (3회 연속 같은 term) ──────────────────────────────────
   for (const [question, expected] of [
+    ["K가 뭐어", "삼진"],
+    ["K 뜻 알려줄래", "삼진"],
     ["유격수 포지션이 뭐야?", "유격수"],
     ["도루뜻", "도루"],
   ] as const) {
@@ -103,6 +113,9 @@ async function main() {
 
   // ── 반대편 (삼순 열거): 후보가 있어도 정의 질문이 아니면 null ────────
   for (const question of [
+    "온도 단위 K가 뭐야",
+    "영어 알파벳 K가 뭐야",
+    "오늘 투수 K 몇 개야",
     "김도영 포지션이 뭐야?",      // 선수 응용 — 사전 정의 아님
     "김도영 도루 몇 개야?",       // 선수 기록 수치
     "오늘 유격수 누구야?",         // 라인업 조회

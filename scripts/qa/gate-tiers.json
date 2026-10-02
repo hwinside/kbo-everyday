@@ -401,7 +401,7 @@
     },
     {
       "name": "qa:genius-glossary-map",
-      "tier": "deploy"
+      "tier": "ci"
     },
     {
       "name": "qa:genius-untrusted-metric",
