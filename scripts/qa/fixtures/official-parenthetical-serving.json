@@ -23,7 +23,7 @@
         "claimGeneration": 2,
         "note": "괄호 직전 원문(적용 범위는 원문 전체로 판단): \n단서 원문(분해하지 않음): (단, 7, 8월 경기가 야간경기로 편성될 경우 18:00에 거행)",
         "structure": {
-          "version": "official-parenthetical-v1",
+          "version": "official-parenthetical-v2",
           "sourceRevision": "sha256:8d2b83fc788790a3",
           "contentSha256": "34a7810e3fc087ec37ce75757ecb3f966c696388cbda8ba6faecbf86d1ae2c01",
           "relations": [
@@ -76,7 +76,7 @@
         "claimGeneration": 2,
         "note": "괄호 직전 원문(적용 범위는 원문 전체로 판단): 국내 공장등록증 사본\n단서 원문(분해하지 않음): (배트가 국내위탁제조에 의한 경우는\n위탁 공장의 등록증 사본)",
         "structure": {
-          "version": "official-parenthetical-v1",
+          "version": "official-parenthetical-v2",
           "sourceRevision": "sha256:bed799a762c4f92d",
           "contentSha256": "6e8890fb470efd237103835593477ecb10f3ed1dda4742ae338cab541f034c84",
           "relations": [
@@ -129,7 +129,7 @@
         "claimGeneration": 2,
         "note": "괄호 직전 원문(적용 범위는 원문 전체로 판단): \n단서 원문(분해하지 않음): (단, 불입액에 대하여는 감액 또는 지급을 정지할 수 없다)",
         "structure": {
-          "version": "official-parenthetical-v1",
+          "version": "official-parenthetical-v2",
           "sourceRevision": "sha256:bed799a762c4f92d",
           "contentSha256": "71170a07a4abce35f90ed4bec6c2781b4a342cfda3a6b2b99db80bfff717aeea",
           "relations": [
@@ -182,7 +182,7 @@
         "claimGeneration": 2,
         "note": "괄호 직전 원문(적용 범위는 원문 전체로 판단): \n단서 원문(분해하지 않음): (단, 의결권은 없다)",
         "structure": {
-          "version": "official-parenthetical-v1",
+          "version": "official-parenthetical-v2",
           "sourceRevision": "sha256:bed799a762c4f92d",
           "contentSha256": "167ac4cca441656e353a50fdcbd456854c61a3813e981e0f94602d3c19f796ae",
           "relations": [
@@ -235,7 +235,7 @@
         "claimGeneration": 2,
         "note": "괄호 직전 원문(적용 범위는 원문 전체로 판단): \n단서 원문(분해하지 않음): (야구용품 지원에 한함)\n괄호 직전 원문(적용 범위는 원문 전체로 판단): 학교\n단서 원문(분해하지 않음): (4년제 대학교 2학년 또는 3년제 대학교 2학년에 재학 중 지\n명 받은 선수의 경우 재학 중이던 대학교에 지원)\n괄호 직전 원문(적용 범위는 원문 전체로 판단): \n단서 원문(분해하지 않음): (야구용품 지원에 한함)",
         "structure": {
-          "version": "official-parenthetical-v1",
+          "version": "official-parenthetical-v2",
           "sourceRevision": "sha256:bed799a762c4f92d",
           "contentSha256": "e17004f8173fb0ad57acfc8385c9b2c056f5d398132cc9acb6cae5d1f6475bd9",
           "relations": [
@@ -330,7 +330,7 @@
         "claimGeneration": 2,
         "note": "괄호 직전 원문(적용 범위는 원문 전체로 판단): 포인트 박탈 종교·인종·성차별 행위 등\n단서 원문(분해하지 않음): (SNS를 통한 명예훼손 등 반사회적 행위로 사회적 물의를 야기하는 경우 포함)",
         "structure": {
-          "version": "official-parenthetical-v1",
+          "version": "official-parenthetical-v2",
           "sourceRevision": "sha256:bed799a762c4f92d",
           "contentSha256": "f988e013b167bf49ff4a608e2f3cf8cc2b50f64b78431c66763c9fe7bd56dff1",
           "relations": [
@@ -383,7 +383,7 @@
         "claimGeneration": 4,
         "note": "괄호 직전 원문(적용 범위는 원문 전체로 판단): (A) 보크가 선언되었을 경우 (B) 타자가 다음의 이유로 주자가 되어 1루에 진루하기 위해, 그 주자가 루를 비워줄 의무가 생긴 경우 ① 타자가 아웃될 염려 없이, 1루에 나갈 수 있게 된 경우 ② 타자가 타격한 페어 볼이, 야수(투수 포함)에 닿기 전 또는 야수\n괄호 안 제외 항목 A: 투수.\n나머지 적용 조건과 효과: 위 원문 그대로.",
         "structure": {
-          "version": "official-parenthetical-v1",
+          "version": "official-parenthetical-v2",
           "sourceRevision": "sha256:de8715105c8984be",
           "contentSha256": "5befb74cc4ebda86471301a9b1b668948f8215c320d607db77fcd0964e23e79f",
           "relations": [
@@ -436,7 +436,7 @@
         "claimGeneration": 4,
         "note": "괄호 직전 원문(적용 범위는 원문 전체로 판단): ② 세 타자 요건을 충족하지 못한 상황에서 감독이나 코치가 2회 를 초과하여 투수 마운드에 올라갈 경우 즉시 투수를 교체해야 하는 규정에도 불구하고, 투수는 세 타자 요건을 충족할 때까지\n단서 원문(분해하지 않음): (또는 그에 앞서 이닝이 종료된 경우는 이닝 종료 시까지)",
         "structure": {
-          "version": "official-parenthetical-v1",
+          "version": "official-parenthetical-v2",
           "sourceRevision": "sha256:de8715105c8984be",
           "contentSha256": "d805f6d1d220b0b96ca61041e42a0c7f39208bb6e55c46396425684910ed045c",
           "relations": [
@@ -489,7 +489,7 @@
         "claimGeneration": 4,
         "note": "괄호 직전 원문(적용 범위는 원문 전체로 판단): 09⒝⑶ 참조) 타자의 파울 타구로 인해 주자가 수비방해로 아웃되어 제3아웃 이 된 경우 타자는 타석을 마친 것으로 간주되고, 다음 이닝의 선두타자는 다음 타순의 타자가 된다\n단서 원문(분해하지 않음): (2아웃 미만인 경우 타자는 타석에 들어가 타격을 완료한다)",
         "structure": {
-          "version": "official-parenthetical-v1",
+          "version": "official-parenthetical-v2",
           "sourceRevision": "sha256:de8715105c8984be",
           "contentSha256": "b36573d1b70f4f501cb32adf2b1aa4d439d1875d2c5bab943b7a01bd2f75bd6b",
           "relations": [
@@ -542,7 +542,7 @@
         "claimGeneration": 4,
         "note": "괄호 직전 원문(적용 범위는 원문 전체로 판단): 02 함)하는 경우 ⑵ 손과 발로 베이스에 도달하려고 하는 경우 ⑶ 슬라이딩 후 베이스\n괄호 안 제외 항목 A: 홈 플레이트.\n나머지 적용 조건과 효과: 위 원문 그대로.\n괄호 직전 원문(적용 범위는 원문 전체로 판단): 상기 예외 규칙에도 불구하고, 주 자가 롤블록을 하거나 야수의 무릎 위로 다리를 들어 올리거나 차 는 경우 또는 팔이나 상체를 던져 고의적으로 접촉할 경우\n단서 원문(분해하지 않음): (또는 시 도할 경우)",
         "structure": {
-          "version": "official-parenthetical-v1",
+          "version": "official-parenthetical-v2",
           "sourceRevision": "sha256:de8715105c8984be",
           "contentSha256": "fd2daf5fbd0a30c382a7a47d40637244528365a7983655e788655c0e5752b21c",
           "relations": [
@@ -616,7 +616,7 @@
         "claimGeneration": 4,
         "note": "괄호 직전 원문(적용 범위는 원문 전체로 판단): 록할 수 있다\n단서 원문(분해하지 않음): (다른 야수의 포구 방해로 글러브에서 공이 떨어지\n는 경우 등)",
         "structure": {
-          "version": "official-parenthetical-v1",
+          "version": "official-parenthetical-v2",
           "sourceRevision": "sha256:de8715105c8984be",
           "contentSha256": "9424526c698310fafe534cad4b0445e6403de34eb90d38df4d0879dc4dd51065",
           "relations": [
@@ -669,7 +669,7 @@
         "claimGeneration": 4,
         "note": "괄호 직전 원문(적용 범위는 원문 전체로 판단): 사구(고의4구 포함), 보크, 폭투\n단서 원문(분해하지 않음): (제3스트라이크가 폭투가 되어 타\n자가 1루에 살아나간 경우 포함)",
         "structure": {
-          "version": "official-parenthetical-v1",
+          "version": "official-parenthetical-v2",
           "sourceRevision": "sha256:de8715105c8984be",
           "contentSha256": "1b900a39a6ed3b3e22cb3cbcabbd712cb745f9d8db18ecfe5f89c951ff6cba40",
           "relations": [
@@ -722,7 +722,7 @@
         "claimGeneration": 4,
         "note": "괄호 직전 원문(적용 범위는 원문 전체로 판단): 었을 경우 수비에 관한 출전기록은 없는 것으로 한다\n단서 원문(분해하지 않음): (단, 출전경기로\n는 인정)\n괄호 직전 원문(적용 범위는 원문 전체로 판단): 록은 정규시즌 기록에 포함시킨다\n단서 원문(분해하지 않음): (단, 우리나라에서는 적용하지 않는\n다)",
         "structure": {
-          "version": "official-parenthetical-v1",
+          "version": "official-parenthetical-v2",
           "sourceRevision": "sha256:de8715105c8984be",
           "contentSha256": "e65d7669b55775900c205c9fe8c216f3a97b60685e3866bc4bd1758e976c80f6",
           "relations": [
@@ -796,7 +796,7 @@
         "claimGeneration": 1,
         "note": "괄호 직전 원문(적용 범위는 원문 전체로 판단): 당해 정규시즌의 현역선수 등록일수가 150일 이상인 경우\n단서 원문(분해하지 않음): (다 만, 2006년 정규시즌부터는 145일 이상인 경우로 한다)",
         "structure": {
-          "version": "official-parenthetical-v1",
+          "version": "official-parenthetical-v2",
           "sourceRevision": "sha256:5d9127c6799317bd",
           "contentSha256": "6db8279cf8c828fe171128b135e4592c413a219dd8e48c7d7bef78545d42f2e1",
           "relations": [
@@ -849,7 +849,7 @@
         "claimGeneration": 1,
         "note": "괄호 직전 원문(적용 범위는 원문 전체로 판단): ⑤ 4년제 대학을 졸업한 선수(대한야구소프트볼협회에 4년간 대 학선수로 등록한 선수에 한하며, 이하 같다)는 제1항에도 불구하 고 8 정규시즌\n단서 원문(분해하지 않음): (단, 2022년 시즌 종료 후부터 7 정규시즌으로 단축)",
         "structure": {
-          "version": "official-parenthetical-v1",
+          "version": "official-parenthetical-v2",
           "sourceRevision": "sha256:5d9127c6799317bd",
           "contentSha256": "07c9e9ac152f6b515e2eefeeee85e1becf46d09688be5e202d89a2fe2cec276c",
           "relations": [
@@ -902,7 +902,7 @@
         "claimGeneration": 1,
         "note": "괄호 직전 원문(적용 범위는 원문 전체로 판단): 무사 또는 1사에 주자 1·2루 또는 만루일 때 타자가 친 것이 플라이 볼\n괄호 안 제외 항목 A: 직선타구.\n괄호 안 제외 항목 B: 번트한 것이 떠올라 플라이 볼이 된 것.\n제외 범위: 위 병렬 항목 각각이 제외됨.\n나머지 적용 조건과 효과: 위 원문 그대로.",
         "structure": {
-          "version": "official-parenthetical-v1",
+          "version": "official-parenthetical-v2",
           "sourceRevision": "sha256:07651ec70e392723",
           "contentSha256": "d549530b145f0329133b25f4a23469f38d4f01f0a3dcc6ca3417f9cdfd12b740",
           "relations": [
