@@ -1,4 +1,4 @@
-/** R3 offline experiment. Preserve all evidence and the existing status/guard contract. */
+/** R4 offline experiment. Preserve all evidence and the existing status/guard contract. */
 import { DEFINITION_REPAIR_TIMEOUT_MS } from "../../../src/lib/baseball-qa/stats/definition-intent";
 import { BASEBALL_QA_GEMINI_MODEL } from "../../../src/lib/baseball-qa/gemini-request";
 import { buildRagLlmRequest, RAG_OFFICIAL_SYSTEM_PROMPT, type RagEvidence } from "../../../src/lib/baseball-qa/rag/retrieve";
@@ -14,8 +14,17 @@ export const CONTEXT_ROUTING_NOTE = [
 ].join("\n");
 
 export function contextRoutingRequest(question: string, evidence: RagEvidence[], extras?: RagLlmExtras) {
-  return buildRagLlmRequest(question, evidence,
-    extras?.context ? `${RAG_OFFICIAL_SYSTEM_PROMPT}\n${CONTEXT_ROUTING_NOTE}` : RAG_OFFICIAL_SYSTEM_PROMPT, extras);
+  // Official mode is selected by exact prompt identity inside the builder.
+  // Finish all official rendering first; only then append the experiment note.
+  const request = buildRagLlmRequest(question, evidence, RAG_OFFICIAL_SYSTEM_PROMPT, extras);
+  if (!extras?.context) return request;
+  return {
+    ...request,
+    systemInstruction: {
+      ...request.systemInstruction,
+      parts: [{ text: `${request.systemInstruction.parts[0].text}\n${CONTEXT_ROUTING_NOTE}` }],
+    },
+  };
 }
 
 export async function callContextRouting(request: ReturnType<typeof buildRagLlmRequest>, extras?: RagLlmExtras) {

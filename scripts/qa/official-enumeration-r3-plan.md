@@ -15,7 +15,7 @@ change at all in standalone cases. Context status remains model-decided, not pro
 Standalone flyout P0 and missing p60 remain unresolved; no full-P0 closure claim.
 
 Reviewer contracts: node --import tsx scripts/qa/official-context-routing-smoke.ts
-Author does not execute QA. Independent semantic review is required.
+R4: reviewer explicitly requested green local contract smoke; author runs the two offline contract checks only. Independent semantic review is still required.
 
 Replay the R2 six suites with identical budgets (219 per mode) and same inputs.
 Baseline: no flags. Candidate: --routing=context (NOT --selection).
@@ -34,5 +34,29 @@ Expired/missing context uses the existing qualification; not manufactured by exp
 
 R3 is third diff-changing rework (R1 diagnosis, R2 selector, R3 context interpretation).
 Flow counter previously said 1; preserve this explicit history rather than reset it.
-Any further diff-changing rework exceeds three and must be escalated before proceeding.
+Superseded by reviewer thread message 1790946349.104609: round cap lifted in this thread since 10/01. Preserve cumulative history; R4 is the fourth revision, not a reset.
 Not a production PR/merge request. R0 and R2 experiments remain only as historical tools.
+
+
+## R4: official request identity and transport contract
+R3 f9a596edd5eaa29af155d08f32985d0ecc0f4f79 NO-GO stopped before live replay.
+The builder tests official mode using exact system prompt identity. R3 changed that
+identity and accidentally removed reference date, metadata and #1520 annotations.
+R4 first builds the unchanged official request and then appends only the instruction
+in the offline adapter. Product src and production prompt API remain unchanged.
+The real definition 40 fixture proves date, metadata, exclusions, complete contents
+and generationConfig remain identical. No evidence selection changes.
+
+Offline commands (no model/DB calls):
+- node --import tsx scripts/qa/official-context-routing-smoke.ts
+- node --import tsx scripts/qa/official-context-routing-transport-smoke.ts
+
+Transport compared with server.ts callRagLlmWithPrompt: same model, POST JSON body,
+15s normal / DEFINITION_REPAIR_TIMEOUT_MS repair timeout, no retries, non-OK status
+throw, JSON/network/timeout propagation, first truthy text part, null token defaults.
+Mock contract pins these behaviors including 429/500/malformed JSON and missing key.
+Intentional difference: experiment sends key in x-goog-api-key header instead of
+production URL; experiment reads environment at invocation rather than module load.
+No claim that the mock executes the production transport; independent comparison
+remains required. No live calls were spent on R3; fixed R4 budget stays 239 per mode.
+P0 HOLD; standalone question and p60 selection remain unresolved.
