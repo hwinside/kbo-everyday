@@ -2,6 +2,7 @@
  * --out=/absolute/path --reps=3 [--supplement=/absolute/path.jsonl]
  * --annotations=/absolute/path.json adds source-bound derived notes at model input.
  * --suite=exclusions adds six exclusion/near-neighbor questions (24 total).
+ * --suite=exclusion-focus --reps=5 runs eight production-failure variants (40 total).
  * Supplement mode ranks locally embedded additions alongside real RPC results.
  * It is a pre-application experiment, NOT deployed retrieval or End-User QA.
  * No production accounts, conversations, logs, cache, or corpus writes.
@@ -29,7 +30,7 @@ const distance = (a: number[], b: number[]) => 1 - a.reduce((s, n, i) => s + n *
 
 async function main() {
   const suite = option("suite") ?? "original";
-  if (!["original", "exclusions"].includes(suite)) throw new Error("unknown suite");
+  if (!["original", "exclusions", "exclusion-focus"].includes(suite)) throw new Error("unknown suite");
   if (suite === "exclusions") QUESTIONS.push(
     "무사 1·2루 직선타구도 인필드플라이야?",
     "1사 1·2루 직선타구도 인필드플라이야?",
@@ -38,9 +39,20 @@ async function main() {
     "1사 만루 번트가 아닌 직선타구는 인필드플라이야?",
     "1사 만루 번트가 아닌 평범한 페어 플라이를 내야수가 쉽게 잡을 수 있으면 인필드플라이야?",
   );
+  if (suite === "exclusion-focus") QUESTIONS.splice(0, QUESTIONS.length,
+    "1사 만루 직선타구도 인필드플라이야?",
+    "1사 만루 직선 타구도 인필드 플라이야?",
+    "1사 만루 라인드라이브도 인필드플라이야?",
+    "1사 만루 라인 드라이브도 인필드 플라이야?",
+    "1사 만루에서 공이 직선으로 뜨면 인필드플라이야?",
+    "1사 만루에서 번트가 아닌 직선타구도 인필드플라이야?",
+    "1사 만루에서 내야수가 쉽게 잡을 수 있는 직선타구도 인필드플라이야?",
+    "1사 만루에서 내야수가 평범한 수비로 잡을 수 있는 라인드라이브도 인필드플라이야?",
+  );
   const out = option("out");
   const reps = Number(option("reps") ?? "3");
   if (!out || !path.isAbsolute(out) || !Number.isInteger(reps) || reps < 1 || reps > 5) throw new Error("absolute --out and reps 1..5 required");
+  if (suite === "exclusion-focus" && reps !== 5) throw new Error("exclusion-focus requires fixed --reps=5 budget");
   const server = await import("../../src/lib/baseball-qa/server");
   const production = server.makeDeps(0);
   const file = option("supplement");
@@ -71,7 +83,7 @@ async function main() {
     }
   }
   const runs: unknown[] = [];
-  const save = () => fs.writeFileSync(out, JSON.stringify({ mode: file ? "local-ranked-supplement" : annotationFile ? "source-bound-annotation-experiment" : "production-read-only", reps, annotations, annotatedCalls, questions: QUESTIONS, runs }, null, 2));
+  const save = () => fs.writeFileSync(out, JSON.stringify({ suite, plannedRuns: QUESTIONS.length * reps, mode: file ? "local-ranked-supplement" : annotationFile ? "source-bound-annotation-experiment" : "production-read-only", reps, annotations, annotatedCalls, questions: QUESTIONS, runs }, null, 2));
   for (let rep = 0; rep < reps; rep++) for (const question of QUESTIONS) {
     const trace: unknown[] = [];
     const deps: QaDeps = {
