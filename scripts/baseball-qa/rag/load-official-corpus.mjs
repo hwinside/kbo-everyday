@@ -79,6 +79,7 @@ const EBOOK_BOARD_URL = "https://www.koreabaseball.com/kbo/board/ebook/ebookpubl
 const MANIFEST_PATH = path.resolve(HERE, opt("manifest", "kbo-official-manifest.json"));
 const REQUIRED_REVISION = "kbo-required-regulations-v1";
 const REQUIRED_PROFILES = {
+  "2026_야구규칙.pdf": { title: "2026 공식야구규칙", pages: 220, sha: "deb2c0d58ef41c6631f47a3dcfbe37d853a97275b9891ad50f0a8525b302a16a" },
   "2026_리그규정.pdf": { title: "2026 KBO 리그 규정", pages: 106, sha: "9a0c2f21cad8c69b5bbfae3658f3057edbb317feb74c9f2a1dca1931a4d0d156" },
   "2026_야구규약.pdf": { title: "2026 KBO 야구규약", pages: 268, sha: "127a572cb35b6819f219eea3e5144695403239f4934d36141b40ad63006a9cff" },
 };
