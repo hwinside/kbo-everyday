@@ -12,6 +12,9 @@
  *    반대 의미·타 선수 추가를 못 잡는 false-green 이라 쓰지 않는다(삼순 1차 지적 축).
  *  · 고정 5회/문항, 양성 재현율은 비차단 관측값이다. 붙여쓰기는 accepted_surface, 용어 오타는 기대 후보.
  *    음성 오교정·양성의 잘못된 후보·숫자 변경은 0회여야 한다. 통과할 때까지 재시도하지 않는다.
+ *  · TimeoutError는 SAMPLE_TIMEOUT/miss로 기록하고 고정 예산을 계속한다(추가 재시도 없음).
+ *    모든 문항에서 실제 응답 ≥3/5가 필요하며 부족하면 HOLD(exit 2), unsafe는 FAIL(exit 1).
+ *    timeout을 음성 PASS로 세지 않는다. 비타임아웃 오류는 명시적 실패로 유지한다.
  *  · 반대편: 이미 정상 표기인 질문은 SSOT 기준 미수용으로 수렴한다.
  *  · 숫자 포함 질문의 교정문은 숫자 시퀀스가 정확히 보존된다.
  *  · 키가 없으면 조용한 SKIP 이 아니라 명시적 실패(exit 1).
@@ -21,6 +24,7 @@
 import assert from "node:assert/strict";
 import { existsSync, readFileSync } from "node:fs";
 import { resolve } from "node:path";
+import { LiveSampleBudget } from "./lib/live-sample-budget";
 
 /** 배포 env가 없을 때 로컬 .env.local에서만 주입한다(시크릿은 출력하지 않는다). */
 function loadDotEnv(file: string) {
@@ -148,6 +152,15 @@ async function main() {
   // Fixed budget: no retry-until-green. Positive recall is observational;
   // every negative and every wrong lexical suggestion must have zero violations.
   const rounds = 5;
+  const budget = new LiveSampleBudget(rounds, 3);
+  async function sample(key: string, question: string, useGlossary = false) {
+    const result = await budget.sample(key, () => normalizeQuestionLlm(question, useGlossary ? glossary : undefined));
+    if (result.status === "timeout") {
+      report.push(`SAMPLE_TIMEOUT (miss, not safe): ${key}`);
+      return null;
+    }
+    return result.value;
+  }
 
   // ── 양성: 붙여쓰기 → accepted_surface 비차단 재현율 ──────────────────────
   // surface 는 문자 구성 동일이라 "반대 의미·타 선수 추가" false-green 이 구조적으로 없다.
@@ -160,7 +173,8 @@ async function main() {
     let successes = 0;
     let unsafe = 0;
     for (let round = 1; round <= rounds; round++) {
-      const out = await normalizeQuestionLlm(q);
+      const out = await sample(`surface:${q}`, q);
+      if (out === null) continue;
       const v = verdictOf(q, out.text);
       const ok = v.accepted && v.status === "accepted_surface";
       if (ok) successes++;
@@ -169,8 +183,9 @@ async function main() {
       report.push(`${ok ? "SAMPLE_PASS" : "SAMPLE_MISS"} 양성 r${round} [${v.status}]: ${q} → ${JSON.stringify(out.text)}`);
     }
     const ok = unsafe === 0;
-    if (ok) pass++; else fail++;
-    report.push(`${ok ? "PASS" : "FAIL"} 양성: ${q} recall=${successes}/${rounds} (non-blocking), unsafe=${unsafe}`);
+    const complete = (budget.counts.get(`surface:${q}`)?.observed ?? 0) >= budget.minimumObserved;
+    if (!ok) fail++; else if (complete) pass++;
+    report.push(`${!ok ? "FAIL" : complete ? "PASS" : "HOLD"} 양성: ${q} recall=${successes}/${rounds} (non-blocking), unsafe=${unsafe}`);
   }
 
   // ── 반대편: 정상 표기는 SSOT 기준 미수용으로 수렴 ────────────────────────
@@ -181,7 +196,8 @@ async function main() {
   ];
   for (const q of negatives) {
     for (let round = 1; round <= rounds; round++) {
-      const out = await normalizeQuestionLlm(q);
+      const out = await sample(`negative:${q}`, q);
+      if (out === null) continue;
       const v = verdictOf(q, out.text);
       if (!v.accepted) {
         pass++;
@@ -196,7 +212,8 @@ async function main() {
   // ── 숫자 보존: 숫자 포함 붙여쓰기 질문 ───────────────────────────────────
   for (let round = 1; round <= rounds; round++) {
     const q = "30-30클럽이몬가요";
-    const out = await normalizeQuestionLlm(q);
+    const out = await sample(`digits:${q}`, q);
+    if (out === null) continue;
     const candidate = (out.text ?? "").trim();
     const digitsOk = candidate.length === 0 || digitSequencesMatch(q, candidate);
     if (digitsOk) {
@@ -224,7 +241,8 @@ async function main() {
     let successes = 0;
     let unsafe = 0;
     for (let round = 0; round < rounds; round++) {
-      const out = await normalizeQuestionLlm(question, glossary);
+      const out = await sample(`evidence:${question}`, question, true);
+      if (out === null) continue;
       const decision = resolveQuestionNormalization(question, out, glossary, players);
       const candidate = decision.suggestionText ?? "";
       const suggests = decision.suggested;
@@ -234,13 +252,21 @@ async function main() {
       report.push(`${ok ? "SAMPLE_PASS" : "SAMPLE_MISS"} evidence r${round + 1}: ${question} → ${JSON.stringify({ provider: out, finalCandidate: candidate })}`);
     }
     const ok = unsafe === 0;
-    if (ok) pass++; else fail++;
-    report.push(`${ok ? "PASS" : "FAIL"} evidence: ${question} recall=${successes}/${rounds} (non-blocking), unsafe=${unsafe}`);
+    const complete = (budget.counts.get(`evidence:${question}`)?.observed ?? 0) >= budget.minimumObserved;
+    if (!ok) fail++; else if (complete) pass++;
+    report.push(`${!ok ? "FAIL" : complete ? "PASS" : "HOLD"} evidence: ${question} recall=${successes}/${rounds} (non-blocking), unsafe=${unsafe}`);
   }
 
+  const availability = budget.summary();
   for (const line of report) console.log(line);
-  console.log(`genius-question-normalize-live: PASS ${pass} / FAIL ${fail}`);
-  if (fail > 0) process.exit(1);
+  for (const row of availability.rows) {
+    console.log(`AVAILABILITY ${row.key}: observed=${row.observed}/${rounds}, timeout=${row.timeouts}, minimum=3`);
+  }
+  const status = fail > 0 ? "FAIL" : availability.incomplete.length > 0 ? "HOLD" : "PASS";
+  console.log(`Observed checks: PASS ${pass} / FAIL ${fail}`);
+  console.log(`genius-question-normalize-live: ${status}; samples=${availability.attempted}, observed=${availability.observed}, timeout=${availability.timeouts}, insufficient=${availability.incomplete.length}`);
+  if (fail > 0) process.exitCode = 1;
+  else if (availability.incomplete.length > 0) process.exitCode = 2;
 }
 
 main().catch((err) => {
