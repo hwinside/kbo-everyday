@@ -1,5 +1,7 @@
 # Flyout sibling R0 — read-only experiment, not a serving patch
 
+Historical R0 plan. Current R1 placement and 259/mode budgets: `official-sibling-r1-plan.md`.
+
 Base: origin/main e5f258449 (includes #1521 5df4f016). New branch, no DB, loader,
 embeddings, src, workflows or deployed request changes. Existing R0–R5 failures in
 #1521 remain part of the history; this does not claim P0 closure or reset them.

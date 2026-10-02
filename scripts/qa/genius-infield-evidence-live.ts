@@ -88,12 +88,13 @@ async function main() {
   if (previousTurn && (!previousTurn.question || !previousTurn.answer || !previousTurn.answeredAt || !previousTurn.currentCreatedAt)) throw new Error("complete previous turn required");
   const out = option("out");
   const reps = Number(option("reps") ?? "3");
-  if (!out || !path.isAbsolute(out) || fs.existsSync(out) || !Number.isInteger(reps) || reps < 1 || reps > 10) throw new Error("new absolute --out and reps 1..10 required");
+  const maxReps = ["flyout-regression", "flyout-context"].includes(suite) ? 20 : 10;
+  if (!out || !path.isAbsolute(out) || fs.existsSync(out) || !Number.isInteger(reps) || reps < 1 || reps > maxReps) throw new Error("new absolute --out and suite-bounded integer reps required");
   if (suite === "context-rules" && reps !== 5) throw new Error("context-rules requires reps=5");
   if (suite === "official81" && reps !== 1) throw new Error("official81 requires reps=1");
   if (suite === "exclusion-focus" && reps !== 5) throw new Error(`${suite} requires fixed --reps=5 budget`);
   if (suite === "official-documents" && reps !== 3) throw new Error("official-documents requires --reps=3");
-  if (["flyout-regression", "flyout-context"].includes(suite) && reps !== 10) throw new Error("flyout suites require fixed --reps=10 budget");
+  if (["flyout-regression", "flyout-context"].includes(suite) && reps !== 20) throw new Error("flyout suites require fixed --reps=20 budget");
   const server = await import("../../src/lib/baseball-qa/server");
   const production = server.makeDeps(0);
   const file = option("supplement");
@@ -126,7 +127,7 @@ async function main() {
     }
   }
   const runs: unknown[] = [];
-  const save = () => fs.writeFileSync(out, JSON.stringify({ suite, plannedRuns: QUESTIONS.length * reps, siblingCalls, mode: siblingFile ? "sibling-bundle-experiment" : routingMode ? "context-routing-experiment" : selectionMode ? "contextual-selection-experiment" : file ? "local-ranked-supplement" : annotationFile ? "source-bound-annotation-experiment" : "production-read-only", reps, previousTurn, annotations, annotatedCalls, experimentCalls, questions: QUESTIONS, runs }, null, 2));
+  const save = () => fs.writeFileSync(out, JSON.stringify({ suite, plannedRuns: QUESTIONS.length * reps, siblingCalls, mode: siblingFile ? "sibling-separate-evidence-r1" : routingMode ? "context-routing-experiment" : selectionMode ? "contextual-selection-experiment" : file ? "local-ranked-supplement" : annotationFile ? "source-bound-annotation-experiment" : "production-read-only", reps, previousTurn, annotations, annotatedCalls, experimentCalls, questions: QUESTIONS, runs }, null, 2));
   for (let rep = 0; rep < reps; rep++) for (const question of QUESTIONS) {
     const trace: unknown[] = [];
     let retrieved: RagEvidence[] = [];

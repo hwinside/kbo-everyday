@@ -23,10 +23,10 @@ assert.equal(result.trace.length,1);
 assert.equal(result.primaryCount,6);
 assert.equal(result.physicalChunkCount,7);
 assert.equal(JSON.stringify(primary),saved,"do not mutate guard evidence");
-assert.equal(result.modelEvidence.length,6);
-assert.ok(result.modelEvidence[0].content.startsWith(anchor.content));
-assert.deepEqual(result.modelEvidence.slice(1),primary.slice(1));
-assert.ok(result.modelEvidence[0].content.includes(sibling.sectionPath));
+assert.equal(result.modelEvidence.length,7);
+assert.deepEqual(result.modelEvidence.slice(0,6),primary);
+assert.ok(result.modelEvidence[6].content.includes(sibling.sectionPath));
+assert.deepEqual({...result.modelEvidence[6],content:sibling.content},sibling);
 for (const bad of [{...sibling,revision:"stale"},{...sibling,canonicalUrl:"https://other.test"},
   {...sibling,content:sibling.content+" changed"},{...sibling,sourceGrade:"tier3" as const}]) {
   assert.equal(siblingEvidence(primary,[bad],manifest).trace.length,0);
@@ -42,4 +42,10 @@ const cand = buildOfficialContextRequest("판정은?",result.modelEvidence,extra
 assert.deepEqual(cand.systemInstruction,base.systemInstruction);
 assert.deepEqual(cand.generationConfig,base.generationConfig);
 assert.ok(cand.contents[0].parts[0].text.includes("2026-10-02"));
+const baseText = base.contents[0].parts[0].text;
+const candText = cand.contents[0].parts[0].text;
+assert.ok(candText.includes("[자료7]"));
+assert.equal(candText.split("[자료7]")[0].trimEnd(),baseText.split("<자료 끝>")[0].trimEnd(),
+  "first six complete rendered records, date and annotations must stay identical");
+assert.ok(candText.split("[자료7]")[1].includes('"sectionPath":"공식 문서#p2"'));
 console.log("PASS: source binding, spans, missing candidates, preservation, explicit physical count and request contract");
