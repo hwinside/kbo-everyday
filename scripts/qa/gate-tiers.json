@@ -160,6 +160,14 @@
       "tier": "deploy"
     },
     {
+      "name": "qa:official-parenthetical-structure",
+      "tier": "ci"
+    },
+    {
+      "name": "qa:official-parenthetical-serving",
+      "tier": "ci"
+    },
+    {
       "name": "qa:baseball-official-rag",
       "tier": "deploy"
     },

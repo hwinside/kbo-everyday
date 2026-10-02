@@ -1,3 +1,4 @@
+import { officialModelEvidenceContent } from "./official-parenthetical-evidence";
 import { TEAM_CORRECTION_PROMPT, TEAM_CORRECTION_RESPONSE_SCHEMA } from "./correction";
 import { TERM_KNOWLEDGE_PROMPT, unverifiedTermAnswer } from "../term-knowledge";
 /**
@@ -1130,7 +1131,7 @@ export function buildRagLlmRequest(
           // Serving data has no per-fact season. Never synthesize it from a title,
           // subtract one from an annual's year, or label mixed history as one season.
           calendarSeason: row.calendarSeason ?? null,
-        })}\n본문:\n${row.content}`;
+        })}\n본문:\n${officialModelEvidenceContent(row)}`;
       }
       const head = `[자료${index + 1}] ${row.pageTitle} / ${row.sectionPath}`;
       if (!extras.evidenceTime) return `${head}\n${row.content}`;
