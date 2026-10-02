@@ -63,6 +63,7 @@ import {
   numericTokenCount,
   numericQuantityMatches,
   numericTokensSubsetOf,
+  type OfficialNumericRepair,
   type RagAttemptPath,
   type RagDiscardReason,
   type ValidatedRagAnswer,
@@ -1392,7 +1393,7 @@ export interface QaDeps {
    */
   searchOfficialRag?: (question: string) => Promise<RagEvidence[]>;
   /** 공식 간행물 근거 전용 재서술 호출. tier1이므로 근거에 적힌 숫자를 쓸 수 있다. */
-  callOfficialRagLlm?: (question: string, evidence: RagEvidence[], extras?: { context?: ContextTurn; definition?: StatDefinitionFrame; ruleRequest?: RequiredRuleRequest; referenceTimeMs?: number; recordbookRequest?: boolean; allowRecordbookGeneral?: boolean }) => Promise<LlmResult>;
+  callOfficialRagLlm?: (question: string, evidence: RagEvidence[], extras?: { numericRepair?: OfficialNumericRepair; context?: ContextTurn; definition?: StatDefinitionFrame; ruleRequest?: RequiredRuleRequest; referenceTimeMs?: number; recordbookRequest?: boolean; allowRecordbookGeneral?: boolean }) => Promise<LlmResult>;
   /** 수요 기반 ingestion 우선순위용 — 질문이 지목한 source를 기록한다. 실패는 무시한다. */
   recordRagDemand?: (sourceKeys: string[]) => Promise<void>;
   /**
@@ -4332,6 +4333,7 @@ export function validateLlmResponse(raw: string, question = "", previous?: Conte
 /** 사전에서 정규화 exact 매칭 (term/alias 각각 key·question 두 정규화 레벨로 인덱싱) */
 /** LLM 재서술 호출에 함께 넘기는 부가 맥락 — 직전 턴 + 현재 로스터 블록 (축 A·D). */
 export interface RagLlmExtras {
+  numericRepair?: OfficialNumericRepair;
   recordbookRequest?: boolean;
   allowRecordbookGeneral?: boolean;
   /** Server-owned official RAG reference clock; injectable for replay. */
@@ -5265,6 +5267,26 @@ async function answerOfficialDocumentQuestion(
       } catch { return failCloseError(llm); }
       validated = validateOfficial(llm);
     }
+  }
+  // One bounded recovery for ordinary official answers rejected after echoing
+  // a numeric question. No question token is added to evidence. Stored replies,
+  // definitions (which have their own repair), and recordbooks never enter it.
+  if (generatedOfficialNow && !definition && !recordbookRequest && !requiredRule
+      && validated.kind === "insufficient" && validated.reason === "numeric_not_in_evidence"
+      && (numericTokenCount(question) > 0 || numericQuantityMatches(question).length > 0)) {
+    const draft = JSON.parse(llm.text) as { answer: string };
+    try {
+      const rewritten = await deps.callOfficialRagLlm!(question, evidence, {
+        context: context ?? undefined, referenceTimeMs,
+        numericRepair: { reason: "numeric_not_in_evidence", answer: draft.answer,
+          quantityCandidates: numericQuantityMatches(draft.answer).map(match => match.token) },
+      });
+      llm = combineLlmAttempts(llm, rewritten);
+    } catch { return failCloseError(llm); }
+    validated = validateOfficial(llm);
+    // A failed GROUNDED answer cannot escape its evidence contract by changing
+    // status to GENERAL during repair.
+    if (validated.kind === "general") validated = { kind: "insufficient", reason: "model_insufficient" };
   }
   // A policy requirement cannot be answered from general knowledge or user
   // numbers after its evidence has been scoped. Missing policy stays explicit.

@@ -66,7 +66,62 @@ async function run(path: "official" | "team", question: string, raw: string, exp
   assert.equal(calls, 1, "durable replay must not regenerate");
   assert.equal(lastLog?.ragDiscardReason, reason);
 }
+async function numericRecovery(mode: "success" | "still_invalid" | "general" | "error" | "stored" | "loser") {
+  const evidence: RagEvidence = { ...official, calendarSeason: undefined,
+    content: "인필드 플라이는 무사 또는 1사에 주자 1·2루 또는 만루일 때 적용합니다. 직선타구와 번트는 제외합니다." };
+  const bad = "2아웃 만루에서는 인필드 플라이가 적용되지 않습니다.";
+  const good = "해당 상황에서는 적용되지 않습니다. 무사 또는 1사에 주자 1·2루 또는 만루일 때 적용합니다.";
+  const raw = (answer: string, status = "GROUNDED"): LlmResult => ({ text: JSON.stringify({ status, answer, calendarClaims: [] }), inputTokens: 7, outputTokens: 3 });
+  let stored: LlmResult | null = mode === "stored" ? raw(bad) : null;
+  let calls = 0;
+  let lastLog: Parameters<QaDeps["log"]>[0] | undefined;
+  const deps: QaDeps = {
+    now: () => Date.parse("2026-10-02T09:00:00Z"),
+    loadGlossary: async () => [], loadPlayers: async () => [],
+    getCache: async () => null, setCache: async () => {},
+    reserveDaily: async () => ({ allowed: true, remaining: 9 }),
+    searchOfficialRag: async () => [evidence],
+    callOfficialRagLlm: async (question, selected, extras) => {
+      calls++;
+      assert.equal(question, "2아웃 만루에도 인필드플라이야?");
+      assert.deepEqual(selected, [evidence]);
+      if (calls === 1) { assert.equal(extras?.numericRepair, undefined); return raw(bad); }
+      assert.equal(calls, 2, "repair budget exceeded");
+      assert.equal(extras?.numericRepair?.answer, bad);
+      assert.deepEqual(extras?.numericRepair?.quantityCandidates, ["2아웃"]);
+      assert.equal(extras?.referenceTimeMs, deps.now!());
+      if (mode === "error") throw new Error("repair provider failure");
+      if (mode === "general") return raw("질문 상황에서는 적용됩니다.", "GENERAL");
+      return raw(mode === "success" ? good : bad);
+    },
+    callLlm: async () => { throw new Error("must not fall through to generic provider"); },
+    getLlmState: async () => ({ started: Boolean(stored), result: stored, ownerActive: false }),
+    acquireLlmStart: async () => mode !== "loser",
+    storeLlm: async value => { stored = value; },
+    log: async entry => { lastLog = entry; },
+  };
+  const question = "2아웃 만루에도 인필드플라이야?";
+  const result = await answerQuestion("numeric-recovery-fixture", question, deps);
+  if (mode === "loser") { assert.equal(result.status, 202); assert.equal(calls, 0); return; }
+  if (mode === "error") { assert.equal(result.source, "error"); assert.equal(calls, 2); return; }
+  assert.equal(calls, mode === "stored" ? 0 : 2);
+  if (mode === "success") {
+    assert.ok(result.answer.includes(good));
+    assert.notEqual(result.source, "unsure");
+    assert.equal(lastLog?.inputTokens, 14);
+    assert.equal(lastLog?.outputTokens, 6);
+  } else {
+    assert.equal(result.source, "unsure");
+    assert.equal(lastLog?.ragDiscardReason, mode === "general" ? "model_insufficient" : "numeric_not_in_evidence");
+  }
+  const before = calls;
+  const replay = await answerQuestion("numeric-recovery-fixture", question, deps);
+  assert.equal(replay.answer, result.answer);
+  assert.equal(calls, before, "stored final must not generate again");
+}
+
 async function main() {
+  for (const mode of ["success", "still_invalid", "general", "error", "stored", "loser"] as const) await numericRecovery(mode);
   await run("official", "2026년 가을야구는 언제 시작해?", JSON.stringify({ status: "GROUNDED", answer: "10월 6일 시작합니다.", calendarClaims: [{ basis: "question", season: 2026, evidence: 1 }] }), RAG_DATE_HOLD, "event_date_unverified");
   await run("official", "인필드 플라이 규칙 알려줘", JSON.stringify({ status: "INSUFFICIENT" }), RAG_NEUTRAL_HOLD, "model_insufficient");
   await run("official", "인필드 플라이 규칙 알려줘", "not-json", RAG_RESPONSE_HOLD, "malformed_json");
