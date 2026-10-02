@@ -5,6 +5,7 @@
 import { createHash } from 'node:crypto';
 import { isDeepStrictEqual } from 'node:util';
 export const STRUCTURE_VERSION = 'official-parenthetical-v1';
+export const annotationContentDigest = text => hash(text.replace(/\s+/g, ''));
 const hash = text => createHash('sha256').update(text, 'utf8').digest('hex');
 const span = (text, start, end) => ({ start, end, quote: text.slice(start, end) });
 

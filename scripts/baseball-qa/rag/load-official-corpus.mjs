@@ -39,7 +39,6 @@ import fs from "node:fs";
 import path from "node:path";
 import crypto from "node:crypto";
 import { fileURLToPath } from "node:url";
-import { STRUCTURE_VERSION, structureOfficialParentheticals } from "./official-parenthetical-structure.mjs";
 import { bindCalendarSeasons } from "./official-calendar-seasons.mjs";
 
 const HERE = path.dirname(fileURLToPath(import.meta.url));
@@ -277,8 +276,9 @@ function prepareDocument(doc) {
   }))) : fullClean);
   const calendarBindings = bindCalendarSeasons(doc, documentContentHash, calendarProfiles);
   // Metadata changes need a new snapshot even when the original words do not.
-  const revisionHash = sha256(JSON.stringify({ documentContentHash,
-    calendarBindings: [...calendarBindings], structureVersion: STRUCTURE_VERSION }));
+  const revisionHash = calendarBindings.size
+    ? sha256(JSON.stringify({ documentContentHash, calendarBindings: [...calendarBindings] }))
+    : documentContentHash;
   const revision = `sha256:${revisionHash.slice(0, 16)}`;
   const asOf = doc.crawledAt.slice(0, 10);
 
@@ -351,7 +351,6 @@ function prepareDocument(doc) {
         ...(required ? { sourcePdfSha256: page.sourcePdfSha256 } : {}),
         content,
         contentHash: sha256(content),
-        parentheticalStructure: structureOfficialParentheticals(content, revision),
       });
     }
   }
@@ -625,8 +624,6 @@ async function main() {
   log("=".repeat(78));
   for (const p of prepared) {
     const chars = p.chunks.reduce((s, c) => s + c.content.length, 0);
-    const structured = p.chunks.filter(chunk => chunk.parentheticalStructure.relations.length > 0).length;
-    log(`${p.sourceKey} parentheticalStructure: annotated=${structured} unchanged=${p.chunks.length - structured}`);
     const calendarBound = p.chunks.filter(chunk => chunk.calendarSeason !== null).length;
     log(`${p.sourceKey} calendarSeason: verified=${calendarBound} unknown=${p.chunks.length - calendarBound}`);
     log(
@@ -811,7 +808,6 @@ async function main() {
               file: p.doc.file,
               page: chunk.page,
               calendarSeason: chunk.calendarSeason,
-              parentheticalStructure: chunk.parentheticalStructure,
               ...(chunk.extractorRevision ? {
                 pageEnd: chunk.pageEnd, extractorRevision: chunk.extractorRevision,
               } : {}),
