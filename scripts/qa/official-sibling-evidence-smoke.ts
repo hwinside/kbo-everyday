@@ -1,7 +1,7 @@
 /** Reviewer executes: npx tsx scripts/qa/official-sibling-evidence-smoke.ts */
 import assert from "node:assert/strict";
 import {createHash} from "node:crypto";
-import {siblingEvidence,validateSiblingManifest,type SiblingManifest} from "../baseball-qa/rag/experimental-sibling-evidence";
+import {standaloneSiblingEvidence,siblingEvidence,validateSiblingManifest,type SiblingManifest} from "../baseball-qa/rag/experimental-sibling-evidence";
 import {buildOfficialContextRequest} from "../../src/lib/baseball-qa/rag/official-context-request";
 import type {RagEvidence} from "../../src/lib/baseball-qa/rag/retrieve";
 const hash = (s:string) => createHash("sha256").update(s).digest("hex");
@@ -43,3 +43,21 @@ assert.deepEqual(cand.systemInstruction,base.systemInstruction);
 assert.deepEqual(cand.generationConfig,base.generationConfig);
 assert.ok(cand.contents[0].parts[0].text.includes("2026-10-02"));
 console.log("PASS: source binding, spans, missing candidates, preservation, explicit physical count and request contract");
+
+// R3 must equal B without context and A with any present context object.
+const standalone = standaloneSiblingEvidence(primary,[anchor,sibling],manifest,extras);
+assert.deepEqual(standalone,{...result,skippedForContext:false});
+assert.deepEqual(standaloneSiblingEvidence(primary,[anchor,sibling],manifest),standalone);
+for (const context of [{question:"포구는 뭐야?",answer:"잡는 행위"},
+  {question:"규칙 조건은?",answer:"규칙 답변"},{question:"",answer:""}]) {
+  const contextual = {...extras,context};
+  const skipped = standaloneSiblingEvidence(primary,[anchor,sibling],manifest,contextual);
+  assert.equal(skipped.modelEvidence,primary);
+  assert.equal(skipped.trace.length,0);
+  assert.equal(skipped.physicalChunkCount,6);
+  assert.equal(skipped.skippedForContext,true);
+  assert.deepEqual(buildOfficialContextRequest("후속 질문",skipped.modelEvidence,contextual),
+    buildOfficialContextRequest("후속 질문",primary,contextual));
+}
+assert.equal(JSON.stringify(primary),saved);
+console.log("PASS: R3 standalone equals B; present context equals A payload, no mutation");

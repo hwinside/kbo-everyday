@@ -1,7 +1,7 @@
 /** R0 model-input experiment only. No src imports this module. */
 import { createHash } from "node:crypto";
 import { officialModelEvidenceContent } from "../../../src/lib/baseball-qa/rag/official-parenthetical-evidence";
-import type { RagEvidence } from "../../../src/lib/baseball-qa/rag/retrieve";
+import type { RagEvidence, RagRequestExtras } from "../../../src/lib/baseball-qa/rag/retrieve";
 
 export type EnumerationBinding = { section: string; lead: string; item: string;
   sourceText: string; sourceTextSha256: string; leadStart: number; itemStart: number };
@@ -62,4 +62,14 @@ export function siblingEvidence(selected: RagEvidence[], candidates: RagEvidence
     break; // fixed global one-sibling budget; RPC order only
   }
   return {modelEvidence,trace,primaryCount:selected.length,physicalChunkCount:selected.length+trace.length};
+}
+
+/** R3: request-structure gate only. Keep R0 unchanged for the B control. */
+export function standaloneSiblingEvidence(selected: RagEvidence[], candidates: RagEvidence[],
+  manifest: SiblingManifest[], extras?: RagRequestExtras) {
+  if (extras?.context != null) return {
+    modelEvidence: selected, trace: [], primaryCount: selected.length,
+    physicalChunkCount: selected.length, skippedForContext: true,
+  };
+  return {...siblingEvidence(selected, candidates, manifest), skippedForContext: false};
 }

@@ -10,7 +10,7 @@ import { intentRoutingRequest, INTENT_ROUTING_NOTE } from "../baseball-qa/rag/ex
  */
 import { contextRoutingRequest, callContextRouting, CONTEXT_ROUTING_NOTE } from "../baseball-qa/rag/experimental-context-routing";
 import fs from "node:fs";
-import { siblingEvidence, validateSiblingManifest, type SiblingManifest } from "../baseball-qa/rag/experimental-sibling-evidence";
+import { standaloneSiblingEvidence, siblingEvidence, validateSiblingManifest, type SiblingManifest } from "../baseball-qa/rag/experimental-sibling-evidence";
 import { createHash } from "node:crypto";
 import { officialModelEvidenceContent } from "../../src/lib/baseball-qa/rag/official-parenthetical-evidence";
 import { annotationContentDigest } from "../baseball-qa/rag/official-parenthetical-structure.mjs";
@@ -41,6 +41,10 @@ async function main() {
   const routingMode = option("routing");
   if (routingMode && !["context", "intent"].includes(routingMode)) throw new Error("unknown routing mode");
   const siblingFile = option("siblings");
+  const siblingScope = option("sibling-scope") ?? "all";
+  if (!["all", "standalone"].includes(siblingScope)) throw new Error("unknown sibling scope");
+  if (option("sibling-scope") && !siblingFile) throw new Error("sibling scope requires manifest");
+  if (siblingScope === "standalone" && routingMode !== "context") throw new Error("R3 requires unchanged context routing");
   if (siblingFile && ["selection", "annotations", "supplement"].some(option)) throw new Error("sibling experiment must be isolated");
   const siblings: SiblingManifest[] = siblingFile ? JSON.parse(fs.readFileSync(siblingFile,"utf8")) : [];
   validateSiblingManifest(siblings);
@@ -128,7 +132,7 @@ async function main() {
     }
   }
   const runs: unknown[] = [];
-  const save = () => fs.writeFileSync(out, JSON.stringify({ suite, plannedRuns: QUESTIONS.length * reps, siblingCalls, routingMode: routingMode ?? null, mode: siblingFile ? "sibling-anchor-r2" : routingMode ? "context-routing-experiment" : selectionMode ? "contextual-selection-experiment" : file ? "local-ranked-supplement" : annotationFile ? "source-bound-annotation-experiment" : "production-read-only", reps, previousTurn, annotations, annotatedCalls, experimentCalls, questions: QUESTIONS, runs }, null, 2));
+  const save = () => fs.writeFileSync(out, JSON.stringify({ suite, plannedRuns: QUESTIONS.length * reps, siblingCalls, siblingScope, routingMode: routingMode ?? null, mode: siblingFile ? (siblingScope === "standalone" ? "sibling-anchor-r3" : "sibling-anchor-r2") : routingMode ? "context-routing-experiment" : selectionMode ? "contextual-selection-experiment" : file ? "local-ranked-supplement" : annotationFile ? "source-bound-annotation-experiment" : "production-read-only", reps, previousTurn, annotations, annotatedCalls, experimentCalls, questions: QUESTIONS, runs }, null, 2));
   for (let rep = 0; rep < reps; rep++) for (const question of QUESTIONS) {
     const trace: unknown[] = [];
     let retrieved: RagEvidence[] = [];
@@ -175,7 +179,9 @@ async function main() {
           return { ...row, content: `${officialModelEvidenceContent(row)}\n[원문 구조화 주석 — 파생 데이터]\n${annotation.note}` };
         });
         if (siblingFile) {
-          const bundled = siblingEvidence(evidence, retrieved, siblings);
+          const bundled = siblingScope === "standalone"
+            ? standaloneSiblingEvidence(evidence, retrieved, siblings, extras)
+            : siblingEvidence(evidence, retrieved, siblings);
           modelEvidence = bundled.modelEvidence;
           if (bundled.trace.length) siblingCalls++;
           trace.push({stage:"sibling-bundle",...bundled});
