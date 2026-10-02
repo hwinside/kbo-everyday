@@ -88,3 +88,37 @@ unsure/error 양쪽 0, 후보 노출 40/40. 수기 주석 표현의 표본 내 �
 
 타입체크·lint·loader dry-run 확인. 독립 smoke/모델 재생은 미실행(삼식 담당).
 graphify 갱신은 시도했으나 `ModuleNotFoundError: graphify`로 미완료.
+
+## R3 / PR再작업 R1 — B1~B3 수정 (현재 계약)
+앞의 R2는 철회된 설계 기록이다. 자동 후보 모델 재생 결과는 아직 없다.
+
+- B1: `annotationContentDigest`를 생성기/하니스에서 공유한다. 공백 전체 제거
+  SHA256(기존 하니스 계약)이며, 정확한 원문 해시는 별도 structure 안에 유지한다.
+  자동 후보는 URL·공백 정규화 해시뿐 아니라 실제 source revision도 대조한다.
+- B2: 보호된 읽기 전용 `genius_rag_serving_chunks`를 export했다. source snapshot을
+  전후 비교하고 active generation/revision/URL을 결속했다. 13 source/9,152청크
+  (기존 12 source/9,150 + #1515 보충 1 source/2청크)에서 주석 78개를 산출했다.
+  관계 109개: exclusion 51 / qualifier quote 58. OR 분해는 여전히 정의40 1개뿐이다.
+  따라서 일반 병렬 의미 분해의 폭넓은 입증으로 주장하지 않는다.
+- 기존 cand-probe의 고유 근거 14개 중 구조화 가능 2개가 모두 새 manifest와
+  URL/revision/공통해시 일치했다. 모델 재호출 없이 확인한 노출 사전 점검이며
+  실제 generation의 40/40 노출 또는 회귀 QA를 대신하지 않는다.
+- 실제 DB 경계의 규칙/리그규정/야구규약 16청크·15 section을 새 fixture에 보존했다.
+  원문 PDF 줄바꿈 잔재는 보정하지 않았다. section은 DB의 페이지/조항 주소다.
+  이전 13조항 fixture는 파서 단위 경계 증거로만 남긴다. 서빙 효과 근거가 아니다.
+- B3: 공식 loader diff를 base 대비 완전히 제거했다. revision/needsRefresh/metadata
+  쓰기 변경 없음. 별도 offline ingestion sidecar이므로 source stale·재임베딩 0.
+  향후 제품 연결/metadata-only 이관은 source별 대상 수·비용·롤백·독립 QA를
+  제시하는 별도 단계다. 이번 작업에서 DB 적용/전체 refresh는 하지 않는다.
+
+현재 재생 입력:
+`/Volumes/T7-Dev/reviews/runtime/excl-serving-r1-annotations.json`
+대응 원문/일관성 증거:
+`/Volumes/T7-Dev/reviews/runtime/excl-serving-r1.jsonl` 및 `.snapshot.json`.
+재산출(네트워크 없음):
+`node scripts/baseball-qa/rag/emit-official-parentheticals.mjs --corpus=/Volumes/T7-Dev/reviews/runtime/excl-serving-r1.jsonl --out=<새 경로>`
+미적용 v3.1 corpus 입력은 이제 거부한다. 임의 URL 덮어쓰기도 제거했다.
+
+삼식 재리뷰: 동일 집중8×5·원본18×3·실사용81×1, base/자동 후보 동예산.
+후보는 위 새 manifest 사용. smoke는 실제 서빙 fixture의 digest/revision/render도
+검증한다. 코드 smoke/모델 재생 실행·판정은 삼식 담당이다.

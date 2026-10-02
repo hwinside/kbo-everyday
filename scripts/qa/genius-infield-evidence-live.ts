@@ -8,7 +8,7 @@
  * No production accounts, conversations, logs, cache, or corpus writes.
  */
 import fs from "node:fs";
-import { createHash } from "node:crypto";
+import { annotationContentDigest } from "../baseball-qa/rag/official-parenthetical-structure.mjs";
 import path from "node:path";
 import { answerQuestion, type QaDeps } from "../../src/lib/baseball-qa/pipeline";
 import { embedText } from "../../src/lib/baseball-qa/rag/embed";
@@ -59,7 +59,7 @@ async function main() {
   // Source-bound presentation experiment only; never changes stored corpus,
   // retrieval ranking, or the pipeline's original guard evidence.
   const annotationFile = option("annotations");
-  type Annotation = { contentSha256: string; canonicalUrl: string; note: string };
+  type Annotation = { contentSha256: string; canonicalUrl: string; note: string; sourceRevision?: string };
   const annotations: Annotation[] = annotationFile
     ? JSON.parse(fs.readFileSync(annotationFile, "utf8")) : [];
   if (!Array.isArray(annotations) || annotations.some(a => !a
@@ -67,7 +67,7 @@ async function main() {
     || typeof a.note !== "string" || !a.note.trim())) throw new Error("invalid annotation manifest");
   if (file && annotationFile) throw new Error("supplement and annotations cannot be combined");
   let annotatedCalls = 0;
-  const digest = (text: string) => createHash("sha256").update(text.replace(/\s+/g, "")).digest("hex");
+  const digest = annotationContentDigest;
   const additions: Array<{ evidence: RagEvidence; vector: number[] }> = [];
   if (file) {
     for (const line of fs.readFileSync(file, "utf8").trim().split("\n")) {
@@ -113,6 +113,7 @@ async function main() {
         const modelEvidence = evidence.map((row, index) => {
           if (row.sourceKind !== "kbo_ebook" || row.sourceGrade !== "tier1") return row;
           const annotation = annotations.find(a => a.canonicalUrl === row.canonicalUrl
+            && (!a.sourceRevision || a.sourceRevision === row.revision)
             && a.contentSha256 === digest(row.content));
           if (!annotation) return row;
           matched.push(index);
