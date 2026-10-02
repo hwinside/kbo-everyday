@@ -40,3 +40,51 @@ base에서 결론 오판정이 관측되지 않으면 이번에도 **효과 판�
 - 원문 인용 범위 및 해시 일치 검증과 의미 검토를 통과한 산출물만 파생 데이터로 표시한다. 원문은 유지하고 검색·embedding·숫자 근거와 혼합하지 않는다. revision 변경 시 산출물을 무효화한다.
 - 검증 대상은 병렬 제외, 번트 절의 수식 범위, 중첩 괄호, 비제외 괄호, 이중 부정, 서로 다른 규칙의 양성/음성 사례다. 문자열 분리만으로 의미 보존을 보장하지 않는다.
 - 이번 수기 실험은 표현 효과만 평가한다. ingestion 추출의 정확성·일반화·실제 연결부는 별도 구현 및 독립 QA 대상이며, 집중 재생이 좋아도 수기 manifest 배포나 DB 적용은 하지 않는다.
+
+## R2 — 자동 ingestion 계약 (미배포)
+ce4f5beb 삼식 집중 재생: 각 40회, 결론 오판정/설명 역전 6→0,
+unsure/error 양쪽 0, 후보 노출 40/40. 수기 주석 표현의 표본 내 효과이며
+아래 자동 산출물의 효과나 제품 GO를 대신하지 않는다.
+
+- `official-parenthetical-structure.mjs`: 규칙명/질문 분기 없이 모든 chunk에
+  같은 파서를 적용한다. 정확한 본문 SHA256, source revision, UTF-16 offset,
+  원문 인용, 버전을 저장한다. 원문·embedding·검색·숫자 가드는 변경하지 않는다.
+- terminal `제외` 괄호만 exclusion으로 표시한다. OR가 하나이고 첫 항목이
+  단일 명사 토큰인 경우만 분리한다. 그 외 병렬은 원문 통째로 보존한다.
+  조건/부정은 `qualifier-quote`로만 인용하며 의미를 확정하지 않는다.
+  중첩은 미구조화, 닫히지 않은/여분 괄호 chunk는 전체 주석 생성을 보류한다.
+- renderer는 같은 입력으로 계약을 재산출하여 해시/버전/범위/항목/수정을
+  검증한다. JSONB 키 순서 변화는 허용한다. 원문 바로 앞 문맥은 범주를
+  임의 요약하지 않고 인용한다. 이런 문법 조건만으로 의미 정확성을 보장하지 않는다.
+- 실제 `load-official-corpus.mjs`가 최종 chunk별 metadata를 산출한다.
+  파서 버전은 revision에 결속되므로 향후 명시적 apply 시 새 generation이다.
+  기존 source를 refresh하지 않았다. DB metadata를 서빙에 연결하는 변경도 없다.
+  **이번 PR은 자동 산출물의 독립 리뷰 단계이며 배포용 최종 수정이 아니다.**
+
+작성자 offline 산출 확인(독립 QA 아님): 기존 공식 원문 379 chunk 중 34개
+주석 생성, 345개 원문만 유지. 정의 40은 실제 supplement content 지문과 일치한다.
+체크인 fixture는 정의 40 외 12개 조항: 11개 산출, 5.05(b)(4)는 미완결 괄호로
+보류. 실제 원문은 기존 PDF 검증 코퍼스에서 가져왔고 이번에 새 PDF 대조하지 않았다.
+표본의 원문 인용·분해 범위는 리뷰어가 독립 판독해야 한다.
+
+### 삼식 실행·판정
+1. `node scripts/qa/official-parenthetical-structure-smoke.mjs`
+   (13개 공식 조항 및 변조·revision·중첩·절단·부정·비제외 경계).
+2. 기존 보호 환경에서 동일 고정 예산으로 base/자동 후보를 비교한다.
+   집중 `--suite=exclusion-focus --reps=5`: 각 40회,
+   원본 `--suite=original --reps=3`: 각 54회,
+   실사용 공식 질문 81개 각 1회(기존 리뷰 하니스).
+   후보만 자동 생성 manifest를 `--annotations`에 전달한다.
+   입력 corpus 전체에 동일 파서를 적용하며 정의 40만 선별하지 않는다.
+   자동 manifest `/Volumes/T7-Dev/reviews/runtime/excl-auto-v1-final.json`,
+   추출 보류/노출 목록은 같은 경로의 `.report.json`.
+3. 재생 전 exact SHA에서 새 경로로 재생성 가능:
+   `node scripts/baseball-qa/rag/emit-official-parentheticals.mjs --corpus=<공식 JSONL> --canonical-url=<검증된 원 URL> --out=<새 절대 경로>`
+   기존 corpus: `/Volumes/T7-Dev/reviews/runtime/genius-rule-v31.2evz6zli/state/rulebook-v31-final.jsonl`.
+   emit은 네트워크/DB 접근 없고, 생성 파일은 수기 편집하지 않는다.
+4. 결론 오판정·설명 역전/누락·보류·원문 양성 및 이웃 의도 손실·token/지연과
+   주석 노출을 별도 판독한다. 자동화가 예전 수기 후보와 같다고 가정하지 않는다.
+   실사용 81문항은 기존 하니스의 model-evidence 지점에 같은 manifest를 적용한다.
+
+타입체크·lint·loader dry-run 확인. 독립 smoke/모델 재생은 미실행(삼식 담당).
+graphify 갱신은 시도했으나 `ModuleNotFoundError: graphify`로 미완료.
