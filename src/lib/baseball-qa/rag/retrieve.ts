@@ -1465,9 +1465,15 @@ export interface NumericQuantityMatch {
   counter: string;
 }
 
+/** Remove separators only inside conventional grouped decimal numerals.
+ * Sentence punctuation must remain a boundary (네, 주자 ≠ 네 주자). */
+function normalizeNumericGrouping(text: string): string {
+  return text.replace(/(?<![\d,])\d{1,3}(?:,\d{3})+(?![\d,])/g, token => token.replace(/,/g, ""));
+}
+
 /** Diagnostic view of the same normalized matches used by the grounding check. */
 export function numericQuantityMatches(text: string): NumericQuantityMatch[] {
-  const normalized = text.replace(/,/g, "");
+  const normalized = normalizeNumericGrouping(text);
   const sino = sinoKoreanQuantities(normalized, QUANTITY_COUNTERS);
   const koreanWord = Object.keys(KOREAN_NUMERALS).join("|");
   // 한글 수사 앞에 다른 한글 음절이 붙으면 수사가 아니다.
@@ -1560,8 +1566,8 @@ function groundedAgainst(answer: string, raw: string, teamCounts: string[] = [])
       if (sameCounter.length && !sameCounter.some(candidate => candidate.key === list.key)) return false;
     }
   }
-  const answerNorm = normalizeSinoKoreanQuantities(expandSharedQuantityCounters(answer.replace(/,/g, "")), QUANTITY_COUNTERS);
-  const haystackForQuantity = normalizeSinoKoreanQuantities(expandSharedQuantityCounters(raw.replace(/,/g, "")), QUANTITY_COUNTERS);
+  const answerNorm = normalizeSinoKoreanQuantities(expandSharedQuantityCounters(normalizeNumericGrouping(answer)), QUANTITY_COUNTERS);
+  const haystackForQuantity = normalizeSinoKoreanQuantities(expandSharedQuantityCounters(normalizeNumericGrouping(raw)), QUANTITY_COUNTERS);
   const quantitySet = (text: string): Set<string> => {
     const out = new Set<string>();
     for (const match of numericQuantityMatches(text)) {

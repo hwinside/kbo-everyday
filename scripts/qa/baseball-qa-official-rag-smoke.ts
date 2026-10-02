@@ -185,6 +185,18 @@ check("질문 숫자 — 긍정·부정 어느 쪽도 질문만으로 근거가 
   assert.equal(result.kind, "grounded");
 });
 
+check("문장 쉼표는 수량을 만들지 않고 숫자 묶음 쉼표만 정규화한다", () => {
+  assert.equal(numericTokensGrounded("네, 주자가 방해하면 아웃입니다.", []), true);
+  assert.equal(numericTokensGrounded("네, 타자가 아웃입니다.", []), true);
+  assert.equal(numericTokensGrounded("네 주자가 아웃입니다.", []), false);
+  assert.equal(numericTokensGrounded("4명의 주자가 아웃입니다.", []), false);
+  const evidence = [{ ...OFFICIAL, content: "관중은 1,000명입니다." }];
+  assert.equal(numericTokensGrounded("관중은 1000명입니다.", evidence), true);
+  assert.equal(numericTokensGrounded("관중은 1,000명입니다.", [{ ...OFFICIAL, content: "관중은 1000명입니다." }]), true);
+  assert.equal(numericTokensGrounded("관중은 1000명입니다.", [{ ...OFFICIAL, content: "1, 000명" }]), false);
+  assert.equal(numericTokensGrounded("네 주자가 아웃입니다.", [{ ...OFFICIAL, content: "네, 주자가 아웃입니다." }]), false);
+});
+
 check("숫자 없는 답은 근거 대조를 요구하지 않는다", () => {
   assert.equal(numericTokensGrounded("타자와 주자가 모두 아웃입니다.", []), true);
 });
