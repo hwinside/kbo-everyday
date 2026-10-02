@@ -1,3 +1,4 @@
+import { intentRoutingRequest, INTENT_ROUTING_NOTE } from "../baseball-qa/rag/experimental-intent-routing";
 /** Reviewer-run diagnostic, not a blocking build gate or semantic PASS.
  * --out=/absolute/path --reps=3 [--supplement=/absolute/path.jsonl]
  * --annotations=/absolute/path.json adds source-bound derived notes at model input.
@@ -38,9 +39,9 @@ async function main() {
   const suite = option("suite") ?? "original";
   if (!["context-rules", "original", "exclusions", "exclusion-focus", "flyout-regression", "flyout-context", "official-documents", "official81"].includes(suite)) throw new Error("unknown suite");
   const routingMode = option("routing");
-  if (routingMode && routingMode !== "context") throw new Error("unknown routing mode");
+  if (routingMode && !["context", "intent"].includes(routingMode)) throw new Error("unknown routing mode");
   const siblingFile = option("siblings");
-  if (siblingFile && ["routing", "selection", "annotations", "supplement"].some(option)) throw new Error("sibling experiment must be isolated");
+  if (siblingFile && ["selection", "annotations", "supplement"].some(option)) throw new Error("sibling experiment must be isolated");
   const siblings: SiblingManifest[] = siblingFile ? JSON.parse(fs.readFileSync(siblingFile,"utf8")) : [];
   validateSiblingManifest(siblings);
   let siblingCalls = 0;
@@ -127,7 +128,7 @@ async function main() {
     }
   }
   const runs: unknown[] = [];
-  const save = () => fs.writeFileSync(out, JSON.stringify({ suite, plannedRuns: QUESTIONS.length * reps, siblingCalls, mode: siblingFile ? "sibling-separate-evidence-r1" : routingMode ? "context-routing-experiment" : selectionMode ? "contextual-selection-experiment" : file ? "local-ranked-supplement" : annotationFile ? "source-bound-annotation-experiment" : "production-read-only", reps, previousTurn, annotations, annotatedCalls, experimentCalls, questions: QUESTIONS, runs }, null, 2));
+  const save = () => fs.writeFileSync(out, JSON.stringify({ suite, plannedRuns: QUESTIONS.length * reps, siblingCalls, routingMode: routingMode ?? null, mode: siblingFile ? "sibling-anchor-r2" : routingMode ? "context-routing-experiment" : selectionMode ? "contextual-selection-experiment" : file ? "local-ranked-supplement" : annotationFile ? "source-bound-annotation-experiment" : "production-read-only", reps, previousTurn, annotations, annotatedCalls, experimentCalls, questions: QUESTIONS, runs }, null, 2));
   for (let rep = 0; rep < reps; rep++) for (const question of QUESTIONS) {
     const trace: unknown[] = [];
     let retrieved: RagEvidence[] = [];
@@ -180,13 +181,13 @@ async function main() {
           trace.push({stage:"sibling-bundle",...bundled});
         }
         if (matched.length) experimentCalls++;
-        const request = routingMode && extras?.context ? contextRoutingRequest(q, modelEvidence, extras) : server.buildProductionRagRequest(q, modelEvidence, RAG_OFFICIAL_SYSTEM_PROMPT, extras);
+        const request = routingMode === "intent" ? intentRoutingRequest(q, modelEvidence, extras) : routingMode && extras?.context ? contextRoutingRequest(q, modelEvidence, extras) : server.buildProductionRagRequest(q, modelEvidence, RAG_OFFICIAL_SYSTEM_PROMPT, extras);
         const routingApplied = request.systemInstruction.parts[0].text.includes(CONTEXT_ROUTING_NOTE);
         const servingAnnotationCount = request.contents[0].parts[0].text.split("[원문 구조화 주석 — 파생 데이터]").length - 1;
         if (servingAnnotationCount) annotatedCalls++;
-        const raw = routingMode && routingApplied ? await callContextRouting(request, extras) : await server.callOfficialRagLlm(q, modelEvidence, extras);
+        const raw = routingMode ? await callContextRouting(request, extras) : await server.callOfficialRagLlm(q, modelEvidence, extras);
         trace.push({ stage: "official-generation", question: q, evidence, extras, matchedAnnotations: matched,
-          request, routingApplied, servingAnnotationCount, raw });
+          request, routingApplied, intentRoutingApplied: request.systemInstruction.parts[0].text.includes(INTENT_ROUTING_NOTE), servingAnnotationCount, raw });
         return raw;
       },
       callLlm: async (...args) => {

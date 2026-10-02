@@ -1,4 +1,4 @@
-/** R1 model-input experiment only. No src imports this module. */
+/** R0 model-input experiment only. No src imports this module. */
 import { createHash } from "node:crypto";
 import { officialModelEvidenceContent } from "../../../src/lib/baseball-qa/rag/official-parenthetical-evidence";
 import type { RagEvidence } from "../../../src/lib/baseball-qa/rag/retrieve";
@@ -32,8 +32,8 @@ export function validateSiblingManifest(manifest: SiblingManifest[]) {
   }
 }
 
-/** Preserve six primary records byte-for-byte; append at most one independently numbered
- * sibling record at the end. This is seven physical chunks, NOT proof of a six-chunk serving contract.
+/** Preserve six primary records byte-for-byte; append at most one separately labelled
+ * sibling block. This is seven physical chunks, NOT proof of a six-chunk serving contract.
  * Only an already retrieved, source-bound complete item is eligible. Never fetch/pin p60.
  */
 export function siblingEvidence(selected: RagEvidence[], candidates: RagEvidence[], manifest: SiblingManifest[]) {
@@ -57,9 +57,7 @@ export function siblingEvidence(selected: RagEvidence[], candidates: RagEvidence
       canonicalUrl:sibling.canonicalUrl,revision:sibling.revision,sectionPath:sibling.sectionPath,
       rawContentSha256:m.rawContentSha256,content:officialModelEvidenceContent(sibling),relations})}\n[형제 청크 끝]`;
     if (block.length > 1800) continue; // skip, never truncate a rule or displace primary evidence
-    // R1 changes placement only: retain R0 eligibility, payload and global budget.
-    // Its own metadata/source identity now belongs to the new final evidence record.
-    modelEvidence.push({...sibling,content:block});
+    modelEvidence[anchor] = {...selected[anchor],content:officialModelEvidenceContent(selected[anchor])+block};
     trace.push({anchor,candidate:rank,section:sibling.sectionPath,addedChars:block.length});
     break; // fixed global one-sibling budget; RPC order only
   }
