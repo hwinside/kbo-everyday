@@ -808,7 +808,7 @@ async function callRagLlmWithPrompt(
     body: JSON.stringify(
       buildProductionRagRequest(question, evidence, systemPrompt, extras),
     ),
-    signal: AbortSignal.timeout((extras?.definition?.repair || extras?.numericRepair) ? DEFINITION_REPAIR_TIMEOUT_MS : 15000),
+    signal: AbortSignal.timeout(extras?.definition?.repair ? DEFINITION_REPAIR_TIMEOUT_MS : 15000),
   });
   if (!res.ok) throw new Error(`Gemini API failed: ${res.status}`);
   const data = await res.json();
