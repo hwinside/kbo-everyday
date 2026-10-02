@@ -4,7 +4,7 @@
  */
 import { createHash } from 'node:crypto';
 import { isDeepStrictEqual } from 'node:util';
-export const STRUCTURE_VERSION = 'official-parenthetical-v3';
+export const STRUCTURE_VERSION = 'official-parenthetical-v2';
 export const annotationContentDigest = text => hash(text.replace(/\s+/g, ''));
 const hash = text => createHash('sha256').update(text, 'utf8').digest('hex');
 const span = (text, start, end) => ({ start, end, quote: text.slice(start, end) });
@@ -54,28 +54,6 @@ export function structureOfficialParentheticals(content, sourceRevision) {
     }
   }
   if (depth) unresolved.push({ reason: 'unmatched-open', at: start });
-  // Leading conditional exceptions only. Never infer the inverse consequence.
-  // A complete sentence and an explicit sentence/list boundary are required;
-  // embedded subjects, unfinished chunks and multiple exceptions stay unannotated.
-  const leading = /(?:^|\n|[.!?]\s+)(?:\[[^\]\n]+\]\s*|[⒜-⒵⑴-⒇①-⑳]\s*|\d+\.\s*)?([^\n.!?()[\]]{1,160}?경우)(?:을|를)\s+제외하고(?:는)?\s*,?\s+/g;
-  for (const m of content.matchAll(leading)) {
-    const conditionStart = m.index + m[0].indexOf(m[1]);
-    const conditionEnd = conditionStart + m[1].length;
-    const bodyStart = m.index + m[0].length;
-    const tail = content.slice(bodyStart);
-    const end = /다\.(?=\s|$)/.exec(tail);
-    if (!end || end.index > 600) continue;
-    const bodyEnd = bodyStart + end.index + 2;
-    const body = content.slice(bodyStart, bodyEnd);
-    // Do not cross a new provision/annotation or coordinate another exception.
-    if (/[\[\]⒜-⒵⑴-⒇①-⑳]|제외|다만/.test(body)
-        || /[,;:]|제외|(?:^|\s)\S+(?:은|는)\s+(?!경우)/.test(m[1])
-        || /[()]/.test(content.slice(conditionStart, bodyEnd))) continue;
-    relations.push({ kind: 'leading-exception',
-      parenthetical: span(content, conditionStart, bodyEnd),
-      context: span(content, bodyStart, bodyEnd), coordination: 'unsplit',
-      items: [span(content, conditionStart, conditionEnd)] });
-  }
   // Partial/truncated chunks must never turn an inner fragment into a note.
   return { version: STRUCTURE_VERSION, sourceRevision, contentSha256: hash(content),
     relations: depth || unresolved.some(x => x.reason === 'unmatched-close') ? [] : relations, unresolved };
@@ -86,9 +64,6 @@ export function renderOfficialParentheticals(content, sourceRevision, structure)
   const expected = structureOfficialParentheticals(content, sourceRevision);
   if (!isDeepStrictEqual(expected, structure)) throw new Error('invalid/stale official structure');
   return structure.relations.map(r => {
-    if (r.kind === 'leading-exception') return `문장 앞 예외 조건(원문): ${r.items[0].quote}\n`
-      + `위 예외 조건을 제외한 경우에만 적용되는 본문(원문): ${r.context.quote}\n`
-      + '적용 범위: 위 본문의 조건과 효과를 예외 조건에 그대로 적용하지 않음. 예외 상황의 효과는 이 문장의 반대로 추론하지 않고 별도 원문으로 판단.';
     const context = `괄호 직전 원문(적용 범위는 원문 전체로 판단): ${r.context.quote.trim()}`;
     if (r.kind !== 'exclusion') return `${context}\n단서 원문(분해하지 않음): ${r.parenthetical.quote}`;
     return `${context}\n${r.items.map((item, i) => `괄호 안 제외 항목 ${String.fromCharCode(65 + i)}: ${item.quote}.`).join('\n')}\n`

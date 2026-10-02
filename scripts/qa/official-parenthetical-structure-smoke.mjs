@@ -69,31 +69,3 @@ for (const inner of ['연속 이닝 선발 등판 무실점 기록에서 제외'
 }
 
 console.log(`PASS: ${serving.rows.length} serving chunks / ${otherSections.size} other sections; shared digest + revision + render`);
-
-// Leading exception scope: generic syntax, no rule or question keyword routing.
-for (const text of [
-  '[부기] 허가가 있는 경우를 제외하고 참가자는 대기하여야 한다.',
-  '허가가 있는 경우를 제외하고는 참가자는 대기하여야 한다.',
-  '앞 문장이다. [주] 승인이 있는 경우를 제외하고, 물품은 보관한다.',
-]) {
-  const s = derive(text, 'r');
-  const relation = s.relations.find(r => r.kind === 'leading-exception');
-  assert.ok(relation, text);
-  assert.match(relation.items[0].quote, /경우$/);
-  assert.doesNotMatch(relation.context.quote, /제외하고/);
-  assert.match(render(text, 'r', s), /예외 상황의 효과는 이 문장의 반대로 추론하지 않고/);
-  const forged = structuredClone(s); forged.relations[0].context.quote = '반대 효과';
-  assert.throws(() => render(text, 'r', forged));
-}
-for (const text of [
-  '횟수는 허가가 있는 경우를 제외하고 제한한다.',
-  '[주] 허가가 있는 경우를 제외하고 참가자는 대기',
-  '[주] 허가가 있는 경우를 제외하지 않고 참가자는 대기한다.',
-  '[주] 허가가 있는 경우를 제외하고 [다음 조항] 물품은 보관한다.',
-  '[주] 허가가 있는 경우를 제외하고 다만 물품은 보관한다.',
-  '[주] 허가가 있는 경우를 제외하고 승인된 경우를 제외한다.',
-  '두 타자를 제외하고 전원 출루한다.',
-]) assert.equal(derive(text, 'r').relations.filter(r => r.kind === 'leading-exception').length, 0, text);
-const exceptionRow = serving.rows.find(x => x.annotation.structure.relations.some(r => r.kind === 'leading-exception'));
-assert.ok(exceptionRow, 'actual serving leading-exception fixture required');
-assert.match(exceptionRow.annotation.note, /예외 조건을 제외한 경우에만 적용되는 본문/);

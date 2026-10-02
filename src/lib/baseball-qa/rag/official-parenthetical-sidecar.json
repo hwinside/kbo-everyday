@@ -8,7 +8,7 @@
     "claimGeneration": 1,
     "note": "괄호 직전 원문(적용 범위는 원문 전체로 판단): 금지된 연루\n단서 원문(분해하지 않음): (도핑방지규정을 위반하여 징계 중이거나 자격 정지된 선수\n또는 기타관계자와 연루된 경우)",
     "structure": {
-      "version": "official-parenthetical-v3",
+      "version": "official-parenthetical-v2",
       "sourceRevision": "sha256:ea7d1aa559c06a0c",
       "contentSha256": "b4883d3e96f7e0408658bad4012493cab9459bf163fb31ed07b3a156987c1b2e",
       "relations": [
@@ -47,7 +47,7 @@
     "claimGeneration": 1,
     "note": "괄호 직전 원문(적용 범위는 원문 전체로 판단): ① 위원회는 징계할 사유가 발생한 날로부터 3년\n단서 원문(분해하지 않음): (제34조 제5항 각 호의 경우에는 5년)",
     "structure": {
-      "version": "official-parenthetical-v3",
+      "version": "official-parenthetical-v2",
       "sourceRevision": "sha256:ea7d1aa559c06a0c",
       "contentSha256": "07c52816b9dcb24ce0fda2715872cc0a2a9041ac101cbd241237a5f750ae350d",
       "relations": [
@@ -86,7 +86,7 @@
     "claimGeneration": 1,
     "note": "괄호 직전 원문(적용 범위는 원문 전체로 판단): \n단서 원문(분해하지 않음): (시· 도체육회, 회원종목단체의 경우 대한체육회, 시· 도종목단체, 시·군·구체육회의 경우\n시도체육회)",
     "structure": {
-      "version": "official-parenthetical-v3",
+      "version": "official-parenthetical-v2",
       "sourceRevision": "sha256:ea7d1aa559c06a0c",
       "contentSha256": "4e37529ae274f96b64f8ab52d7b80928fc353e82c386081d4d1e80f0ecab0a69",
       "relations": [
@@ -125,7 +125,7 @@
     "claimGeneration": 1,
     "note": "괄호 직전 원문(적용 범위는 원문 전체로 판단): 유용으로 다른 법률에 따라 형사처벌을 받거나 변상책임 등을 이행\n단서 원문(분해하지 않음): (몰수나 추징을 당\n한 경우를 포함한다)",
     "structure": {
-      "version": "official-parenthetical-v3",
+      "version": "official-parenthetical-v2",
       "sourceRevision": "sha256:ea7d1aa559c06a0c",
       "contentSha256": "f91ad1dec186c753152a2fedd3c197c5af41282e8789d892e3cd5a81be8eeca3",
       "relations": [
@@ -164,7 +164,7 @@
     "claimGeneration": 1,
     "note": "괄호 직전 원문(적용 범위는 원문 전체로 판단): ⑥ 징계혐의자 또는 징계부가금 부과 의결을 받은 사람이 벌금 외의 형\n단서 원문(분해하지 않음): (벌금형이 병과 되는\n경우를 포함한다)",
     "structure": {
-      "version": "official-parenthetical-v3",
+      "version": "official-parenthetical-v2",
       "sourceRevision": "sha256:ea7d1aa559c06a0c",
       "contentSha256": "677f86aa234afcec980774b38cc949839330d4854fb96b6c5374bde94bad75ae",
       "relations": [
@@ -203,7 +203,7 @@
     "claimGeneration": 1,
     "note": "괄호 직전 원문(적용 범위는 원문 전체로 판단): 는 시· 도교체육회, 시· 도교육청 및 피해자\n단서 원문(분해하지 않음): (선수 권 익 침해 경우)",
     "structure": {
-      "version": "official-parenthetical-v3",
+      "version": "official-parenthetical-v2",
       "sourceRevision": "sha256:ea7d1aa559c06a0c",
       "contentSha256": "da283d75fc07e18c0604e7682c966485bfdae8fb9d9535e08181a6b3d8e7abd7",
       "relations": [
@@ -242,7 +242,7 @@
     "claimGeneration": 1,
     "note": "괄호 직전 원문(적용 범위는 원문 전체로 판단): 년자인 경우, 성적 수치심을 일으키는 일체의 행위\n단서 원문(분해하지 않음): (사진이나\n동영상을 본인의 의사에 반하여 유출·유포한 경우 포함)",
     "structure": {
-      "version": "official-parenthetical-v3",
+      "version": "official-parenthetical-v2",
       "sourceRevision": "sha256:ea7d1aa559c06a0c",
       "contentSha256": "b041065e213ca00783b861072350b2de868c81b6c729926128402c6c073794e1",
       "relations": [
@@ -281,7 +281,7 @@
     "claimGeneration": 1,
     "note": "괄호 직전 원문(적용 범위는 원문 전체로 판단): 영구실격, 직무정지\n단서 원문(분해하지 않음): (단, 구단 직원이 연루되었을 경우 : 직무정지 1년 이상, 구단이 연루되었을 경\n우 : 제재금 1억 이상)",
     "structure": {
-      "version": "official-parenthetical-v3",
+      "version": "official-parenthetical-v2",
       "sourceRevision": "sha256:ea7d1aa559c06a0c",
       "contentSha256": "e6b08a6a473a981e6327f701e8ebf655abd4bb4f1a67dd82dbf3c9c17995d9ad",
       "relations": [
@@ -320,7 +320,7 @@
     "claimGeneration": 1,
     "note": "괄호 직전 원문(적용 범위는 원문 전체로 판단): 전 항에 의해 제재금이 가해진 자는 제재를 받은 날부터 5일\n단서 원문(분해하지 않음): (토, 일, 공휴일 제외)",
     "structure": {
-      "version": "official-parenthetical-v3",
+      "version": "official-parenthetical-v2",
       "sourceRevision": "sha256:ea7d1aa559c06a0c",
       "contentSha256": "9f51bc5e8887d8b01eaa8d6099e60fa5d2e7b49991214e6895eae4ca8e2a7675",
       "relations": [
@@ -359,7 +359,7 @@
     "claimGeneration": 1,
     "note": "괄호 직전 원문(적용 범위는 원문 전체로 판단): 새 공을 제외하고 투수의 새 공 교환은 3개까지로 한다\n단서 원문(분해하지 않음): (단, 우천시 제외)",
     "structure": {
-      "version": "official-parenthetical-v3",
+      "version": "official-parenthetical-v2",
       "sourceRevision": "sha256:ea7d1aa559c06a0c",
       "contentSha256": "3addd2fe595d689cb4613b6ef54a8837cca76933eadfb8c69b934207f5bdbfb7",
       "relations": [
@@ -398,7 +398,7 @@
     "claimGeneration": 1,
     "note": "괄호 직전 원문(적용 범위는 원문 전체로 판단): - 5년 이내\n괄호 안 제외 항목 A: 당해 연도.\n나머지 적용 조건과 효과: 위 원문 그대로.\n괄호 직전 원문(적용 범위는 원문 전체로 판단): - 투수는 30회 이내\n괄호 안 제외 항목 A: 당해 연도.\n나머지 적용 조건과 효과: 위 원문 그대로.\n괄호 직전 원문(적용 범위는 원문 전체로 판단): - 타자는 60타석 이내\n괄호 안 제외 항목 A: 당해 연도.\n나머지 적용 조건과 효과: 위 원문 그대로.",
     "structure": {
-      "version": "official-parenthetical-v3",
+      "version": "official-parenthetical-v2",
       "sourceRevision": "sha256:ea7d1aa559c06a0c",
       "contentSha256": "642f047082230aeadd28d25be11919fa527438dce05f896841eb9dabefbd19b4",
       "relations": [
@@ -479,7 +479,7 @@
     "claimGeneration": 1,
     "note": "괄호 직전 원문(적용 범위는 원문 전체로 판단): • 등록선수 연봉은 시즌 중에 방출돼도 모두 보장받음\n단서 원문(분해하지 않음): (단, 선수가 원해서 하는 방출은 안됨)",
     "structure": {
-      "version": "official-parenthetical-v3",
+      "version": "official-parenthetical-v2",
       "sourceRevision": "sha256:ea7d1aa559c06a0c",
       "contentSha256": "5673789c5739fc10730ef0dcbce521c33224c858425610024a5fccd0acdff485",
       "relations": [
@@ -518,7 +518,7 @@
     "claimGeneration": 1,
     "note": "괄호 직전 원문(적용 범위는 원문 전체로 판단): 시즌에 현역선수로 1일 이상 등록한 부상선수에 한해 시즌 최대 30일까지 가능하며\n단서 원문(분해하지 않음): (10일 3\n회, 15일 2회, 30일 1회에 한함)",
     "structure": {
-      "version": "official-parenthetical-v3",
+      "version": "official-parenthetical-v2",
       "sourceRevision": "sha256:ea7d1aa559c06a0c",
       "contentSha256": "250675bd5e07ff0787720d2871424746aeab2b018eccea7c96095ed4761617ed",
       "relations": [
@@ -557,7 +557,7 @@
     "claimGeneration": 1,
     "note": "괄호 직전 원문(적용 범위는 원문 전체로 판단): ➎ 혈액형 ➏ 입단연도-소속구단\n괄호 안 제외 항목 A: 육성 입단.\n나머지 적용 조건과 효과: 위 원문 그대로.",
     "structure": {
-      "version": "official-parenthetical-v3",
+      "version": "official-parenthetical-v2",
       "sourceRevision": "sha256:1f7be81a72eb0247",
       "contentSha256": "9c328c7fe6591a97906c4fa7507b9028123c6bd3aac0e5b2f4ce8fa4c8f126bc",
       "relations": [
@@ -596,7 +596,7 @@
     "claimGeneration": 1,
     "note": "괄호 직전 원문(적용 범위는 원문 전체로 판단): ➎ 혈액형 ➏ 입단연도-소속구단\n괄호 안 제외 항목 A: 육성 입단.\n나머지 적용 조건과 효과: 위 원문 그대로.",
     "structure": {
-      "version": "official-parenthetical-v3",
+      "version": "official-parenthetical-v2",
       "sourceRevision": "sha256:1f7be81a72eb0247",
       "contentSha256": "325a003756034fb09b04456b8f2dde2f3e57b17a5829fac265f26d959b6b10ed",
       "relations": [
@@ -635,7 +635,7 @@
     "claimGeneration": 1,
     "note": "괄호 직전 원문(적용 범위는 원문 전체로 판단): ➎ 혈액형 ➏ 입단연도-소속구단\n괄호 안 제외 항목 A: 육성 입단.\n나머지 적용 조건과 효과: 위 원문 그대로.",
     "structure": {
-      "version": "official-parenthetical-v3",
+      "version": "official-parenthetical-v2",
       "sourceRevision": "sha256:1f7be81a72eb0247",
       "contentSha256": "d6cfe7beab29f6040c67743030da0bf52d4cf06e470b457e493038a0e35344a7",
       "relations": [
@@ -674,7 +674,7 @@
     "claimGeneration": 1,
     "note": "괄호 직전 원문(적용 범위는 원문 전체로 판단): ➎ 혈액형 ➏ 입단연도-소속구단\n괄호 안 제외 항목 A: 육성 입단.\n나머지 적용 조건과 효과: 위 원문 그대로.",
     "structure": {
-      "version": "official-parenthetical-v3",
+      "version": "official-parenthetical-v2",
       "sourceRevision": "sha256:1f7be81a72eb0247",
       "contentSha256": "63e40217403760efdda45741e910da9b14a8e97a425da09bbc350012e4648288",
       "relations": [
@@ -713,7 +713,7 @@
     "claimGeneration": 1,
     "note": "괄호 직전 원문(적용 범위는 원문 전체로 판단): ➎ 혈액형 ➏ 입단연도-소속구단\n괄호 안 제외 항목 A: 육성 입단.\n나머지 적용 조건과 효과: 위 원문 그대로.",
     "structure": {
-      "version": "official-parenthetical-v3",
+      "version": "official-parenthetical-v2",
       "sourceRevision": "sha256:1f7be81a72eb0247",
       "contentSha256": "bf9fca036377951d6d45816b8dcef2f3b10880c5f496748f3b633ec8b6c7986a",
       "relations": [
@@ -752,7 +752,7 @@
     "claimGeneration": 1,
     "note": "괄호 직전 원문(적용 범위는 원문 전체로 판단): ➎ 혈액형 ➏ 입단연도-소속구단\n괄호 안 제외 항목 A: 육성 입단.\n나머지 적용 조건과 효과: 위 원문 그대로.",
     "structure": {
-      "version": "official-parenthetical-v3",
+      "version": "official-parenthetical-v2",
       "sourceRevision": "sha256:1f7be81a72eb0247",
       "contentSha256": "9921c40d8da67d733cdd2f4f01e54aae2f61ac9f7abe7b05ee140614f32c6b03",
       "relations": [
@@ -791,7 +791,7 @@
     "claimGeneration": 1,
     "note": "괄호 직전 원문(적용 범위는 원문 전체로 판단): ➎ 혈액형 ➏ 입단연도-소속구단\n괄호 안 제외 항목 A: 육성 입단.\n나머지 적용 조건과 효과: 위 원문 그대로.",
     "structure": {
-      "version": "official-parenthetical-v3",
+      "version": "official-parenthetical-v2",
       "sourceRevision": "sha256:1f7be81a72eb0247",
       "contentSha256": "b46cc62f385e5bfebfd9aabd3537f5e1b5f4b6aa31fe58faa969bd6ba0155f27",
       "relations": [
@@ -830,7 +830,7 @@
     "claimGeneration": 1,
     "note": "괄호 직전 원문(적용 범위는 원문 전체로 판단): ➎ 혈액형 ➏ 입단연도-소속구단\n괄호 안 제외 항목 A: 육성 입단.\n나머지 적용 조건과 효과: 위 원문 그대로.",
     "structure": {
-      "version": "official-parenthetical-v3",
+      "version": "official-parenthetical-v2",
       "sourceRevision": "sha256:1f7be81a72eb0247",
       "contentSha256": "50f9c929563afb64a304afe9e5a865f358b2101cc588ad0d4e321fcf81aa2732",
       "relations": [
@@ -869,7 +869,7 @@
     "claimGeneration": 1,
     "note": "괄호 직전 원문(적용 범위는 원문 전체로 판단): ➎ 혈액형 ➏ 입단연도-소속구단\n괄호 안 제외 항목 A: 육성 입단.\n나머지 적용 조건과 효과: 위 원문 그대로.",
     "structure": {
-      "version": "official-parenthetical-v3",
+      "version": "official-parenthetical-v2",
       "sourceRevision": "sha256:1f7be81a72eb0247",
       "contentSha256": "d5da3e6422342d60422f49a910c556e870c22bde8f977aeb516d3f868129761b",
       "relations": [
@@ -908,7 +908,7 @@
     "claimGeneration": 1,
     "note": "괄호 직전 원문(적용 범위는 원문 전체로 판단): ➎ 혈액형 ➏ 입단연도-소속구단\n괄호 안 제외 항목 A: 육성 입단.\n나머지 적용 조건과 효과: 위 원문 그대로.",
     "structure": {
-      "version": "official-parenthetical-v3",
+      "version": "official-parenthetical-v2",
       "sourceRevision": "sha256:1f7be81a72eb0247",
       "contentSha256": "58369525cc84832ce402708fa89aa7c4c7784a0c54a0f3f64639aa3eb14bd99c",
       "relations": [
@@ -947,7 +947,7 @@
     "claimGeneration": 1,
     "note": "괄호 직전 원문(적용 범위는 원문 전체로 판단): - 야간경기 : 울산 평일(서머리그 포함), 마산 월요일 18:30\n괄호 안 제외 항목 A: 공휴일.\n나머지 적용 조건과 효과: 위 원문 그대로.\n괄호 직전 원문(적용 범위는 원문 전체로 판단): • 경기 취소시 다음 날 더블헤더 편성\n단서 원문(분해하지 않음): (4,5월에 한하여 실시)",
     "structure": {
-      "version": "official-parenthetical-v3",
+      "version": "official-parenthetical-v2",
       "sourceRevision": "sha256:1f7be81a72eb0247",
       "contentSha256": "91a3f6d452d6b7c34bb10abb690dcc6871bfdcfc063ccdb003bb0f10f1d7543a",
       "relations": [
@@ -1007,7 +1007,7 @@
     "claimGeneration": 1,
     "note": "괄호 직전 원문(적용 범위는 원문 전체로 판단): ➎ 혈액형 ➏ 입단연도-소속구단\n괄호 안 제외 항목 A: 육성 입단.\n나머지 적용 조건과 효과: 위 원문 그대로.",
     "structure": {
-      "version": "official-parenthetical-v3",
+      "version": "official-parenthetical-v2",
       "sourceRevision": "sha256:1f7be81a72eb0247",
       "contentSha256": "d0007e2e401c71154fce9b954afa169756f10ea00d87e88da06959e58e102e5c",
       "relations": [
@@ -1046,7 +1046,7 @@
     "claimGeneration": 1,
     "note": "괄호 직전 원문(적용 범위는 원문 전체로 판단): ➎ 혈액형 ➏ 입단연도-소속구단\n괄호 안 제외 항목 A: 육성 입단.\n나머지 적용 조건과 효과: 위 원문 그대로.",
     "structure": {
-      "version": "official-parenthetical-v3",
+      "version": "official-parenthetical-v2",
       "sourceRevision": "sha256:1f7be81a72eb0247",
       "contentSha256": "26b264f8929693ffda5edbd5d53327567b2d44afacd0dab089fd7988f5af1e48",
       "relations": [
@@ -1085,7 +1085,7 @@
     "claimGeneration": 1,
     "note": "괄호 직전 원문(적용 범위는 원문 전체로 판단): \n단서 원문(분해하지 않음): (1982 ~ 1988 전후기리그, 1999 ~ 2000 양대리그 제외)",
     "structure": {
-      "version": "official-parenthetical-v3",
+      "version": "official-parenthetical-v2",
       "sourceRevision": "sha256:3485ef02840eb47e",
       "contentSha256": "e45df998e5b54bab4a3fb47d950888e3836fcdc4f4f4ef3f775c2db53a000f87",
       "relations": [
@@ -1124,7 +1124,7 @@
     "claimGeneration": 1,
     "note": "괄호 직전 원문(적용 범위는 원문 전체로 판단): \n단서 원문(분해하지 않음): (1982 ~ 1988 전후기리그, 1999 ~ 2000 양대리그 제외)",
     "structure": {
-      "version": "official-parenthetical-v3",
+      "version": "official-parenthetical-v2",
       "sourceRevision": "sha256:3485ef02840eb47e",
       "contentSha256": "faf66521e7141cd57c69914a80cc4cc8e481c28451f486048068ece8af827532",
       "relations": [
@@ -1163,7 +1163,7 @@
     "claimGeneration": 1,
     "note": "괄호 직전 원문(적용 범위는 원문 전체로 판단): \n단서 원문(분해하지 않음): (1982 ~ 1988 전후기리그, 1999 ~ 2000 양대리그 제외)",
     "structure": {
-      "version": "official-parenthetical-v3",
+      "version": "official-parenthetical-v2",
       "sourceRevision": "sha256:3485ef02840eb47e",
       "contentSha256": "058dd4aabb1bcb71033e9e18b633d2ccbed01716bdf73d8a6e8a12e2ea42b2ca",
       "relations": [
@@ -1202,7 +1202,7 @@
     "claimGeneration": 1,
     "note": "괄호 직전 원문(적용 범위는 원문 전체로 판단): \n단서 원문(분해하지 않음): (1982 ~ 1988 전후기리그, 1999 ~ 2000 양대리그 제외)",
     "structure": {
-      "version": "official-parenthetical-v3",
+      "version": "official-parenthetical-v2",
       "sourceRevision": "sha256:3485ef02840eb47e",
       "contentSha256": "09013d85bfa9d4b551955eff8da67cb4d404682dbadd8e7e8c642722c09870eb",
       "relations": [
@@ -1241,7 +1241,7 @@
     "claimGeneration": 1,
     "note": "괄호 직전 원문(적용 범위는 원문 전체로 판단): \n단서 원문(분해하지 않음): (1985 ~ 1988 전후기리그, 1999 ~ 2000 양대리그 제외)",
     "structure": {
-      "version": "official-parenthetical-v3",
+      "version": "official-parenthetical-v2",
       "sourceRevision": "sha256:3485ef02840eb47e",
       "contentSha256": "4cdd3c5007ca37edc33c2d55d38c5b4af60a885ff10e0f19278f18875561d082",
       "relations": [
@@ -1280,7 +1280,7 @@
     "claimGeneration": 1,
     "note": "괄호 직전 원문(적용 범위는 원문 전체로 판단): \n괄호 안 제외 항목 A: 2000 양대리그.\n나머지 적용 조건과 효과: 위 원문 그대로.",
     "structure": {
-      "version": "official-parenthetical-v3",
+      "version": "official-parenthetical-v2",
       "sourceRevision": "sha256:3485ef02840eb47e",
       "contentSha256": "220e8fcc09e948ac2af97024941f4978f614bd4e3d10a87d336424d8d14ae513",
       "relations": [
@@ -1319,7 +1319,7 @@
     "claimGeneration": 1,
     "note": "괄호 직전 원문(적용 범위는 원문 전체로 판단): 1 정우람(한) 1005 19시즌 - 2004 ~ 2024\n단서 원문(분해하지 않음): (2013 ~ 2014 제외)\n괄호 직전 원문(적용 범위는 원문 전체로 판단): 2 류택현( L ) 901 20시즌 - 1994 ~ 2014\n괄호 안 제외 항목 A: 2011.\n나머지 적용 조건과 효과: 위 원문 그대로.\n괄호 직전 원문(적용 범위는 원문 전체로 판단): 3 *우규민(KT) 857 20시즌 - 2004 ~ 2025\n단서 원문(분해하지 않음): (2010 ~ 2011 제외)\n괄호 직전 원문(적용 범위는 원문 전체로 판단): 4 진해수(롯) 842 17시즌 - 2006 ~ 2024\n단서 원문(분해하지 않음): (2010 ~ 2011 제외)\n괄호 직전 원문(적용 범위는 원문 전체로 판단): SK) 813 19시즌 - 1990 ~ 2009\n괄호 안 제외 항목 A: 1992.\n나머지 적용 조건과 효과: 위 원문 그대로.\n괄호 직전 원문(적용 범위는 원문 전체로 판단): 7 권 혁(두) 781 18시즌 - 2002 ~ 2020\n괄호 안 제외 항목 A: 2005.\n나머지 적용 조건과 효과: 위 원문 그대로.\n괄호 직전 원문(적용 범위는 원문 전체로 판단): SK) 752 17시즌 - 1996 ~ 2014\n단서 원문(분해하지 않음): (2005 ~ 2006 제외)\n괄호 직전 원문(적용 범위는 원문 전체로 판단): 15 이혜천(N) 706 15시즌 - 1998 ~ 2015\n단서 원문(분해하지 않음): (2007 제외, 2009 ~ 2010 해외진출)\n괄호 직전 원문(적용 범위는 원문 전체로 판단): 16 이동현( L ) 701 15시즌 - 2001 ~ 2019\n단서 원문(분해하지 않음): (2005 ~ 2008 제외)\n괄호 직전 원문(적용 범위는 원문 전체로 판단): 17 *김상수(롯) 700 17시즌 - 2008 ~ 2025\n괄호 안 제외 항목 A: 2014.\n나머지 적용 조건과 효과: 위 원문 그대로.\n괄호 직전 원문(적용 범위는 원문 전체로 판단): 19 박정진(한) 691 16시즌 - 1999 ~ 2017\n단서 원문(분해하지 않음): (2005 ~ 2007 제외)",
     "structure": {
-      "version": "official-parenthetical-v3",
+      "version": "official-parenthetical-v2",
       "sourceRevision": "sha256:3485ef02840eb47e",
       "contentSha256": "bd055a2c6253e70804dd7ac331f314e94bab67e25c6a836a03b70c9b83109929",
       "relations": [
@@ -1568,7 +1568,7 @@
     "claimGeneration": 1,
     "note": "괄호 직전 원문(적용 범위는 원문 전체로 판단): 21 이현승(두) 671 15시즌 - 2006 ~ 2022\n단서 원문(분해하지 않음): (2012 ~ 2013 제외)\n괄호 직전 원문(적용 범위는 원문 전체로 판단): 23 고효준(두) 646 21시즌 - 2002 ~ 2025\n단서 원문(분해하지 않음): (2003, 2012 ~ 2013 제외)\n괄호 직전 원문(적용 범위는 원문 전체로 판단): 24 *노경은(S ) 638 20시즌 - 2003 ~ 2025\n단서 원문(분해하지 않음): (2005~2006, 2019 제외)",
     "structure": {
-      "version": "official-parenthetical-v3",
+      "version": "official-parenthetical-v2",
       "sourceRevision": "sha256:3485ef02840eb47e",
       "contentSha256": "327b3d4500132a0173ca89fadb6fcb756ebfe33185117307d304e9ff5fbb0929",
       "relations": [
@@ -1649,7 +1649,7 @@
     "claimGeneration": 1,
     "note": "괄호 직전 원문(적용 범위는 원문 전체로 판단): 1경기 구원 등판\n단서 원문(분해하지 않음): (연속 이닝 선발 등판 무실점 기록에서 제외)\n괄호 직전 원문(적용 범위는 원문 전체로 판단): 2경기 구원 등판\n단서 원문(분해하지 않음): (연속 이닝 선발 등판 무실점 기록에서 제외)\n괄호 직전 원문(적용 범위는 원문 전체로 판단): 1경기 구원 등판\n단서 원문(분해하지 않음): (연속 이닝 선발 등판 무실점 기록에서 제외)\n괄호 직전 원문(적용 범위는 원문 전체로 판단): 3경기 구원 등판\n단서 원문(분해하지 않음): (연속 이닝 선발 등판 무실점 기록에서 제외)\n괄호 직전 원문(적용 범위는 원문 전체로 판단): 1경기 구원 등판\n단서 원문(분해하지 않음): (연속 이닝 선발 등판 무실점 기록에서 제외)",
     "structure": {
-      "version": "official-parenthetical-v3",
+      "version": "official-parenthetical-v2",
       "sourceRevision": "sha256:3485ef02840eb47e",
       "contentSha256": "b5ccff00799f02063df32e2b7072073d6cdd687a32f4ccd5f401e1bebbc1fca1",
       "relations": [
@@ -1772,7 +1772,7 @@
     "claimGeneration": 1,
     "note": "괄호 직전 원문(적용 범위는 원문 전체로 판단): 4경기 구원 등판\n단서 원문(분해하지 않음): (연속 이닝 선발 등판 무실점 기록에서 제외)",
     "structure": {
-      "version": "official-parenthetical-v3",
+      "version": "official-parenthetical-v2",
       "sourceRevision": "sha256:3485ef02840eb47e",
       "contentSha256": "e25f7631cdd4d3cf962fd23bd48c43f714d6c51d3c742432967aae2f773bc0d8",
       "relations": [
@@ -1811,7 +1811,7 @@
     "claimGeneration": 1,
     "note": "괄호 직전 원문(적용 범위는 원문 전체로 판단): 부문에서 1위를 달리고 있는 선수는 1999년부터 2006년까지\n괄호 안 제외 항목 A: 2003년.\n나머지 적용 조건과 효과: 위 원문 그대로.",
     "structure": {
-      "version": "official-parenthetical-v3",
+      "version": "official-parenthetical-v2",
       "sourceRevision": "sha256:3485ef02840eb47e",
       "contentSha256": "6812e33dfcfdaa33db6837542aedf58489f58518a8ba77ae743a8a80ffe8a0a2",
       "relations": [
@@ -1850,7 +1850,7 @@
     "claimGeneration": 1,
     "note": "괄호 직전 원문(적용 범위는 원문 전체로 판단): \n단서 원문(분해하지 않음): (단, 프로 및 국제 야구장에 아마추어용 야구장 기준은 적용할수 없다. )",
     "structure": {
-      "version": "official-parenthetical-v3",
+      "version": "official-parenthetical-v2",
       "sourceRevision": "sha256:b897b7fa6959c6fe",
       "contentSha256": "4a3662937f7a85e3e9023baf89d31e791b4b757f25e2ce648e31fb155032d482",
       "relations": [
@@ -1889,7 +1889,7 @@
     "claimGeneration": 1,
     "note": "괄호 직전 원문(적용 범위는 원문 전체로 판단): \n단서 원문(분해하지 않음): (단, 프로 및 국제 야구장에 아마추어용 야구장 기준은 적용할수 없다. )",
     "structure": {
-      "version": "official-parenthetical-v3",
+      "version": "official-parenthetical-v2",
       "sourceRevision": "sha256:b897b7fa6959c6fe",
       "contentSha256": "c9d89d496efa8179d86dfb8ab3492dafb81a09bfc0fae2dc9f5f9003020f5dc9",
       "relations": [
@@ -1928,7 +1928,7 @@
     "claimGeneration": 1,
     "note": "괄호 직전 원문(적용 범위는 원문 전체로 판단): 아울러, 지방자치단체를 당사자로 하는 계약에 관한 법률(이하'지방계약법') 시행령] 제43조 제1항에서 지방자치단체의장 또는 계약담당자는 물품\n단서 원문(분해하지 않음): (단순 물품구매는 제외한다)\n괄호 직전 원문(적용 범위는 원문 전체로 판단): · 용역\n단서 원문(분해하지 않음): (청소 등 단순한 노무를 제공하는 용역은 제외한다)\n괄호 직전 원문(적용 범위는 원문 전체로 판단): 경우에는제42조에도 불구하고다수의공급자들로부터 제안서를 제출받아 평가한후 협상 절차를 통하여 추정가격에 부가가치세를 더한 금액\n단서 원문(분해하지 않음): (예정가격을 정한 경우에는 예정가격)",
     "structure": {
-      "version": "official-parenthetical-v3",
+      "version": "official-parenthetical-v2",
       "sourceRevision": "sha256:b897b7fa6959c6fe",
       "contentSha256": "e258ebbecc072771f270db53d6a7fbfd01678342862a751ccd4287834ecbb67d",
       "relations": [
@@ -2009,7 +2009,7 @@
     "claimGeneration": 1,
     "note": "괄호 직전 원문(적용 범위는 원문 전체로 판단): ① 지방자치단체의장 또는 계약담당자는 물품\n단서 원문(분해하지 않음): (단순 물품구매는 제외한다)\n괄호 직전 원문(적용 범위는 원문 전체로 판단): ① 지방자치단체의장 또는 계약담당자는 물품(단순 물품구매는 제외한다) ㆍ 용역\n단서 원문(분해하지 않음): (청소ㆍ경비등 단순한 노무를 제공하는 용역은 제외한다)\n괄호 직전 원문(적용 범위는 원문 전체로 판단): 안전성 등의 이유로 필요하다고 인정되는 경우에는제42조에도 불구하고 다수의 공급자들로부터 제안서를 제출받아 평가한후 협상절차를 통하여 추정가격에 부가가치세를 더한 금액\n단서 원문(분해하지 않음): (예정가격을 정한 경우에는 예정가격)",
     "structure": {
-      "version": "official-parenthetical-v3",
+      "version": "official-parenthetical-v2",
       "sourceRevision": "sha256:b897b7fa6959c6fe",
       "contentSha256": "f6191d1fa3e737d30e1da00cc793232777c06f3cbe6eb030b4532ee491d5240b",
       "relations": [
@@ -2090,7 +2090,7 @@
     "claimGeneration": 1,
     "note": "괄호 직전 원문(적용 범위는 원문 전체로 판단): 아울러, 지방자치단체를 당사자로 하는 계약에 관한 법률(이하'지방계약법') 시행령] 제43조 제1항에서 지방자치단체의장 또는 계약담당자는 물품\n단서 원문(분해하지 않음): (단순 물품구매는 제외한다)\n괄호 직전 원문(적용 범위는 원문 전체로 판단): · 용역\n단서 원문(분해하지 않음): (청소 등 단순한 노무를 제공하는 용역은 제외한다)\n괄호 직전 원문(적용 범위는 원문 전체로 판단): 경우에는제42조에도 불구하고다수의공급자들로부터 제안서를 제출받아 평가한후 협상 절차를 통하여 추정가격에 부가가치세를 더한 금액\n단서 원문(분해하지 않음): (예정가격을 정한 경우에는 예정가격)",
     "structure": {
-      "version": "official-parenthetical-v3",
+      "version": "official-parenthetical-v2",
       "sourceRevision": "sha256:b897b7fa6959c6fe",
       "contentSha256": "e258ebbecc072771f270db53d6a7fbfd01678342862a751ccd4287834ecbb67d",
       "relations": [
@@ -2171,7 +2171,7 @@
     "claimGeneration": 1,
     "note": "괄호 직전 원문(적용 범위는 원문 전체로 판단): ① 지방자치단체의장 또는 계약담당자는 물품\n단서 원문(분해하지 않음): (단순 물품구매는 제외한다)\n괄호 직전 원문(적용 범위는 원문 전체로 판단): ① 지방자치단체의장 또는 계약담당자는 물품(단순 물품구매는 제외한다) ㆍ 용역\n단서 원문(분해하지 않음): (청소ㆍ경비등 단순한 노무를 제공하는 용역은 제외한다)\n괄호 직전 원문(적용 범위는 원문 전체로 판단): 안전성 등의 이유로 필요하다고 인정되는 경우에는제42조에도 불구하고 다수의 공급자들로부터 제안서를 제출받아 평가한후 협상절차를 통하여 추정가격에 부가가치세를 더한 금액\n단서 원문(분해하지 않음): (예정가격을 정한 경우에는 예정가격)",
     "structure": {
-      "version": "official-parenthetical-v3",
+      "version": "official-parenthetical-v2",
       "sourceRevision": "sha256:b897b7fa6959c6fe",
       "contentSha256": "f6191d1fa3e737d30e1da00cc793232777c06f3cbe6eb030b4532ee491d5240b",
       "relations": [
@@ -2252,7 +2252,7 @@
     "claimGeneration": 1,
     "note": "괄호 직전 원문(적용 범위는 원문 전체로 판단): \n단서 원문(분해하지 않음): (24군단, 31부대, 308부대)",
     "structure": {
-      "version": "official-parenthetical-v3",
+      "version": "official-parenthetical-v2",
       "sourceRevision": "sha256:3d095cd3b5253584",
       "contentSha256": "90f642c9f38ee41e4f73a5a00938edb2aaa0c88810416e9e9ea232e308f6094c",
       "relations": [
@@ -2291,7 +2291,7 @@
     "claimGeneration": 1,
     "note": "괄호 직전 원문(적용 범위는 원문 전체로 판단): 미군 4개 팀\n단서 원문(분해하지 않음): (미제2사단, 미제7사단, 미제1군단, 미부\n평부대)",
     "structure": {
-      "version": "official-parenthetical-v3",
+      "version": "official-parenthetical-v2",
       "sourceRevision": "sha256:3d095cd3b5253584",
       "contentSha256": "0a1b4a80cb2f3047687c2da65c307143c4e9d56b5bcf0877b30d41e4062c9328",
       "relations": [
@@ -2330,7 +2330,7 @@
     "claimGeneration": 1,
     "note": "괄호 직전 원문(적용 범위는 원문 전체로 판단): 미군 4개 팀\n단서 원문(분해하지 않음): (미제1군단, 재일요코스카, 미7사단, 미\n2사단)",
     "structure": {
-      "version": "official-parenthetical-v3",
+      "version": "official-parenthetical-v2",
       "sourceRevision": "sha256:3d095cd3b5253584",
       "contentSha256": "c98f1aba8d773f03678b33139aa262865b918fdf5c9acc5b01984c0ac5a5dcea",
       "relations": [
@@ -2369,7 +2369,7 @@
     "claimGeneration": 1,
     "note": "괄호 직전 원문(적용 범위는 원문 전체로 판단): 미군 4개 팀\n단서 원문(분해하지 않음): (미7사단, 주일미공군다치가와, 미2사단,\n미부평에스컴)",
     "structure": {
-      "version": "official-parenthetical-v3",
+      "version": "official-parenthetical-v2",
       "sourceRevision": "sha256:3d095cd3b5253584",
       "contentSha256": "e0e4e79ad94b384391dfbab00b6746963d384a7a8cc95b7dc9e89f7e0a803a23",
       "relations": [
@@ -2408,7 +2408,7 @@
     "claimGeneration": 1,
     "note": "괄호 직전 원문(적용 범위는 원문 전체로 판단): 미군 4개 팀\n단서 원문(분해하지 않음): (미2사단, 주일미요코스카해군기지, 다치\n가와주둔미공군, 부평주둔미에스컴)",
     "structure": {
-      "version": "official-parenthetical-v3",
+      "version": "official-parenthetical-v2",
       "sourceRevision": "sha256:3d095cd3b5253584",
       "contentSha256": "3ebc947964f2f3059268bbbe9657f0d0f693678974f317810b153575a77d0a06",
       "relations": [
@@ -2447,7 +2447,7 @@
     "claimGeneration": 1,
     "note": "괄호 직전 원문(적용 범위는 원문 전체로 판단): 미군 4개 팀\n단서 원문(분해하지 않음): (미군수기지사령부 패스컴, 미2사단, 미7\n사단, 미1군단)",
     "structure": {
-      "version": "official-parenthetical-v3",
+      "version": "official-parenthetical-v2",
       "sourceRevision": "sha256:3d095cd3b5253584",
       "contentSha256": "444656083053f68cfc98025828b103609dbec8904790aab64e61bfcfd7a74172",
       "relations": [
@@ -2486,7 +2486,7 @@
     "claimGeneration": 1,
     "note": "괄호 직전 원문(적용 범위는 원문 전체로 판단): 미군 4개 팀\n단서 원문(분해하지 않음): (미2사단, 미7사단, 미코스컴, 미1군단)",
     "structure": {
-      "version": "official-parenthetical-v3",
+      "version": "official-parenthetical-v2",
       "sourceRevision": "sha256:3d095cd3b5253584",
       "contentSha256": "66e78762c93cd79cc65e916c544bc7b084e9f518459f39f338ef5c110f66d54c",
       "relations": [
@@ -2525,7 +2525,7 @@
     "claimGeneration": 1,
     "note": "괄호 직전 원문(적용 범위는 원문 전체로 판단): 전에서 성균관대가 고려대를 5-2로 물리치고 우승\n단서 원문(분해하지 않음): (이\n후 대회 중단, 78년 6월 재개)",
     "structure": {
-      "version": "official-parenthetical-v3",
+      "version": "official-parenthetical-v2",
       "sourceRevision": "sha256:3d095cd3b5253584",
       "contentSha256": "7db61fd70b9d1b9df1ca2e98be8aaac536409cf24f0d31715d0f761333f0a9eb",
       "relations": [
@@ -2564,7 +2564,7 @@
     "claimGeneration": 1,
     "note": "괄호 직전 원문(적용 범위는 원문 전체로 판단): 한국실업야구연맹 주최로 4월 18일부터 11개 팀\n단서 원문(분해하지 않음): (육\n군 경리단, 공군, 한국화장품, 롯데, 포항제철, 한국전\n력, 홍익회, 한일은행, 제일은행, 농협, 상업은행)",
     "structure": {
-      "version": "official-parenthetical-v3",
+      "version": "official-parenthetical-v2",
       "sourceRevision": "sha256:3d095cd3b5253584",
       "contentSha256": "52abc44ff1ef0894836a5b7736bba523099d39be788d2f3d1f1deedff2dfca08",
       "relations": [
@@ -2603,7 +2603,7 @@
     "claimGeneration": 1,
     "note": "괄호 직전 원문(적용 범위는 원문 전체로 판단): 한국실업야구연맹 주최로 10월 19일 전기리그\n단서 원문(분해하지 않음): (경리\n단, 포항제철)",
     "structure": {
-      "version": "official-parenthetical-v3",
+      "version": "official-parenthetical-v2",
       "sourceRevision": "sha256:3d095cd3b5253584",
       "contentSha256": "406074f76a52abc9ee00cca4a71961f4a15fc60a4354f242b5f09c85ef9e002c",
       "relations": [
@@ -2642,7 +2642,7 @@
     "claimGeneration": 1,
     "note": "괄호 직전 원문(적용 범위는 원문 전체로 판단): 온스 리그\n단서 원문(분해하지 않음): (롯데, 경리단, 한일은, 포철, 상은)",
     "structure": {
-      "version": "official-parenthetical-v3",
+      "version": "official-parenthetical-v2",
       "sourceRevision": "sha256:3d095cd3b5253584",
       "contentSha256": "12b4caf4da454589dd91b66cf0947a233b28eefc721e1edfd1fa950f6003e54b",
       "relations": [
@@ -2681,7 +2681,7 @@
     "claimGeneration": 1,
     "note": "괄호 직전 원문(적용 범위는 원문 전체로 판단): 25개 팀\n단서 원문(분해하지 않음): (경리단, 롯데, 포항제철, 상업은행, 홍익회,\n한국화장품, 농협, 성무, 제일은행, 한일은행, 한국전\n력, 연세대, 인하대, 경희대, 고려대, 동국대, 한양대,\n건국대, 인천체전, 동아대, 원광대, 영남대, 성균관\n대, 중앙대)",
     "structure": {
-      "version": "official-parenthetical-v3",
+      "version": "official-parenthetical-v2",
       "sourceRevision": "sha256:3d095cd3b5253584",
       "contentSha256": "d9085cd5a12f2e728b55aa8c9443ea15ab98c7863c1a766e75df0d748ad20ce5",
       "relations": [
@@ -2720,7 +2720,7 @@
     "claimGeneration": 1,
     "note": "괄호 직전 원문(적용 범위는 원문 전체로 판단): 홍익회)와 라이온스 리그\n단서 원문(분해하지 않음): (경리단, 롯데, 포항제철, 한\n일은행, 상업은행)",
     "structure": {
-      "version": "official-parenthetical-v3",
+      "version": "official-parenthetical-v2",
       "sourceRevision": "sha256:3d095cd3b5253584",
       "contentSha256": "a53f83a64d5d2e3b9bdaddb5e4c9861001d6c8fcfeb1e3c154381c7b3b59de55",
       "relations": [
@@ -2759,7 +2759,7 @@
     "claimGeneration": 1,
     "note": "괄호 직전 원문(적용 범위는 원문 전체로 판단): 온스 리그\n단서 원문(분해하지 않음): (경리단, 롯데, 포항제철, 한일은행, 상업은\n행)",
     "structure": {
-      "version": "official-parenthetical-v3",
+      "version": "official-parenthetical-v2",
       "sourceRevision": "sha256:3d095cd3b5253584",
       "contentSha256": "769c7e86b73193a9cf5bb9496a80a1425070d47aaff522df216f9e6e80d31f8a",
       "relations": [
@@ -2798,7 +2798,7 @@
     "claimGeneration": 2,
     "note": "괄호 직전 원문(적용 범위는 원문 전체로 판단): \n단서 원문(분해하지 않음): (단, 7, 8월 경기가 야간경기로 편성될 경우 18:00에 거행)",
     "structure": {
-      "version": "official-parenthetical-v3",
+      "version": "official-parenthetical-v2",
       "sourceRevision": "sha256:8d2b83fc788790a3",
       "contentSha256": "34a7810e3fc087ec37ce75757ecb3f966c696388cbda8ba6faecbf86d1ae2c01",
       "relations": [
@@ -2837,7 +2837,7 @@
     "claimGeneration": 2,
     "note": "괄호 직전 원문(적용 범위는 원문 전체로 판단): 국내 공장등록증 사본\n단서 원문(분해하지 않음): (배트가 국내위탁제조에 의한 경우는\n위탁 공장의 등록증 사본)",
     "structure": {
-      "version": "official-parenthetical-v3",
+      "version": "official-parenthetical-v2",
       "sourceRevision": "sha256:bed799a762c4f92d",
       "contentSha256": "6e8890fb470efd237103835593477ecb10f3ed1dda4742ae338cab541f034c84",
       "relations": [
@@ -2876,7 +2876,7 @@
     "claimGeneration": 2,
     "note": "괄호 직전 원문(적용 범위는 원문 전체로 판단): \n단서 원문(분해하지 않음): (단, 불입액에 대하여는 감액 또는 지급을 정지할 수 없다)",
     "structure": {
-      "version": "official-parenthetical-v3",
+      "version": "official-parenthetical-v2",
       "sourceRevision": "sha256:bed799a762c4f92d",
       "contentSha256": "71170a07a4abce35f90ed4bec6c2781b4a342cfda3a6b2b99db80bfff717aeea",
       "relations": [
@@ -2915,7 +2915,7 @@
     "claimGeneration": 2,
     "note": "괄호 직전 원문(적용 범위는 원문 전체로 판단): \n단서 원문(분해하지 않음): (단, 의결권은 없다)",
     "structure": {
-      "version": "official-parenthetical-v3",
+      "version": "official-parenthetical-v2",
       "sourceRevision": "sha256:bed799a762c4f92d",
       "contentSha256": "167ac4cca441656e353a50fdcbd456854c61a3813e981e0f94602d3c19f796ae",
       "relations": [
@@ -2954,7 +2954,7 @@
     "claimGeneration": 2,
     "note": "괄호 직전 원문(적용 범위는 원문 전체로 판단): \n단서 원문(분해하지 않음): (야구용품 지원에 한함)\n괄호 직전 원문(적용 범위는 원문 전체로 판단): 학교\n단서 원문(분해하지 않음): (4년제 대학교 2학년 또는 3년제 대학교 2학년에 재학 중 지\n명 받은 선수의 경우 재학 중이던 대학교에 지원)\n괄호 직전 원문(적용 범위는 원문 전체로 판단): \n단서 원문(분해하지 않음): (야구용품 지원에 한함)",
     "structure": {
-      "version": "official-parenthetical-v3",
+      "version": "official-parenthetical-v2",
       "sourceRevision": "sha256:bed799a762c4f92d",
       "contentSha256": "e17004f8173fb0ad57acfc8385c9b2c056f5d398132cc9acb6cae5d1f6475bd9",
       "relations": [
@@ -3035,7 +3035,7 @@
     "claimGeneration": 2,
     "note": "괄호 직전 원문(적용 범위는 원문 전체로 판단): 포인트 박탈 종교·인종·성차별 행위 등\n단서 원문(분해하지 않음): (SNS를 통한 명예훼손 등 반사회적 행위로 사회적 물의를 야기하는 경우 포함)",
     "structure": {
-      "version": "official-parenthetical-v3",
+      "version": "official-parenthetical-v2",
       "sourceRevision": "sha256:bed799a762c4f92d",
       "contentSha256": "f988e013b167bf49ff4a608e2f3cf8cc2b50f64b78431c66763c9fe7bd56dff1",
       "relations": [
@@ -3074,7 +3074,7 @@
     "claimGeneration": 4,
     "note": "괄호 직전 원문(적용 범위는 원문 전체로 판단): (A) 보크가 선언되었을 경우 (B) 타자가 다음의 이유로 주자가 되어 1루에 진루하기 위해, 그 주자가 루를 비워줄 의무가 생긴 경우 ① 타자가 아웃될 염려 없이, 1루에 나갈 수 있게 된 경우 ② 타자가 타격한 페어 볼이, 야수(투수 포함)에 닿기 전 또는 야수\n괄호 안 제외 항목 A: 투수.\n나머지 적용 조건과 효과: 위 원문 그대로.",
     "structure": {
-      "version": "official-parenthetical-v3",
+      "version": "official-parenthetical-v2",
       "sourceRevision": "sha256:de8715105c8984be",
       "contentSha256": "5befb74cc4ebda86471301a9b1b668948f8215c320d607db77fcd0964e23e79f",
       "relations": [
@@ -3106,45 +3106,6 @@
   },
   {
     "canonicalUrl": "https://www.koreabaseball.com/kbo/board/ebook/ebookpublication.aspx",
-    "contentSha256": "d7c8c05dcf06b9b9a969bf7cfc19499ebd7443520f550c717129bcbe03d62579",
-    "sourceRevision": "sha256:de8715105c8984be",
-    "sourceKey": "kbo:ebook:2026-공식야구규칙",
-    "chunkId": 192183,
-    "claimGeneration": 4,
-    "note": "문장 앞 예외 조건(원문): 인필드 플라이 규칙이 적용되는 경우\n위 예외 조건을 제외한 경우에만 적용되는 본문(원문): 내야수가 타구\n에 닿지 않은 채 그대로 땅에 떨어뜨렸을 때는 타자는 아웃이 되 지 않는다.\n적용 범위: 위 본문의 조건과 효과를 예외 조건에 그대로 적용하지 않음. 예외 상황의 효과는 이 문장의 반대로 추론하지 않고 별도 원문으로 판단.",
-    "structure": {
-      "version": "official-parenthetical-v3",
-      "sourceRevision": "sha256:de8715105c8984be",
-      "contentSha256": "fb0bcfd2bd3308ac6dcd5f8d3af0d37e40922e668996b0e215841aabdbef9d00",
-      "relations": [
-        {
-          "kind": "leading-exception",
-          "parenthetical": {
-            "start": 20,
-            "end": 96,
-            "quote": "인필드 플라이 규칙이 적용되는 경우를 제외하고 내야수가 타구\n에 닿지 않은 채 그대로 땅에 떨어뜨렸을 때는 타자는 아웃이 되 지 않는다."
-          },
-          "context": {
-            "start": 46,
-            "end": 96,
-            "quote": "내야수가 타구\n에 닿지 않은 채 그대로 땅에 떨어뜨렸을 때는 타자는 아웃이 되 지 않는다."
-          },
-          "coordination": "unsplit",
-          "items": [
-            {
-              "start": 20,
-              "end": 39,
-              "quote": "인필드 플라이 규칙이 적용되는 경우"
-            }
-          ]
-        }
-      ],
-      "unresolved": []
-    },
-    "section": "2026 공식야구규칙#p62"
-  },
-  {
-    "canonicalUrl": "https://www.koreabaseball.com/kbo/board/ebook/ebookpublication.aspx",
     "contentSha256": "5423df1af59e021bffd459136a563f84766e1a60c4e57e5b97332d23e4d536ea",
     "sourceRevision": "sha256:de8715105c8984be",
     "sourceKey": "kbo:ebook:2026-공식야구규칙",
@@ -3152,7 +3113,7 @@
     "claimGeneration": 4,
     "note": "괄호 직전 원문(적용 범위는 원문 전체로 판단): ② 세 타자 요건을 충족하지 못한 상황에서 감독이나 코치가 2회 를 초과하여 투수 마운드에 올라갈 경우 즉시 투수를 교체해야 하는 규정에도 불구하고, 투수는 세 타자 요건을 충족할 때까지\n단서 원문(분해하지 않음): (또는 그에 앞서 이닝이 종료된 경우는 이닝 종료 시까지)",
     "structure": {
-      "version": "official-parenthetical-v3",
+      "version": "official-parenthetical-v2",
       "sourceRevision": "sha256:de8715105c8984be",
       "contentSha256": "d805f6d1d220b0b96ca61041e42a0c7f39208bb6e55c46396425684910ed045c",
       "relations": [
@@ -3191,7 +3152,7 @@
     "claimGeneration": 4,
     "note": "괄호 직전 원문(적용 범위는 원문 전체로 판단): 09⒝⑶ 참조) 타자의 파울 타구로 인해 주자가 수비방해로 아웃되어 제3아웃 이 된 경우 타자는 타석을 마친 것으로 간주되고, 다음 이닝의 선두타자는 다음 타순의 타자가 된다\n단서 원문(분해하지 않음): (2아웃 미만인 경우 타자는 타석에 들어가 타격을 완료한다)",
     "structure": {
-      "version": "official-parenthetical-v3",
+      "version": "official-parenthetical-v2",
       "sourceRevision": "sha256:de8715105c8984be",
       "contentSha256": "b36573d1b70f4f501cb32adf2b1aa4d439d1875d2c5bab943b7a01bd2f75bd6b",
       "relations": [
@@ -3230,7 +3191,7 @@
     "claimGeneration": 4,
     "note": "괄호 직전 원문(적용 범위는 원문 전체로 판단): 02 함)하는 경우 ⑵ 손과 발로 베이스에 도달하려고 하는 경우 ⑶ 슬라이딩 후 베이스\n괄호 안 제외 항목 A: 홈 플레이트.\n나머지 적용 조건과 효과: 위 원문 그대로.\n괄호 직전 원문(적용 범위는 원문 전체로 판단): 상기 예외 규칙에도 불구하고, 주 자가 롤블록을 하거나 야수의 무릎 위로 다리를 들어 올리거나 차 는 경우 또는 팔이나 상체를 던져 고의적으로 접촉할 경우\n단서 원문(분해하지 않음): (또는 시 도할 경우)",
     "structure": {
-      "version": "official-parenthetical-v3",
+      "version": "official-parenthetical-v2",
       "sourceRevision": "sha256:de8715105c8984be",
       "contentSha256": "fd2daf5fbd0a30c382a7a47d40637244528365a7983655e788655c0e5752b21c",
       "relations": [
@@ -3290,7 +3251,7 @@
     "claimGeneration": 4,
     "note": "괄호 직전 원문(적용 범위는 원문 전체로 판단): 록할 수 있다\n단서 원문(분해하지 않음): (다른 야수의 포구 방해로 글러브에서 공이 떨어지\n는 경우 등)",
     "structure": {
-      "version": "official-parenthetical-v3",
+      "version": "official-parenthetical-v2",
       "sourceRevision": "sha256:de8715105c8984be",
       "contentSha256": "9424526c698310fafe534cad4b0445e6403de34eb90d38df4d0879dc4dd51065",
       "relations": [
@@ -3329,7 +3290,7 @@
     "claimGeneration": 4,
     "note": "괄호 직전 원문(적용 범위는 원문 전체로 판단): 사구(고의4구 포함), 보크, 폭투\n단서 원문(분해하지 않음): (제3스트라이크가 폭투가 되어 타\n자가 1루에 살아나간 경우 포함)",
     "structure": {
-      "version": "official-parenthetical-v3",
+      "version": "official-parenthetical-v2",
       "sourceRevision": "sha256:de8715105c8984be",
       "contentSha256": "1b900a39a6ed3b3e22cb3cbcabbd712cb745f9d8db18ecfe5f89c951ff6cba40",
       "relations": [
@@ -3368,7 +3329,7 @@
     "claimGeneration": 4,
     "note": "괄호 직전 원문(적용 범위는 원문 전체로 판단): 었을 경우 수비에 관한 출전기록은 없는 것으로 한다\n단서 원문(분해하지 않음): (단, 출전경기로\n는 인정)\n괄호 직전 원문(적용 범위는 원문 전체로 판단): 록은 정규시즌 기록에 포함시킨다\n단서 원문(분해하지 않음): (단, 우리나라에서는 적용하지 않는\n다)",
     "structure": {
-      "version": "official-parenthetical-v3",
+      "version": "official-parenthetical-v2",
       "sourceRevision": "sha256:de8715105c8984be",
       "contentSha256": "e65d7669b55775900c205c9fe8c216f3a97b60685e3866bc4bd1758e976c80f6",
       "relations": [
@@ -3428,7 +3389,7 @@
     "claimGeneration": 1,
     "note": "괄호 직전 원문(적용 범위는 원문 전체로 판단): 당해 정규시즌의 현역선수 등록일수가 150일 이상인 경우\n단서 원문(분해하지 않음): (다 만, 2006년 정규시즌부터는 145일 이상인 경우로 한다)",
     "structure": {
-      "version": "official-parenthetical-v3",
+      "version": "official-parenthetical-v2",
       "sourceRevision": "sha256:5d9127c6799317bd",
       "contentSha256": "6db8279cf8c828fe171128b135e4592c413a219dd8e48c7d7bef78545d42f2e1",
       "relations": [
@@ -3467,7 +3428,7 @@
     "claimGeneration": 1,
     "note": "괄호 직전 원문(적용 범위는 원문 전체로 판단): ⑤ 4년제 대학을 졸업한 선수(대한야구소프트볼협회에 4년간 대 학선수로 등록한 선수에 한하며, 이하 같다)는 제1항에도 불구하 고 8 정규시즌\n단서 원문(분해하지 않음): (단, 2022년 시즌 종료 후부터 7 정규시즌으로 단축)",
     "structure": {
-      "version": "official-parenthetical-v3",
+      "version": "official-parenthetical-v2",
       "sourceRevision": "sha256:5d9127c6799317bd",
       "contentSha256": "07c9e9ac152f6b515e2eefeeee85e1becf46d09688be5e202d89a2fe2cec276c",
       "relations": [
@@ -3506,7 +3467,7 @@
     "claimGeneration": 2,
     "note": "괄호 직전 원문(적용 범위는 원문 전체로 판단): 로 늘렸다\n단서 원문(분해하지 않음): (메이저리그 진출한\n2021년 제외)",
     "structure": {
-      "version": "official-parenthetical-v3",
+      "version": "official-parenthetical-v2",
       "sourceRevision": "sha256:5b3ad2878dfbf830",
       "contentSha256": "b0198d4a1031ee55be68f0da737ecfd97cfeb67689e4268ec52cc3e61d6bb8f9",
       "relations": [
@@ -3545,7 +3506,7 @@
     "claimGeneration": 2,
     "note": "괄호 직전 원문(적용 범위는 원문 전체로 판단): 외 13차례\n괄호 안 제외 항목 A: 18회.\n나머지 적용 조건과 효과: 위 원문 그대로.",
     "structure": {
-      "version": "official-parenthetical-v3",
+      "version": "official-parenthetical-v2",
       "sourceRevision": "sha256:5b3ad2878dfbf830",
       "contentSha256": "4a0cf2c3f10541a853e35dd5671c4a13ac78631678bd07695ce07ae2bc7ac9cc",
       "relations": [
@@ -3584,7 +3545,7 @@
     "claimGeneration": 2,
     "note": "괄호 직전 원문(적용 범위는 원문 전체로 판단): • 월간 최고 승률\n단서 원문(분해하지 않음): (3,10월 제외)",
     "structure": {
-      "version": "official-parenthetical-v3",
+      "version": "official-parenthetical-v2",
       "sourceRevision": "sha256:5b3ad2878dfbf830",
       "contentSha256": "d399bb25075f57f6bf06dd3cb763ebaa90b9b5b45326d3a1ce938f3b17ceb13a",
       "relations": [
@@ -3623,7 +3584,7 @@
     "claimGeneration": 2,
     "note": "괄호 직전 원문(적용 범위는 원문 전체로 판단): • 월간 최저 승률\n단서 원문(분해하지 않음): (3,10월 제외)",
     "structure": {
-      "version": "official-parenthetical-v3",
+      "version": "official-parenthetical-v2",
       "sourceRevision": "sha256:5b3ad2878dfbf830",
       "contentSha256": "95607cc8ba6d9aeed110eabaefb7050234bbbe70834a393e01738207d4935884",
       "relations": [
@@ -3662,7 +3623,7 @@
     "claimGeneration": 2,
     "note": "괄호 직전 원문(적용 범위는 원문 전체로 판단): \n단서 원문(분해하지 않음): (’89 이후, ’`99~’00 양대리그 제외)",
     "structure": {
-      "version": "official-parenthetical-v3",
+      "version": "official-parenthetical-v2",
       "sourceRevision": "sha256:5b3ad2878dfbf830",
       "contentSha256": "c4f771a1382f7e3c468d62d496c2490016be174f7c1e529bbe5d9f5a6c2b0937",
       "relations": [
@@ -3701,7 +3662,7 @@
     "claimGeneration": 1,
     "note": "괄호 직전 원문(적용 범위는 원문 전체로 판단): 무사 또는 1사에 주자 1·2루 또는 만루일 때 타자가 친 것이 플라이 볼\n괄호 안 제외 항목 A: 직선타구.\n괄호 안 제외 항목 B: 번트한 것이 떠올라 플라이 볼이 된 것.\n제외 범위: 위 병렬 항목 각각이 제외됨.\n나머지 적용 조건과 효과: 위 원문 그대로.",
     "structure": {
-      "version": "official-parenthetical-v3",
+      "version": "official-parenthetical-v2",
       "sourceRevision": "sha256:07651ec70e392723",
       "contentSha256": "d549530b145f0329133b25f4a23469f38d4f01f0a3dcc6ca3417f9cdfd12b740",
       "relations": [

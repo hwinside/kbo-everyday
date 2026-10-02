@@ -45,11 +45,3 @@ assert.equal(officialParentheticalNote(row), "", "forged span must drop annotati
 item.quote = originalQuote;
 assert.equal(officialParentheticalNote(row), note);
 console.log("PASS: pure production request builder, original evidence preservation, source/version/span fail-closed");
-
-const prefix = fixture.rows.find((x: { annotation: { structure: { relations: { kind: string }[] } } }) => x.annotation.structure.relations.some(r => r.kind === 'leading-exception'));
-assert.ok(prefix, 'real serving leading-exception fixture required');
-const prefixRow: RagEvidence = { ...row, content: prefix.row.text, sectionPath: prefix.row.section,
-  canonicalUrl: prefix.row.canonicalUrl, revision: prefix.row.revision };
-assert.match(request(prefixRow), /예외 조건을 제외한 경우에만 적용되는 본문/);
-assert.match(request(prefixRow), /인필드 플라이 규칙이 적용되는 경우/);
-assert.equal(officialParentheticalNote({ ...prefixRow, revision: 'stale' }), '');
