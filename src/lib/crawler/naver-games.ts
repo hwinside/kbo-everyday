@@ -36,9 +36,10 @@ const NAVER_SERVICEABLE_SR_IDS = new Set<string>([DEFAULT_ALL_SR_ID, REGULAR_SEA
  *
  * 2026 근거(KBO 공식 정규시즌 일정 발표 2025-12-19, 스포츠경향 202512191538003 보도):
  * - 개막 2026-03-28(토), 팀당 144경기·총 720경기.
- * - 9/6 까지 팀당 135경기 우선 편성, 잔여 45경기(우천 취소분 포함)는 추후 편성 → 공식 '정규
- *   종료일' 은 유동. 9/30 이후는 무경기로 단정하지 않고 fail-close 한다. 잔여 일정이 확정되면
- *   검증된 정규 경기 날짜를 별도 허용해야 한다.
+ * - 2026-09-30 KBO 2차 잔여 일정: 10/12까지 정규경기·예비일 편성.
+ *   https://www.koreabaseball.com/MediaNews/Notice/View.aspx?bdSe=12172
+ *   첨부 일정표의 10/2는 무경기, 10/8은 예비일이다. 빈 날도 양 소스 검증은 유지한다.
+ *   추가 우천 순연 가능성이 명시돼 실제 종료 확정(finalized)은 하지 않는다.
  * 미등록 연도는 fail-close(정규 일정 미확정 상태에서 추측 서빙 금지). 시즌이 바뀌면 갱신
  * (src/app/api/roster-moves/route.ts 의 SEASON_START 상수와 동일한 연 1회 운영).
  */
@@ -51,9 +52,8 @@ export interface RegularSeasonWindow {
 }
 
 export const REGULAR_SEASON_WINDOWS: Readonly<Record<string, RegularSeasonWindow>> = {
-  // 9/30은 우선 편성분의 경계일 뿐 실제 종료일이 아니다. 잔여 45경기 확정 전에는
-  // 이 날짜 뒤를 잘라 complete로 열지 않는다.
-  "2026": { start: "20260328", end: "20260930", finalized: false },
+  // KBO 9/30 발표의 마지막 편성일. 10/13 이후는 계속 fail-close.
+  "2026": { start: "20260328", end: "20261012", finalized: false },
 };
 
 /** date(YYYYMMDD)가 검증된 정규시즌 window 안인가. 미등록 연도는 false(fail-close). */
