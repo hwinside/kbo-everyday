@@ -4,7 +4,7 @@
  */
 import { createHash } from 'node:crypto';
 import { isDeepStrictEqual } from 'node:util';
-export const STRUCTURE_VERSION = 'official-parenthetical-v1';
+export const STRUCTURE_VERSION = 'official-parenthetical-v2';
 export const annotationContentDigest = text => hash(text.replace(/\s+/g, ''));
 const hash = text => createHash('sha256').update(text, 'utf8').digest('hex');
 const span = (text, start, end) => ({ start, end, quote: text.slice(start, end) });
@@ -28,7 +28,12 @@ export function structureOfficialParentheticals(content, sourceRevision) {
       const match = /^(.*?)(?:은|는)?\s*제외\s*$/.exec(inner);
       const contextStart = Math.max(content.lastIndexOf('\n', start - 1), content.lastIndexOf('. ', start - 1)) + 1;
       const context = span(content, contextStart, start);
-      if (match && !/아니|않|못|다만|경우|외에는/.test(inner) && match[1].trim()) {
+      // Scope/qualifier markers and case-marked targets are not item lists.
+      // Comma/range coordination is also quoted, never asserted as one item.
+      const payloadCandidate = match?.[1].trim() ?? '';
+      const quoteOnly = /아니|않|못|다만|경우|외에는|이후|이전|부터|까지|[,;~～]|(?:^|\s)단(?:\s|,|$)/.test(inner)
+        || /(?:에서|에게|한테|으로|로|에|보다|처럼|만큼|대해|관해)$/.test(payloadCandidate);
+      if (match && !quoteOnly && payloadCandidate) {
         const payload = match[1].trim();
         const offset = start + 1 + inner.indexOf(payload);
         // Split one explicit OR only when the first arm is a single noun token.

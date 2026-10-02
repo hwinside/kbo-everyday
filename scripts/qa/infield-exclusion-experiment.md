@@ -122,3 +122,14 @@ graphify 갱신은 시도했으나 `ModuleNotFoundError: graphify`로 미완료.
 삼식 재리뷰: 동일 집중8×5·원본18×3·실사용81×1, base/자동 후보 동예산.
 후보는 위 새 manifest 사용. smoke는 실제 서빙 fixture의 digest/revision/render도
 검증한다. 코드 smoke/모델 재생 실행·판정은 삼식 담당이다.
+
+## PR 재작업 R2 — 의미 단정 보수화
+삼식 R1(673db6bb): 집중 결론 오판정5/40→0/40, 원본 unsure4→3, 뒤엉킨 설명1→2. 실사용81 중 주석 노출12건, 플라이아웃 후보 오답1건. 방향 검증이며 GO/회귀 해소 아님.
+
+- v2: 조사 종결·범위어·단서어·쉼표·범위기호는 분해/제외 단정 없이 원문 인용. 규칙/질문별 목록 없음.
+- 같은 스냅샷: 주석78/관계109 유지, 제외51→26, 인용58→83. 잔존26관계/27항목 전수 판독: official-parenthetical-r2-audit.md.
+- 후보: /Volumes/T7-Dev/reviews/runtime/excl-serving-r2-annotations.json
+- 삼식 실행: genius-infield-evidence-live.ts --suite=flyout-regression --reps=5. base는 annotations 없음, 후보는 위 파일, 각각 별개 절대 --out. 질문은 정확히 “그건 플라이아웃 아니야?”. 원응답/최종답·근거·노출·아웃 효과 역전/unsure/error/timeout 구분. 0/5도 영향 완전 배제 아님.
+- 정의40 주석 본문 동일: 기존 집중 재생 근거 재사용 가능. 변경된 인용 및 의미 역전3종 smoke는 독립 확인 필요.
+- 서빙 연결 PR 전 레코드북·가이드북 실제 질문/근거/정답표를 고정해 동예산 회귀. 이번은 offline sidecar만, src/loader/DB 변경 없음.
+- 재작업 누계2회. 머지 판정 요청 아님.

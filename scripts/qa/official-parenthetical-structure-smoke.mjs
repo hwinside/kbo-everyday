@@ -58,4 +58,14 @@ for (const { row, annotation } of serving.rows) {
   if (!row.section.includes('40. INFIELD FLY')) otherSections.add(row.section);
 }
 assert.ok(otherSections.size >= 10, `only ${otherSections.size} other serving sections`);
+
+// Scope markers must survive only as exact quotations, not asserted exclusions.
+for (const inner of ['연속 이닝 선발 등판 무실점 기록에서 제외', '’89 이후, ’99~’00 양대리그 제외', '단, 우천시 제외', '1989 이전 제외', '1989부터 제외', '2000까지 제외', '명단으로 제외', '기록에 제외']) {
+  const text = `본문 (${inner})`;
+  const structure = derive(text, 'r');
+  assert.equal(structure.relations[0].kind, 'qualifier-quote', inner);
+  assert.equal(structure.relations[0].parenthetical.quote, `(${inner})`);
+  assert.doesNotMatch(render(text, 'r', structure), /제외 항목/);
+}
+
 console.log(`PASS: ${serving.rows.length} serving chunks / ${otherSections.size} other sections; shared digest + revision + render`);

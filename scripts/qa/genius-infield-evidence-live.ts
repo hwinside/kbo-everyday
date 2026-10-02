@@ -30,7 +30,7 @@ const distance = (a: number[], b: number[]) => 1 - a.reduce((s, n, i) => s + n *
 
 async function main() {
   const suite = option("suite") ?? "original";
-  if (!["original", "exclusions", "exclusion-focus"].includes(suite)) throw new Error("unknown suite");
+  if (!["original", "exclusions", "exclusion-focus", "flyout-regression"].includes(suite)) throw new Error("unknown suite");
   if (suite === "exclusions") QUESTIONS.push(
     "무사 1·2루 직선타구도 인필드플라이야?",
     "1사 1·2루 직선타구도 인필드플라이야?",
@@ -49,10 +49,11 @@ async function main() {
     "1사 만루에서 내야수가 쉽게 잡을 수 있는 직선타구도 인필드플라이야?",
     "1사 만루에서 내야수가 평범한 수비로 잡을 수 있는 라인드라이브도 인필드플라이야?",
   );
+  if (suite === "flyout-regression") QUESTIONS.splice(0, QUESTIONS.length, "그건 플라이아웃 아니야?");
   const out = option("out");
   const reps = Number(option("reps") ?? "3");
   if (!out || !path.isAbsolute(out) || !Number.isInteger(reps) || reps < 1 || reps > 5) throw new Error("absolute --out and reps 1..5 required");
-  if (suite === "exclusion-focus" && reps !== 5) throw new Error("exclusion-focus requires fixed --reps=5 budget");
+  if (["exclusion-focus", "flyout-regression"].includes(suite) && reps !== 5) throw new Error(`${suite} requires fixed --reps=5 budget`);
   const server = await import("../../src/lib/baseball-qa/server");
   const production = server.makeDeps(0);
   const file = option("supplement");
