@@ -1,3 +1,4 @@
+import { intentRoutingRequest, INTENT_ROUTING_NOTE } from "../baseball-qa/rag/experimental-intent-routing";
 /** Reviewer-run diagnostic, not a blocking build gate or semantic PASS.
  * --out=/absolute/path --reps=3 [--supplement=/absolute/path.jsonl]
  * --annotations=/absolute/path.json adds source-bound derived notes at model input.
@@ -9,6 +10,7 @@
  */
 import { contextRoutingRequest, callContextRouting, CONTEXT_ROUTING_NOTE } from "../baseball-qa/rag/experimental-context-routing";
 import fs from "node:fs";
+import { standaloneSiblingEvidence, siblingEvidence, validateSiblingManifest, type SiblingManifest } from "../baseball-qa/rag/experimental-sibling-evidence";
 import { createHash } from "node:crypto";
 import { officialModelEvidenceContent } from "../../src/lib/baseball-qa/rag/official-parenthetical-evidence";
 import { annotationContentDigest } from "../baseball-qa/rag/official-parenthetical-structure.mjs";
@@ -37,7 +39,16 @@ async function main() {
   const suite = option("suite") ?? "original";
   if (!["context-rules", "original", "exclusions", "exclusion-focus", "flyout-regression", "flyout-context", "official-documents", "official81"].includes(suite)) throw new Error("unknown suite");
   const routingMode = option("routing");
-  if (routingMode && routingMode !== "context") throw new Error("unknown routing mode");
+  if (routingMode && !["context", "intent"].includes(routingMode)) throw new Error("unknown routing mode");
+  const siblingFile = option("siblings");
+  const siblingScope = option("sibling-scope") ?? "all";
+  if (!["all", "standalone"].includes(siblingScope)) throw new Error("unknown sibling scope");
+  if (option("sibling-scope") && !siblingFile) throw new Error("sibling scope requires manifest");
+  if (siblingScope === "standalone" && routingMode !== "context") throw new Error("R3 requires unchanged context routing");
+  if (siblingFile && ["selection", "annotations", "supplement"].some(option)) throw new Error("sibling experiment must be isolated");
+  const siblings: SiblingManifest[] = siblingFile ? JSON.parse(fs.readFileSync(siblingFile,"utf8")) : [];
+  validateSiblingManifest(siblings);
+  let siblingCalls = 0;
   const selectionMode = option("selection");
   if (routingMode && (selectionMode || option("annotations") || option("supplement"))) throw new Error("routing experiment must be isolated");
   if (selectionMode && selectionMode !== "contextual") throw new Error("unknown selection experiment");
@@ -82,12 +93,13 @@ async function main() {
   if (previousTurn && (!previousTurn.question || !previousTurn.answer || !previousTurn.answeredAt || !previousTurn.currentCreatedAt)) throw new Error("complete previous turn required");
   const out = option("out");
   const reps = Number(option("reps") ?? "3");
-  if (!out || !path.isAbsolute(out) || fs.existsSync(out) || !Number.isInteger(reps) || reps < 1 || reps > 10) throw new Error("new absolute --out and reps 1..10 required");
+  const maxReps = ["flyout-regression", "flyout-context"].includes(suite) ? 20 : 10;
+  if (!out || !path.isAbsolute(out) || fs.existsSync(out) || !Number.isInteger(reps) || reps < 1 || reps > maxReps) throw new Error("new absolute --out and suite-bounded integer reps required");
   if (suite === "context-rules" && reps !== 5) throw new Error("context-rules requires reps=5");
   if (suite === "official81" && reps !== 1) throw new Error("official81 requires reps=1");
   if (suite === "exclusion-focus" && reps !== 5) throw new Error(`${suite} requires fixed --reps=5 budget`);
   if (suite === "official-documents" && reps !== 3) throw new Error("official-documents requires --reps=3");
-  if (["flyout-regression", "flyout-context"].includes(suite) && reps !== 10) throw new Error("flyout suites require fixed --reps=10 budget");
+  if (["flyout-regression", "flyout-context"].includes(suite) && reps !== 20) throw new Error("flyout suites require fixed --reps=20 budget");
   const server = await import("../../src/lib/baseball-qa/server");
   const production = server.makeDeps(0);
   const file = option("supplement");
@@ -120,9 +132,10 @@ async function main() {
     }
   }
   const runs: unknown[] = [];
-  const save = () => fs.writeFileSync(out, JSON.stringify({ suite, plannedRuns: QUESTIONS.length * reps, mode: routingMode ? "context-routing-experiment" : selectionMode ? "contextual-selection-experiment" : file ? "local-ranked-supplement" : annotationFile ? "source-bound-annotation-experiment" : "production-read-only", reps, previousTurn, annotations, annotatedCalls, experimentCalls, questions: QUESTIONS, runs }, null, 2));
+  const save = () => fs.writeFileSync(out, JSON.stringify({ suite, plannedRuns: QUESTIONS.length * reps, siblingCalls, siblingScope, routingMode: routingMode ?? null, mode: siblingFile ? (siblingScope === "standalone" ? "sibling-anchor-r3" : "sibling-anchor-r2") : routingMode ? "context-routing-experiment" : selectionMode ? "contextual-selection-experiment" : file ? "local-ranked-supplement" : annotationFile ? "source-bound-annotation-experiment" : "production-read-only", reps, previousTurn, annotations, annotatedCalls, experimentCalls, questions: QUESTIONS, runs }, null, 2));
   for (let rep = 0; rep < reps; rep++) for (const question of QUESTIONS) {
     const trace: unknown[] = [];
+    let retrieved: RagEvidence[] = [];
     const deps: QaDeps = {
       // Explicit read/model allowlist. Never spread makeDeps: it contains writes.
       loadPreviousTurn: async () => previousTurn,
@@ -148,12 +161,13 @@ async function main() {
           selected = choice.selected;
           trace.push({stage:"evidence-selection",...choice.trace});
         }
+        retrieved = baseline;
         trace.push({ stage: "retrieval", query, baseline, selected });
         return selected;
       },
       callOfficialRagLlm: async (q, evidence, extras) => {
         const matched: number[] = [];
-        const modelEvidence = evidence.map((row, index) => {
+        let modelEvidence = evidence.map((row, index) => {
           if (row.sourceKind !== "kbo_ebook" || row.sourceGrade !== "tier1") return row;
           const annotation = annotations.find(a => a.canonicalUrl === row.canonicalUrl
             && (!a.sourceRevision || a.sourceRevision === row.revision)
@@ -164,14 +178,22 @@ async function main() {
           matched.push(index);
           return { ...row, content: `${officialModelEvidenceContent(row)}\n[원문 구조화 주석 — 파생 데이터]\n${annotation.note}` };
         });
+        if (siblingFile) {
+          const bundled = siblingScope === "standalone"
+            ? standaloneSiblingEvidence(evidence, retrieved, siblings, extras)
+            : siblingEvidence(evidence, retrieved, siblings);
+          modelEvidence = bundled.modelEvidence;
+          if (bundled.trace.length) siblingCalls++;
+          trace.push({stage:"sibling-bundle",...bundled});
+        }
         if (matched.length) experimentCalls++;
-        const request = routingMode && extras?.context ? contextRoutingRequest(q, modelEvidence, extras) : server.buildProductionRagRequest(q, modelEvidence, RAG_OFFICIAL_SYSTEM_PROMPT, extras);
+        const request = routingMode === "intent" ? intentRoutingRequest(q, modelEvidence, extras) : routingMode && extras?.context ? contextRoutingRequest(q, modelEvidence, extras) : server.buildProductionRagRequest(q, modelEvidence, RAG_OFFICIAL_SYSTEM_PROMPT, extras);
         const routingApplied = request.systemInstruction.parts[0].text.includes(CONTEXT_ROUTING_NOTE);
         const servingAnnotationCount = request.contents[0].parts[0].text.split("[원문 구조화 주석 — 파생 데이터]").length - 1;
         if (servingAnnotationCount) annotatedCalls++;
-        const raw = routingMode && routingApplied ? await callContextRouting(request, extras) : await server.callOfficialRagLlm(q, modelEvidence, extras);
+        const raw = routingMode ? await callContextRouting(request, extras) : await server.callOfficialRagLlm(q, modelEvidence, extras);
         trace.push({ stage: "official-generation", question: q, evidence, extras, matchedAnnotations: matched,
-          request, routingApplied, servingAnnotationCount, raw });
+          request, routingApplied, intentRoutingApplied: request.systemInstruction.parts[0].text.includes(INTENT_ROUTING_NOTE), servingAnnotationCount, raw });
         return raw;
       },
       callLlm: async (...args) => {
@@ -189,6 +211,7 @@ async function main() {
     }
     save();
   }
+  if (siblingFile && siblingCalls === 0) throw new Error("HOLD: no sibling reached generation");
   if (annotationFile && experimentCalls === 0) throw new Error("HOLD: no experimental annotation reached generation");
   if (option("require-annotations") === "1" && annotatedCalls === 0) throw new Error("HOLD: no source-bound annotation reached generation");
   console.log(`Saved ${runs.length} observations; semantic judgement required: ${out}`);
