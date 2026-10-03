@@ -221,8 +221,22 @@ async function pipelineContract() {
   }
   // Position matters: the same label further down qualifies a rule already stated above it.
   assert.equal(anchorBodyLeadsWithQualifier("5.09 아 웃 (이어짐)\n다음의 경우 타자는 아웃된다. [부기] 예외가 있다."), false);
-  // A 용어의 정의 entry head counts as a qualifier-led page.
-  assert.equal(anchorBodyLeadsWithQualifier("40. INFIELD FLY (인필드 플라이) 무사 또는 1사에서…"), true);
+  // R0 P1-1: the continuation marker is only a page header when it sits in the header
+  // position. A "(이어짐)" behind rule text must not promote the qualifier that follows it.
+  assert.equal(anchorBodyLeadsWithQualifier("5.09 아 웃 다음의 경우 타자는 아웃된다. (이어짐) [부기] 예외"), false);
+  assert.equal(anchorBodyAfterHeader("5.09 아 웃 다음의 경우 타자는 아웃된다. (이어짐) [부기] 예외")
+    .startsWith("아 웃 다음의"), true);
+  // R0 P1-2: an enumeration number at the head of a rule page is not a qualifier, and a
+  // 용어의 정의 head is the rule itself. Neither leads, so the numbered branch is gone.
+  assert.equal(anchorBodyLeadsWithQualifier("5.09 아 웃 (이어짐) 2. 타자가 친 타구를 …"), false);
+  assert.equal(anchorBodyLeadsWithQualifier("2026 공식야구규칙 / 40. INFIELD FLY (인필드 플라이) …"), false);
+  // Allowed label set, written out: only these lead. "[주의]"/"[예고]" are not rulebook labels.
+  for (const label of ["[부기]","[주]","[주1]","[주2]","[예]","[예1]","[예외]","[원주]","[참고]","[벌칙]"]) {
+    assert.equal(anchorBodyLeadsWithQualifier(`5.09 아 웃 (이어짐)\n${label} 본문`), true, label);
+  }
+  for (const label of ["[주의]","[예고]","[부록]"]) {
+    assert.equal(anchorBodyLeadsWithQualifier(`5.09 아 웃 (이어짐)\n${label} 본문`), false, label);
+  }
   console.log("PASS: leading qualifier judgment on captured p62/p60/p64 pages");
 }
 

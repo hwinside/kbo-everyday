@@ -43,12 +43,19 @@ export function anchorCarriesStructuralUnit(content: string) {
   const body = header ? content.slice(rawOffsetAfterCompact(content, header.length)) : content;
   return ANCHOR_UNIT_MARKER.test(body);
 }
-/** Qualifier labels the rulebook puts in front of a sentence that limits the clause it
- * follows ("[부기]", "[주1]", "[예외]", "[벌칙]"), plus the numbered head of a 용어의 정의
- * entry. Anchored at the start: the same label further down the body limits a rule that
- * is already stated above it, which is the ordinary layout and needs no handling. */
-const ANCHOR_BODY_QUALIFIER_HEAD = /^(?:\[(?:부기|주|예|원주|참고|벌칙)[^\]]*\]|\d{1,3}\s*\.\s*(?=[A-Za-z가-힣]))/u;
-const CONTINUATION_HEAD = /\([ \t]*이어짐[ \t]*\)/;
+/** The complete set of qualifier labels the rulebook puts in front of a sentence that
+ * limits the clause it follows. Closed list, written out so a label the rulebook does not
+ * use ("[주의]", "[예고]") cannot slip in: 부기, 주/주N, 예/예N, 예외, 원주, 참고, 벌칙.
+ * Anchored at the start: the same label further down the body limits a rule that is
+ * already stated above it, which is the ordinary layout and needs no handling.
+ * A 용어의 정의 entry head is deliberately not here. Captured serving chunks put the book
+ * title in front of it so it never leads, an enumeration number at the head of a rule page
+ * would be misread as a qualifier, and a definition is itself the rule, not a limit on one. */
+const ANCHOR_BODY_QUALIFIER_HEAD = /^\[(?:부기|주\d*|예\d*|예외|원주|참고|벌칙)\]/u;
+/** The continuation marker belongs to the page header, next to the article title. Matched
+ * only there: a "(이어짐)" later in the body sits behind rule text that already leads, and
+ * cutting at it would promote a qualifier that follows the rule it qualifies. */
+const CONTINUATION_HEAD = /^[^[\n.]{0,32}?\([ \t]*이어짐[ \t]*\)/;
 /** The body a reader meets after the page header. `anchorCarriesStructuralUnit` only drops
  * the article number, which leaves the article title ("아 웃 (이어짐)") in front of the
  * body, so a leading-position test needs the continuation head removed as well. Served
