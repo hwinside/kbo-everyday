@@ -77,14 +77,17 @@ export function siblingEvidence(selected: RagEvidence[], candidates: RagEvidence
   return {modelEvidence,rawEvidence,guardEvidence,trace,primaryCount:selected.length,physicalChunkCount:selected.length+trace.length};
 }
 
-/** R3: request-structure gate only. Keep R0 unchanged for the B control. */
+/** Request-structure gate only. Context turns keep the #1521 path; recordbook requests
+ * keep the record-selection contract, where a seventh rule chunk could be offered as a
+ * record row. Both skip the extension and return the baseline evidence unchanged. */
 export function standaloneSiblingEvidence(selected: RagEvidence[], candidates: RagEvidence[],
   manifest: SiblingManifest[], extras?: RagRequestExtras) {
-  if (extras?.context != null) return {
+  const skipReason = extras?.context != null ? "context" : extras?.recordbookRequest ? "recordbook" : null;
+  if (skipReason) return {
     modelEvidence: selected, rawEvidence: selected, guardEvidence: selected, trace: [], primaryCount: selected.length,
-    physicalChunkCount: selected.length, skippedForContext: true,
+    physicalChunkCount: selected.length, skippedForContext: skipReason === "context", skipReason,
   };
-  return {...siblingEvidence(selected, candidates, manifest), skippedForContext: false};
+  return {...siblingEvidence(selected, candidates, manifest), skippedForContext: false, skipReason: null as "context" | "recordbook" | null};
 }
 
 // Invalid bundled artifacts disable only the extension, never baseline evidence.

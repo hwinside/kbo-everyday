@@ -48,7 +48,7 @@ console.log("PASS: source binding, spans, missing candidates, preservation, expl
 
 // R3 must equal B without context and A with any present context object.
 const standalone = standaloneSiblingEvidence(primary,[anchor,sibling],manifest,extras);
-assert.deepEqual(standalone,{...result,skippedForContext:false});
+assert.deepEqual(standalone,{...result,skippedForContext:false,skipReason:null});
 assert.deepEqual(standaloneSiblingEvidence(primary,[anchor,sibling],manifest),standalone);
 for (const context of [{question:"포구는 뭐야?",answer:"잡는 행위"},
   {question:"규칙 조건은?",answer:"규칙 답변"},{question:"",answer:""}]) {
@@ -61,8 +61,24 @@ for (const context of [{question:"포구는 뭐야?",answer:"잡는 행위"},
   assert.deepEqual(buildOfficialContextRequest("후속 질문",skipped.modelEvidence,contextual),
     buildOfficialContextRequest("후속 질문",primary,contextual));
 }
+// Recordbook requests keep the record-selection contract: no seventh rule chunk.
+for (const recordbookExtras of [{...extras,recordbookRequest:true},
+  {...extras,recordbookRequest:true,allowRecordbookGeneral:true}]) {
+  const skipped = standaloneSiblingEvidence(primary,[anchor,sibling],manifest,recordbookExtras);
+  assert.equal(skipped.modelEvidence,primary);
+  assert.equal(skipped.guardEvidence,primary);
+  assert.equal(skipped.trace.length,0);
+  assert.equal(skipped.physicalChunkCount,6);
+  assert.equal(skipped.skippedForContext,false);
+  assert.equal(skipped.skipReason,"recordbook");
+}
+// A context turn stays a context skip even when the recordbook flag is also set.
+assert.equal(standaloneSiblingEvidence(primary,[anchor,sibling],manifest,
+  {...extras,recordbookRequest:true,context:{question:"기록은?",answer:"기록 답변"}}).skipReason,"context");
+assert.equal(standaloneSiblingEvidence(primary,[anchor,sibling],manifest,
+  {...extras,recordbookRequest:false}).trace.length,1);
 assert.equal(JSON.stringify(primary),saved);
-console.log("PASS: R3 standalone equals B; present context equals A payload, no mutation");
+console.log("PASS: standalone equals B; context and recordbook requests equal A payload, no mutation");
 
 // Model-visible numeric spans ground; unseen source text/metadata never ground.
 assert.deepEqual(result.rawEvidence, [...primary, sibling]);
