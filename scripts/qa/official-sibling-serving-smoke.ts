@@ -28,7 +28,10 @@ assert.equal(result.primaryCount,6);
 assert.equal(result.physicalChunkCount,7);
 assert.equal(JSON.stringify(primary),saved,"do not mutate guard evidence");
 assert.equal(result.modelEvidence.length,6);
-assert.ok(result.modelEvidence[0].content.startsWith(anchor.content));
+// #1532 R1: the retrieved clause now leads and the anchor page body follows it, but the
+// anchor body itself must still appear byte-for-byte, never trimmed or reordered inside.
+assert.ok(result.modelEvidence[0].content.includes(anchor.content));
+assert.ok(result.modelEvidence[0].content.endsWith(anchor.content));
 assert.deepEqual(result.modelEvidence.slice(1),primary.slice(1));
 assert.ok(result.modelEvidence[0].content.includes(sibling.sectionPath));
 for (const bad of [{...sibling,revision:"stale"},{...sibling,canonicalUrl:"https://other.test"},
@@ -126,6 +129,20 @@ console.log("PASS: standalone equals B; context and recordbook requests equal A 
 assert.deepEqual(result.rawEvidence, [...primary, sibling]);
 assert.equal(result.guardEvidence.length, 7);
 assert.deepEqual(result.guardEvidence.slice(0, 6), primary);
+// #1532 P1: the fix is the position of the lead, so assert the position, not just that
+// the lead is present. The clause (lead before the item it governs) must come ahead of
+// the sibling chunk payload, and ahead of the anchor page body it qualifies.
+const anchorBundleContent = result.modelEvidence[0].content;
+const leadAt = anchorBundleContent.indexOf(lead);
+const itemAt = anchorBundleContent.indexOf(item);
+const rawAt = anchorBundleContent.indexOf("[형제 청크 원문]");
+const anchorBodyAt = anchorBundleContent.indexOf(anchor.content);
+assert.ok(leadAt >= 0 && itemAt >= 0 && rawAt >= 0 && anchorBodyAt >= 0, "block parts present");
+assert.ok(leadAt < itemAt, "lead must precede the item it governs");
+assert.ok(itemAt < rawAt, "plain-text clause must precede the sibling chunk payload");
+assert.ok(rawAt < anchorBodyAt, "retrieved clause must precede the anchor page it qualifies");
+assert.ok(!anchorBundleContent.includes("\"lead\""), "the lead must not be serialised as a JSON field");
+console.log("PASS: lead precedes item, sibling payload and anchor body");
 assert.ok(result.guardEvidence[6].content.includes(lead));
 assert.ok(!result.guardEvidence[6].content.includes("rawContentSha256"));
 assert.throws(() => siblingEvidence([...primary, sibling], [], manifest));

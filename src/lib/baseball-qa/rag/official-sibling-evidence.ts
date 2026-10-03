@@ -98,7 +98,13 @@ export function siblingEvidence(selected: RagEvidence[], candidates: RagEvidence
       canonicalUrl:sibling.canonicalUrl,revision:sibling.revision,sectionPath:sibling.sectionPath,
       rawContentSha256:m.rawContentSha256,content:officialModelEvidenceContent(sibling)})}\n[형제 청크 끝]`;
     if (block.length > OFFICIAL_SIBLING_BLOCK_MAX_CHARS) continue; // skip, never truncate a rule or displace primary evidence
-    modelEvidence[anchor] = {...selected[anchor],content:officialModelEvidenceContent(selected[anchor])+block};
+    // #1532 R0 showed the lead reaching the model in plain text and still losing: the
+    // anchor page `#p62` opens with `[부기] 인필드 플라이 규칙이 적용되는 경우를 제외하고
+    // … 타자는 아웃이 되 지 않는다`, and the answer follows that exception sentence as if
+    // it were the rule. In the document the clause itself comes first and the 부기
+    // qualifies it; a continuation page inverts that order. Put the retrieved clause
+    // back in front of the annotation it qualifies instead of after it.
+    modelEvidence[anchor] = {...selected[anchor],content:block.replace(/^\n/,"")+"\n"+officialModelEvidenceContent(selected[anchor])};
     rawEvidence.push(sibling);
     // Ground only the raw sibling and the exact validated lead/item spans shown
     // to the model. Never ground metadata, annotations or the full corpus row.
