@@ -168,6 +168,10 @@
       "tier": "ci"
     },
     {
+      "name": "qa:official-sibling-serving",
+      "tier": "ci"
+    },
+    {
       "name": "qa:baseball-official-rag",
       "tier": "deploy"
     },

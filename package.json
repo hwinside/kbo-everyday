@@ -287,6 +287,7 @@
     "qa:kbo-rulebook-boundaries": "python3 -m unittest scripts/qa/kbo-rulebook-boundaries-smoke.py",
     "qa:official-parenthetical-structure": "node scripts/qa/official-parenthetical-structure-smoke.mjs",
     "qa:official-parenthetical-serving": "tsx scripts/qa/official-parenthetical-serving-smoke.ts",
+    "qa:official-sibling-serving": "tsx scripts/qa/official-sibling-serving-smoke.ts",
     "qa:baseball-official-rag": "tsx scripts/qa/baseball-qa-official-rag-smoke.ts",
     "rag:resolve-urls": "tsx scripts/baseball-qa/resolve-rag-urls.ts",
     "rag:ingest": "tsx scripts/baseball-qa/ingest-rag-sources.ts",

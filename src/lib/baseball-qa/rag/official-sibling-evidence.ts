@@ -80,14 +80,19 @@ export function siblingEvidence(selected: RagEvidence[], candidates: RagEvidence
 /** Request-structure gate only. Context turns keep the #1521 path; recordbook requests
  * keep the record-selection contract, where a seventh rule chunk could be offered as a
  * record row. Both skip the extension and return the baseline evidence unchanged. */
+export type SiblingSkipReason = "context" | "recordbook" | null;
+export type OfficialEvidenceBundle = ReturnType<typeof siblingEvidence>
+  & { skippedForContext: boolean; skipReason: SiblingSkipReason };
+
 export function standaloneSiblingEvidence(selected: RagEvidence[], candidates: RagEvidence[],
-  manifest: SiblingManifest[], extras?: RagRequestExtras) {
-  const skipReason = extras?.context != null ? "context" : extras?.recordbookRequest ? "recordbook" : null;
+  manifest: SiblingManifest[], extras?: RagRequestExtras): OfficialEvidenceBundle {
+  const skipReason: SiblingSkipReason = extras?.context != null ? "context"
+    : extras?.recordbookRequest ? "recordbook" : null;
   if (skipReason) return {
     modelEvidence: selected, rawEvidence: selected, guardEvidence: selected, trace: [], primaryCount: selected.length,
     physicalChunkCount: selected.length, skippedForContext: skipReason === "context", skipReason,
   };
-  return {...siblingEvidence(selected, candidates, manifest), skippedForContext: false, skipReason: null as "context" | "recordbook" | null};
+  return {...siblingEvidence(selected, candidates, manifest), skippedForContext: false, skipReason: null};
 }
 
 // Invalid bundled artifacts disable only the extension, never baseline evidence.
@@ -100,6 +105,6 @@ const servingManifest: SiblingManifest[] = (() => {
   catch { return []; }
 })();
 
-export function prepareOfficialEvidence(selected: RagEvidence[], candidates: RagEvidence[], extras?: RagRequestExtras) {
+export function prepareOfficialEvidence(selected: RagEvidence[], candidates: RagEvidence[], extras?: RagRequestExtras): OfficialEvidenceBundle {
   return standaloneSiblingEvidence(selected, candidates, servingManifest, extras);
 }
