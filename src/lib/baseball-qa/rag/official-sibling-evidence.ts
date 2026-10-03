@@ -43,6 +43,29 @@ export function anchorCarriesStructuralUnit(content: string) {
   const body = header ? content.slice(rawOffsetAfterCompact(content, header.length)) : content;
   return ANCHOR_UNIT_MARKER.test(body);
 }
+/** Qualifier labels the rulebook puts in front of a sentence that limits the clause it
+ * follows ("[부기]", "[주1]", "[예외]", "[벌칙]"), plus the numbered head of a 용어의 정의
+ * entry. Anchored at the start: the same label further down the body limits a rule that
+ * is already stated above it, which is the ordinary layout and needs no handling. */
+const ANCHOR_BODY_QUALIFIER_HEAD = /^(?:\[(?:부기|주|예|원주|참고|벌칙)[^\]]*\]|\d{1,3}\s*\.\s*(?=[A-Za-z가-힣]))/u;
+const CONTINUATION_HEAD = /\([ \t]*이어짐[ \t]*\)/;
+/** The body a reader meets after the page header. `anchorCarriesStructuralUnit` only drops
+ * the article number, which leaves the article title ("아 웃 (이어짐)") in front of the
+ * body, so a leading-position test needs the continuation head removed as well. Served
+ * pages are not guaranteed to break lines, so cut at the marker, never at the first \n. */
+export function anchorBodyAfterHeader(content: string) {
+  const header = article(content);
+  const afterArticle = header ? content.slice(rawOffsetAfterCompact(content, header.length)) : content;
+  const cont = CONTINUATION_HEAD.exec(afterArticle);
+  const body = cont ? afterArticle.slice(cont.index + cont[0].length) : afterArticle;
+  return body.replace(/^\s+/, "");
+}
+/** True when the anchor page opens on a qualifier instead of the rule it qualifies.
+ * Such a page reads as if the exception were the rule, which is what the model answered
+ * back with. Judged from the rulebook's own labels, never from the question. */
+export function anchorBodyLeadsWithQualifier(content: string) {
+  return ANCHOR_BODY_QUALIFIER_HEAD.test(anchorBodyAfterHeader(content));
+}
 
 export function validateSiblingManifest(manifest: SiblingManifest[]) {
   if (!Array.isArray(manifest)) throw new Error("invalid sibling manifest");

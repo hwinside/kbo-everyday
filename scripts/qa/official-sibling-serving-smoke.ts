@@ -5,7 +5,7 @@ import { answerQuestion, type QaDeps } from "../../src/lib/baseball-qa/pipeline"
 /** Reviewer executes: npx tsx scripts/qa/official-sibling-serving-smoke.ts */
 import assert from "node:assert/strict";
 import {createHash} from "node:crypto";
-import {standaloneSiblingEvidence,siblingEvidence,validateSiblingManifest,prepareOfficialEvidence,anchorCarriesStructuralUnit,OFFICIAL_SIBLING_ANCHOR_BODY_LABEL,type SiblingManifest} from "../../src/lib/baseball-qa/rag/official-sibling-evidence";
+import {standaloneSiblingEvidence,siblingEvidence,validateSiblingManifest,prepareOfficialEvidence,anchorCarriesStructuralUnit,anchorBodyAfterHeader,anchorBodyLeadsWithQualifier,OFFICIAL_SIBLING_ANCHOR_BODY_LABEL,type SiblingManifest} from "../../src/lib/baseball-qa/rag/official-sibling-evidence";
 import {buildOfficialContextRequest} from "../../src/lib/baseball-qa/rag/official-context-request";
 import {validateRagResponse, type RagEvidence} from "../../src/lib/baseball-qa/rag/retrieve";
 const hash = (s:string) => createHash("sha256").update(s).digest("hex");
@@ -200,4 +200,31 @@ async function pipelineContract() {
   assert.equal(final.sourceUrl, "https://www.koreabaseball.com/kbo/board/ebook/ebookpublication.aspx");
   console.log("PASS: real pipeline -> model bundle -> guard/final/provenance, one provider call");
 }
+// #1532 follow-up R0: a page that opens on a qualifier reads as if the exception were the
+// rule. Judged from the rulebook's own labels at the leading position, never from the
+// question. Captured serving chunks only: p62 opens on "[부기]", p60 continues an
+// enumeration mid-sentence, p64 continues prose, so only p62 leads with a qualifier.
+{
+  const byPage = new Map(Object.values(candidatesFixture as Record<string, RagEvidence>)
+    .map((c) => [c.sectionPath, c.content] as const));
+  const p62 = byPage.get("2026 공식야구규칙#p62");
+  const p60 = byPage.get("2026 공식야구규칙#p60");
+  assert.ok(p62 && p60, "captured p62/p60 must be present");
+  assert.equal(anchorBodyLeadsWithQualifier(p62 as string), true, "p62 leads with [부기]");
+  assert.equal(anchorBodyLeadsWithQualifier(p60 as string), false, "p60 continues an enumeration");
+  // The header cut must remove the article title as well, otherwise nothing can lead.
+  assert.ok(anchorBodyAfterHeader(p62 as string).startsWith("[부기]"));
+  assert.ok(!anchorBodyAfterHeader(p60 as string).startsWith("["));
+  for (const captured of anchorFixture.anchors) {
+    const leads = captured.sectionPath === "2026 공식야구규칙#p62";
+    assert.equal(anchorBodyLeadsWithQualifier(captured.content), leads, captured.sectionPath);
+  }
+  // Position matters: the same label further down qualifies a rule already stated above it.
+  assert.equal(anchorBodyLeadsWithQualifier("5.09 아 웃 (이어짐)\n다음의 경우 타자는 아웃된다. [부기] 예외가 있다."), false);
+  // A 용어의 정의 entry head counts as a qualifier-led page.
+  assert.equal(anchorBodyLeadsWithQualifier("40. INFIELD FLY (인필드 플라이) 무사 또는 1사에서…"), true);
+  console.log("PASS: leading qualifier judgment on captured p62/p60/p64 pages");
+}
+
 void pipelineContract();
+
