@@ -72,11 +72,16 @@ console.log("PASS: captured continuation anchors classified by structural unit; 
 // so cutting the header at the first newline erased the whole body. These are real
 // serving rows that every one of them carries an item number or a bracketed label.
 assert.equal(anchorHeaderFixture.anchors.length, 7);
-assert.ok(anchorHeaderFixture.anchors.filter(a => a.newlineCount === 0).length >= 3);
+assert.equal(anchorHeaderFixture.anchors.filter(a => a.newlineCount === 0).length, 4);
 for (const captured of anchorHeaderFixture.anchors) {
   assert.equal((captured.content.match(/\n/g) ?? []).length, captured.newlineCount, captured.sectionPath);
   assert.equal(anchorCarriesStructuralUnit(captured.content), captured.eligible, captured.sectionPath);
-  assert.equal(anchorCarriesStructuralUnit(captured.content.split("\n").slice(1).join("\n")) && captured.newlineCount === 0, false);
+  // The pre-#1530 cut dropped everything before the first newline, so a page with no
+  // newline lost its whole body. Assert that only where it is actually meaningful.
+  if (captured.newlineCount === 0) {
+    assert.equal(captured.content.split("\n").slice(1).join("\n"), "", captured.sectionPath);
+    assert.equal(anchorCarriesStructuralUnit(captured.content.split("\n").slice(1).join("\n")), false, captured.sectionPath);
+  }
 }
 // A cross-reference such as "7. 02(c) 참조" sits inside a line and must not qualify.
 assert.equal(anchorCarriesStructuralUnit("5.10 선수교체 앞 문장이 이어지며 7. 02(c) 참조 라고만 적혀 있다."), false);
