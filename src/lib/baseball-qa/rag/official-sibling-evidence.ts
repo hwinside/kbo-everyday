@@ -17,6 +17,14 @@ const compact = (s: string) => s.replace(/\s+/g, "");
 const article = (s: string) => compact(s).match(/^\d{1,2}\.\d{2}(?!\d)/)?.[0];
 const identity = (r: RagEvidence) => JSON.stringify([r.canonicalUrl,r.revision,r.sectionPath]);
 const official = (r: RagEvidence) => r.sourceKind === "kbo_ebook" && r.sourceGrade === "tier1";
+/** Official rulebook structural markers: circled/parenthesised item numbers, sub-item
+ * letters and bracketed labels. A continuation page whose body carries none of these
+ * opens mid-sentence, so it has no identifiable position inside the article. */
+const ANCHOR_UNIT_MARKER = /[\u2474-\u2487\u2170-\u217f\u2160-\u216f\u3260-\u327f\u2460-\u2473\u249c-\u24b5]|\[(?:부기|주|예외|원주|참고)/u;
+/** Drop the article header line ("5.09 아 웃 (이어짐)") and inspect the body only. */
+export function anchorCarriesStructuralUnit(content: string) {
+  return ANCHOR_UNIT_MARKER.test(content.split("\n").slice(1).join("\n"));
+}
 
 export function validateSiblingManifest(manifest: SiblingManifest[]) {
   if (!Array.isArray(manifest)) throw new Error("invalid sibling manifest");
@@ -57,8 +65,12 @@ export function siblingEvidence(selected: RagEvidence[], candidates: RagEvidence
     const m = matches[0];
     if (!article(sibling.content) || m.bindings.some(b => article(b.section) !== article(sibling.content)
       || !compact(sibling.content).includes(compact(b.item)))) continue;
+    // The sibling completes an enumeration **at the anchor's position**. A dangling
+    // continuation fragment has no such position, so binding there would replace the
+    // primary record's meaning instead of supplementing it (#1526 P1 regression).
     const anchor = selected.findIndex(r => official(r) && r.canonicalUrl === sibling.canonicalUrl
-      && r.revision === sibling.revision && article(r.content) === article(sibling.content));
+      && r.revision === sibling.revision && article(r.content) === article(sibling.content)
+      && anchorCarriesStructuralUnit(r.content));
     if (anchor < 0) continue;
     const relations = m.bindings.map(b => ({section:b.section, lead:b.lead,item:b.item}));
     const block = `\n[동일 조항의 검색된 형제 청크 — 별도 원문, 위 자료의 페이지가 아님]\n${JSON.stringify({
