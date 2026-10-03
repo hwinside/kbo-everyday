@@ -87,10 +87,16 @@ export function siblingEvidence(selected: RagEvidence[], candidates: RagEvidence
       && r.revision === sibling.revision && article(r.content) === article(sibling.content)
       && anchorCarriesStructuralUnit(r.content));
     if (anchor < 0) continue;
-    const relations = m.bindings.map(b => ({section:b.section, lead:b.lead,item:b.item}));
-    const block = `\n[동일 조항의 검색된 형제 청크 — 별도 원문, 위 자료의 페이지가 아님]\n${JSON.stringify({
+    // The lead is what tells the model which rule the item belongs under. Buried inside
+    // a serialised `relations` array at the tail of an anchor record it was read as
+    // metadata, so a standalone turn quoted the item and never stated the rule it
+    // completes (flyout P0). Render the original order as plain text at the head of the
+    // block: lead first, then the item it governs, then the sibling chunk itself.
+    // Exposure is unchanged — same section/lead/item spans, same sibling content.
+    const relations = m.bindings.map(b => `${b.section}\n${b.lead}\n${b.item}`).join("\n\n");
+    const block = `\n[동일 조항의 검색된 형제 청크 — 별도 원문, 위 자료의 페이지가 아님]\n[원문 열거 구조 — 머리말이 먼저, 그 다음이 그 머리말에 속한 항목]\n${relations}\n[형제 청크 원문]\n${JSON.stringify({
       canonicalUrl:sibling.canonicalUrl,revision:sibling.revision,sectionPath:sibling.sectionPath,
-      rawContentSha256:m.rawContentSha256,content:officialModelEvidenceContent(sibling),relations})}\n[형제 청크 끝]`;
+      rawContentSha256:m.rawContentSha256,content:officialModelEvidenceContent(sibling)})}\n[형제 청크 끝]`;
     if (block.length > OFFICIAL_SIBLING_BLOCK_MAX_CHARS) continue; // skip, never truncate a rule or displace primary evidence
     modelEvidence[anchor] = {...selected[anchor],content:officialModelEvidenceContent(selected[anchor])+block};
     rawEvidence.push(sibling);
