@@ -1,3 +1,4 @@
+import { prepareOfficialEvidence } from "./rag/official-sibling-evidence";
 import { collectConversationTeamCandidates } from "./conversation-team-candidates";
 import { renderRagHold } from "./rag/hold-answer";
 import { renderGameConversation, type GameConversationInput, type GameConversationResult } from "./game-conversation";
@@ -1391,6 +1392,8 @@ export interface QaDeps {
    * 기존 동작(사전 → 캐시 → 일반 LLM) 그대로다.
    */
   searchOfficialRag?: (question: string) => Promise<RagEvidence[]>;
+  /** Optional read-only diagnostic sink; production has no sink or extra I/O. */
+  observeOfficialEvidence?: (bundle: ReturnType<typeof prepareOfficialEvidence>) => void;
   /** 공식 간행물 근거 전용 재서술 호출. tier1이므로 근거에 적힌 숫자를 쓸 수 있다. */
   callOfficialRagLlm?: (question: string, evidence: RagEvidence[], extras?: { context?: ContextTurn; definition?: StatDefinitionFrame; ruleRequest?: RequiredRuleRequest; referenceTimeMs?: number; recordbookRequest?: boolean; allowRecordbookGeneral?: boolean }) => Promise<LlmResult>;
   /** 수요 기반 ingestion 우선순위용 — 질문이 지목한 source를 기록한다. 실패는 무시한다. */
@@ -5151,6 +5154,7 @@ async function answerOfficialDocumentQuestion(
 ): Promise<QaResult | null> {
   const explicitRecordbookRequest = recordbookRequest;
   let evidence: RagEvidence[];
+  let candidates: RagEvidence[] = [];
   const referenceTimeMs = (deps.now ?? Date.now)();
   const requiredRule = !recordbookRequest && !definition ? requiredRuleEvidence(question, (deps.now ?? Date.now)()) : null;
   // A plural demonstrative with no explicit current club needs its two club
@@ -5163,6 +5167,7 @@ async function answerOfficialDocumentQuestion(
   const searchQuestion = relationContext || originContext ? `${context!.question}\n후속 질문: ${question}` : question;
   try {
     const searched = await deps.searchOfficialRag!(definition?.searchQuestion ?? requiredRule?.query ?? searchQuestion);
+    candidates = searched;
     evidence = recordbookRequest ? selectRecordbookEvidence(searched) : selectEvidence(requiredRule ? selectRequiredRuleEvidence(searched, requiredRule) : searched);
     // Retrieval provenance, not question keywords, closes the ordinary-official
     // escape hatch: record tables cannot authorize free-form filler prose.
@@ -5175,7 +5180,8 @@ async function answerOfficialDocumentQuestion(
       // One bounded clause-focused search; no local corpus or general-knowledge
       // fallback. A live serving miss remains a miss, even if the PDF exists.
       const focused = await deps.searchOfficialRag!(requiredRule.query.split("\n확인할 규정: ")[1]);
-      evidence = selectEvidence(selectRequiredRuleEvidence([...focused, ...searched], requiredRule));
+      candidates = [...focused, ...searched];
+      evidence = selectEvidence(selectRequiredRuleEvidence(candidates, requiredRule));
     }
   } catch {
     if (requiredRule) return settleThroughDurableBoundary({ answer: requiredRule.unavailable, source: "scope_guide" }, requiredRule.unavailable, { userId, question, questionNorm, remaining, deps });
@@ -5190,6 +5196,12 @@ async function answerOfficialDocumentQuestion(
   if (!allowsNumericAnswer(evidence)) return null;
 
   if (definition) definition = definitionWithEvidence(definition, true);
+
+  const officialExtras = { recordbookRequest, context: definition?.context ?? context ?? undefined, definition: definition ?? undefined, referenceTimeMs };
+  const officialBundle = prepareOfficialEvidence(evidence, candidates, officialExtras);
+  // Post-generation guards and observations include the independently bound sibling.
+  evidence = officialBundle.guardEvidence;
+  deps.observeOfficialEvidence?.(officialBundle);
 
   // ── durable LLM 경계 (선수 경로·일반 경로와 동일 계약) ───────────────────────
   const failCloseError = async (spent: LlmResult | null = null): Promise<QaResult> => {
@@ -5226,8 +5238,7 @@ async function answerOfficialDocumentQuestion(
       if (!won) return { status: 202, answer: "", source: "pending", remaining };
     }
     try {
-      const officialExtras = { recordbookRequest, context: definition?.context ?? context ?? undefined, definition: definition ?? undefined, referenceTimeMs };
-      llm = await deps.callOfficialRagLlm!(question, evidence, { ...officialExtras,
+      llm = await deps.callOfficialRagLlm!(question, officialBundle.modelEvidence, { ...officialExtras,
         allowRecordbookGeneral: recordbookRequest && !explicitRecordbookRequest,
         ...(requiredRule ? { ruleRequest: { kind: requiredRule.kind, season: requiredRule.season, competition: requiredRule.competition, faFocus: requiredRule.faFocus, postseasonStage: requiredRule.postseasonStage, ...(currentRuleFact ? { fact: currentRuleFact } : {}) } } : {}),
       });
@@ -5260,7 +5271,7 @@ async function answerOfficialDocumentQuestion(
     const repair = definitionRepairFrame(definition, llm, validated.reason);
     if (repair) {
       try {
-        const rewritten = await deps.callOfficialRagLlm!(question, evidence, { context: definition.context, definition: repair, referenceTimeMs });
+        const rewritten = await deps.callOfficialRagLlm!(question, officialBundle.modelEvidence, { context: definition.context, definition: repair, referenceTimeMs });
         llm = combineLlmAttempts(llm, rewritten);
       } catch { return failCloseError(llm); }
       validated = validateOfficial(llm);
@@ -5351,7 +5362,7 @@ async function answerOfficialDocumentQuestion(
   }
   // A validated historical answer binds provenance and publication boundary to
   // its cited passage. Never label the corpus title's year as a fact season.
-  const cited = recordbookRequest ? evidence[JSON.parse(llm.text.trim()).recordEvidence - 1] : evidence[0];
+  const cited = recordbookRequest ? evidence[JSON.parse(llm.text.trim()).recordEvidence - 1] : evidence[officialBundle.trace[0]?.anchor ?? 0];
   const body = recordbookRequest
     ? `${validated.answer}\n${cited.pageTitle} 발행 시점에 수록된 기록 기준이며, 현재 누계와 다를 수 있습니다.`
     : validated.answer;

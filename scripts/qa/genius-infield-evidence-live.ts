@@ -132,6 +132,7 @@ async function main() {
       reserveDaily: async () => ({ allowed: true, remaining: 9 }),
       getCache: async () => null, setCache: async () => {},
       log: async entry => { trace.push({ stage: "final-log", entry }); },
+      observeOfficialEvidence: bundle => { trace.push({ stage: "official-evidence-bundle", ...bundle }); },
       searchOfficialRag: async query => {
         const baseline = await server.searchOfficialRag(query);
         let selected = baseline;
