@@ -5,7 +5,7 @@ import { answerQuestion, type QaDeps } from "../../src/lib/baseball-qa/pipeline"
 /** Reviewer executes: npx tsx scripts/qa/official-sibling-serving-smoke.ts */
 import assert from "node:assert/strict";
 import {createHash} from "node:crypto";
-import {standaloneSiblingEvidence,siblingEvidence,validateSiblingManifest,prepareOfficialEvidence,anchorCarriesStructuralUnit,type SiblingManifest} from "../../src/lib/baseball-qa/rag/official-sibling-evidence";
+import {standaloneSiblingEvidence,siblingEvidence,validateSiblingManifest,prepareOfficialEvidence,anchorCarriesStructuralUnit,OFFICIAL_SIBLING_ANCHOR_BODY_LABEL,type SiblingManifest} from "../../src/lib/baseball-qa/rag/official-sibling-evidence";
 import {buildOfficialContextRequest} from "../../src/lib/baseball-qa/rag/official-context-request";
 import {validateRagResponse, type RagEvidence} from "../../src/lib/baseball-qa/rag/retrieve";
 const hash = (s:string) => createHash("sha256").update(s).digest("hex");
@@ -141,6 +141,13 @@ assert.ok(leadAt >= 0 && itemAt >= 0 && rawAt >= 0 && anchorBodyAt >= 0, "block 
 assert.ok(leadAt < itemAt, "lead must precede the item it governs");
 assert.ok(itemAt < rawAt, "plain-text clause must precede the sibling chunk payload");
 assert.ok(rawAt < anchorBodyAt, "retrieved clause must precede the anchor page it qualifies");
+// #1532 R1 P1: the labels must describe the order the model actually sees. The sibling
+// header may not point "up" at a page that is now below it, and the anchor body must be
+// announced instead of starting bare right after the sibling block.
+assert.ok(!anchorBundleContent.includes("위 자료의 페이지가 아님"), "sibling label must not point above itself");
+const bodyLabelAt = anchorBundleContent.indexOf(OFFICIAL_SIBLING_ANCHOR_BODY_LABEL);
+assert.ok(bodyLabelAt >= 0, "anchor body must carry a start label");
+assert.ok(rawAt < bodyLabelAt && bodyLabelAt < anchorBodyAt, "body label sits between the sibling block and the anchor body");
 assert.ok(!anchorBundleContent.includes("\"lead\""), "the lead must not be serialised as a JSON field");
 console.log("PASS: lead precedes item, sibling payload and anchor body");
 assert.ok(result.guardEvidence[6].content.includes(lead));

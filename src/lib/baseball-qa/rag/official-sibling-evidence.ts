@@ -12,6 +12,9 @@ export type SiblingManifest = { canonicalUrl: string; sourceRevision: string;
   rawContentSha256: string; section: string; bindings: EnumerationBinding[] };
 export const OFFICIAL_PHYSICAL_EVIDENCE_LIMIT = 7;
 export const OFFICIAL_SIBLING_BLOCK_MAX_CHARS = 1800;
+// Data label naming where the anchor record's own page text begins, so the sibling
+// block above it is not read as part of the same page. Not an instruction to the model.
+export const OFFICIAL_SIBLING_ANCHOR_BODY_LABEL = "[이 자료의 본문 시작]";
 const hash = (s: string) => createHash("sha256").update(s).digest("hex");
 const compact = (s: string) => s.replace(/\s+/g, "");
 const article = (s: string) => compact(s).match(/^\d{1,2}\.\d{2}(?!\d)/)?.[0];
@@ -94,7 +97,10 @@ export function siblingEvidence(selected: RagEvidence[], candidates: RagEvidence
     // block: lead first, then the item it governs, then the sibling chunk itself.
     // Exposure is unchanged — same section/lead/item spans, same sibling content.
     const relations = m.bindings.map(b => `${b.section}\n${b.lead}\n${b.item}`).join("\n\n");
-    const block = `\n[동일 조항의 검색된 형제 청크 — 별도 원문, 위 자료의 페이지가 아님]\n[원문 열거 구조 — 머리말이 먼저, 그 다음이 그 머리말에 속한 항목]\n${relations}\n[형제 청크 원문]\n${JSON.stringify({
+    // #1532 R1 P1: the block now precedes the anchor body, so a label saying "위 자료"
+    // pointed at nothing, and the anchor body began with no marker at all. Name the
+    // positions the reader actually sees. These are data labels, not instructions.
+    const block = `\n[동일 조항의 검색된 형제 청크 — 아래 본문과는 별도 원문이며 같은 페이지가 아님]\n[원문 열거 구조 — 머리말이 먼저, 그 다음이 그 머리말에 속한 항목]\n${relations}\n[형제 청크 원문]\n${JSON.stringify({
       canonicalUrl:sibling.canonicalUrl,revision:sibling.revision,sectionPath:sibling.sectionPath,
       rawContentSha256:m.rawContentSha256,content:officialModelEvidenceContent(sibling)})}\n[형제 청크 끝]`;
     if (block.length > OFFICIAL_SIBLING_BLOCK_MAX_CHARS) continue; // skip, never truncate a rule or displace primary evidence
@@ -104,7 +110,8 @@ export function siblingEvidence(selected: RagEvidence[], candidates: RagEvidence
     // it were the rule. In the document the clause itself comes first and the 부기
     // qualifies it; a continuation page inverts that order. Put the retrieved clause
     // back in front of the annotation it qualifies instead of after it.
-    modelEvidence[anchor] = {...selected[anchor],content:block.replace(/^\n/,"")+"\n"+officialModelEvidenceContent(selected[anchor])};
+    modelEvidence[anchor] = {...selected[anchor],content:block.replace(/^\n/,"")
+      +`\n${OFFICIAL_SIBLING_ANCHOR_BODY_LABEL}\n`+officialModelEvidenceContent(selected[anchor])};
     rawEvidence.push(sibling);
     // Ground only the raw sibling and the exact validated lead/item spans shown
     // to the model. Never ground metadata, annotations or the full corpus row.
