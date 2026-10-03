@@ -1,3 +1,4 @@
+import anchorHeaderFixture from "./fixtures/genius-anchor-header-20261003.json";
 import anchorFixture from "./fixtures/genius-sibling-anchor-20261003.json";
 import candidatesFixture from "./fixtures/official-sibling-serving-candidates.json";
 import { answerQuestion, type QaDeps } from "../../src/lib/baseball-qa/pipeline";
@@ -66,6 +67,21 @@ for (const captured of anchorFixture.anchors) {
   if (!captured.eligible) assert.deepEqual(bundle.modelEvidence, capturedPrimary, "ineligible anchor must stay byte-identical");
 }
 console.log("PASS: captured continuation anchors classified by structural unit; ineligible anchor keeps baseline evidence");
+
+// #1529 nit: served pages do not always break the article header onto its own line,
+// so cutting the header at the first newline erased the whole body. These are real
+// serving rows that every one of them carries an item number or a bracketed label.
+assert.equal(anchorHeaderFixture.anchors.length, 7);
+assert.ok(anchorHeaderFixture.anchors.filter(a => a.newlineCount === 0).length >= 3);
+for (const captured of anchorHeaderFixture.anchors) {
+  assert.equal((captured.content.match(/\n/g) ?? []).length, captured.newlineCount, captured.sectionPath);
+  assert.equal(anchorCarriesStructuralUnit(captured.content), captured.eligible, captured.sectionPath);
+  assert.equal(anchorCarriesStructuralUnit(captured.content.split("\n").slice(1).join("\n")) && captured.newlineCount === 0, false);
+}
+// A cross-reference such as "7. 02(c) 참조" sits inside a line and must not qualify.
+assert.equal(anchorCarriesStructuralUnit("5.10 선수교체 앞 문장이 이어지며 7. 02(c) 참조 라고만 적혀 있다."), false);
+assert.equal(anchorCarriesStructuralUnit("5.12 타임 선언\n(D) 등판 중인 투수가 지명타자의 대타자가 되었을 때"), true);
+console.log("PASS: article-number header cut keeps single-line serving pages classifiable");
 
 // R3 must equal B without context and A with any present context object.
 const standalone = standaloneSiblingEvidence(primary,[anchor,sibling],manifest,extras);

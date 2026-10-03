@@ -19,11 +19,26 @@ const identity = (r: RagEvidence) => JSON.stringify([r.canonicalUrl,r.revision,r
 const official = (r: RagEvidence) => r.sourceKind === "kbo_ebook" && r.sourceGrade === "tier1";
 /** Official rulebook structural markers: circled/parenthesised item numbers, sub-item
  * letters and bracketed labels. A continuation page whose body carries none of these
- * opens mid-sentence, so it has no identifiable position inside the article. */
-const ANCHOR_UNIT_MARKER = /[\u2474-\u2487\u2170-\u217f\u2160-\u216f\u3260-\u327f\u2460-\u2473\u249c-\u24b5]|\[(?:부기|주|예외|원주|참고)/u;
-/** Drop the article header line ("5.09 아 웃 (이어짐)") and inspect the body only. */
+ * opens mid-sentence, so it has no identifiable position inside the article.
+ * The ASCII "(A)" form must start a line: inline "(c)" is a cross-reference such as
+ * "7. 02(c) 참조", not an item of the page the anchor sits on. */
+const ANCHOR_UNIT_MARKER = /[\u2474-\u2487\u2170-\u217f\u2160-\u216f\u3260-\u327f\u2460-\u2473\u249c-\u24b5]|(?:^|\n)[ \t]*\([A-Za-z]\)|\[(?:부기|주|예|원주|참고|벌칙)/u;
+/** Map an offset in the whitespace-stripped view back onto the raw string. */
+function rawOffsetAfterCompact(content: string, compactLength: number) {
+  let seen = 0;
+  for (let i = 0; i < content.length; i += 1) {
+    if (!/\s/.test(content[i] as string)) seen += 1;
+    if (seen === compactLength) return i + 1;
+  }
+  return content.length;
+}
+/** Drop the article number header ("5.09" in "5.09 아 웃 (이어짐)") and inspect the rest.
+ * Served pages are not guaranteed to put the header on its own line, so cut at the
+ * `article()` match instead of at the first newline. */
 export function anchorCarriesStructuralUnit(content: string) {
-  return ANCHOR_UNIT_MARKER.test(content.split("\n").slice(1).join("\n"));
+  const header = article(content);
+  const body = header ? content.slice(rawOffsetAfterCompact(content, header.length)) : content;
+  return ANCHOR_UNIT_MARKER.test(body);
 }
 
 export function validateSiblingManifest(manifest: SiblingManifest[]) {
