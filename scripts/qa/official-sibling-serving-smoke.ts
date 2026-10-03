@@ -1,9 +1,10 @@
+import anchorFixture from "./fixtures/genius-sibling-anchor-20261003.json";
 import candidatesFixture from "./fixtures/official-sibling-serving-candidates.json";
 import { answerQuestion, type QaDeps } from "../../src/lib/baseball-qa/pipeline";
 /** Reviewer executes: npx tsx scripts/qa/official-sibling-serving-smoke.ts */
 import assert from "node:assert/strict";
 import {createHash} from "node:crypto";
-import {standaloneSiblingEvidence,siblingEvidence,validateSiblingManifest,prepareOfficialEvidence,type SiblingManifest} from "../../src/lib/baseball-qa/rag/official-sibling-evidence";
+import {standaloneSiblingEvidence,siblingEvidence,validateSiblingManifest,prepareOfficialEvidence,anchorCarriesStructuralUnit,type SiblingManifest} from "../../src/lib/baseball-qa/rag/official-sibling-evidence";
 import {buildOfficialContextRequest} from "../../src/lib/baseball-qa/rag/official-context-request";
 import {validateRagResponse, type RagEvidence} from "../../src/lib/baseball-qa/rag/retrieve";
 const hash = (s:string) => createHash("sha256").update(s).digest("hex");
@@ -45,6 +46,26 @@ assert.deepEqual(cand.systemInstruction,base.systemInstruction);
 assert.deepEqual(cand.generationConfig,base.generationConfig);
 assert.ok(cand.contents[0].parts[0].text.includes("2026-10-02"));
 console.log("PASS: source binding, spans, missing candidates, preservation, explicit physical count and request contract");
+
+// #1526 P1: a dangling continuation anchor has no enumeration position, so no sibling
+// may be bound there. Captured serving chunks, not synthetic strings.
+assert.equal(anchorFixture.anchors.length, 2);
+for (const captured of anchorFixture.anchors) {
+  assert.equal(anchorCarriesStructuralUnit(captured.content), captured.eligible, captured.sectionPath);
+  const capturedAnchor = row(captured.content, captured.sectionPath);
+  const capturedSibling = row(`5.09 아웃 (이어짐)\n${item}`, "2026 공식야구규칙#p60");
+  const capturedManifest: SiblingManifest[] = [{ canonicalUrl: capturedSibling.canonicalUrl,
+    sourceRevision: capturedSibling.revision, section: capturedSibling.sectionPath,
+    rawContentSha256: hash(capturedSibling.content), bindings: [{ section: "5.09 아웃 / ⒜ / ⑸",
+      lead, item, sourceText: text, sourceTextSha256: hash(text), leadStart: 0, itemStart: lead.length + 1 }] }];
+  validateSiblingManifest(capturedManifest);
+  const capturedPrimary = [capturedAnchor, ...Array.from({ length: 5 }, (_, i) => row(`2.01 다른 조항 ${i}`, `공식 문서#p${20 + i}`))];
+  const bundle = siblingEvidence(capturedPrimary, [capturedSibling], capturedManifest);
+  assert.equal(bundle.trace.length, captured.eligible ? 1 : 0, captured.sectionPath);
+  assert.equal(bundle.physicalChunkCount, captured.eligible ? 7 : 6);
+  if (!captured.eligible) assert.deepEqual(bundle.modelEvidence, capturedPrimary, "ineligible anchor must stay byte-identical");
+}
+console.log("PASS: captured continuation anchors classified by structural unit; ineligible anchor keeps baseline evidence");
 
 // R3 must equal B without context and A with any present context object.
 const standalone = standaloneSiblingEvidence(primary,[anchor,sibling],manifest,extras);
