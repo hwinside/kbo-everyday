@@ -1202,6 +1202,7 @@ export function answerPlayerRoleForTarget(
 
 export interface QaDeps {
   loadGameConversation?: (date: string) => Promise<Pick<GameConversationInput, "games" | "favoriteTeam" | "appFacts">>;
+  loadGameLineups?: (requests: import("./app-lineup").AppLineupRequest[]) => Promise<NonNullable<GameConversationInput["lineups"]>>;
   callGameConversation?: (input: GameConversationInput) => Promise<GameConversationResult>;
   /** Internal observation only; never controls serving. */
   observeAgentFallback?: (outcome: import("./classifier-observation").AgentFallbackOutcome) => void;
@@ -4471,6 +4472,7 @@ export const TEAM_ENTRY_UNAVAILABLE_ANSWER =
 
 /** `fetchTodayStarters` 가 돌려주는 경기별 선발 정보 (정본: /api/games 와 같은 소스). */
 export interface TodayGameStarters {
+  gameId?: string;
   awayName: string;
   homeName: string;
   awayStarterName: string;
@@ -4573,6 +4575,7 @@ export function adaptTodayStarters(
   kboGameIds: ReadonlySet<string> | null,
 ): TodayGameStarters[] {
   return games.map((game) => ({
+    gameId: game.gameId,
     awayName: game.awayName,
     homeName: game.homeName,
     awayStarterName: game.awayStarterName ?? "",
@@ -6915,12 +6918,29 @@ async function answerQuestionObserved(userId: string, rawQuestion: string, deps:
               profile: mentionedTeamCanonicals(snapshot.favoriteTeam ?? "") },
           };
           const model = await deps.callGameConversation!(input);
-          return { model, served: renderGameConversation(model.text, input, { isBare: isBareTeamName }) };
+          const lineupRequests: import("./app-lineup").AppLineupRequest[] = [];
+          const served = renderGameConversation(model.text, input, { isBare: isBareTeamName,
+            onLineupGames: (games, date) => lineupRequests.push(...games.map((game) => ({ game, date }))),
+          });
+          return { model, served, input, lineupRequests };
         })(),
         new Promise<null>((resolve) => { timer = setTimeout(() => resolve(null), 4500); }),
       ]);
       if (result) {
-        const { model, served } = result;
+        const { model, input, lineupRequests } = result;
+        let served = result.served;
+        if (served && lineupRequests.length && deps.loadGameLineups) {
+          // Lazy: validated intent + dated target selection precede I/O. A slow
+          // lineup never discards the already-rendered, grounded fallback.
+          let lineupTimer: ReturnType<typeof setTimeout> | undefined;
+          try {
+            const lineups = await Promise.race([
+              deps.loadGameLineups(lineupRequests).catch(() => null),
+              new Promise<null>((resolve) => { lineupTimer = setTimeout(() => resolve(null), 1500); }),
+            ]);
+            if (lineups) served = renderGameConversation(model.text, { ...input, lineups, nowMs: deps.now?.() ?? Date.now() }, { isBare: isBareTeamName }) ?? served;
+          } finally { if (lineupTimer) clearTimeout(lineupTimer); }
+        }
         if (served) {
           const log = deps.log;
           return settleThroughDurableBoundary(served, served.answer, {

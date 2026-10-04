@@ -26,7 +26,7 @@ assert.deepEqual(input.teamNames.context_question, []); // actual pre-fix bounda
 assert.equal(input.teamCandidates?.[0].token, "한화경기");
 assert.equal(render(good)?.source, "history_hold");
 assert.match(render(good)!.answer, /한화 vs 삼성/);
-assert.match(render(good)!.answer, /타순·타자 라인업/);
+assert.match(render(good)!.answer, /해당 경기의 확정 타순을 확인하지 못했습니다/);
 assert.doesNotMatch(render(good)!.answer, /LG vs KT|어느 구단/);
 // No entire original/segmented quote is required: the selected server ID owns it.
 assert.equal(good.target.quote, "");

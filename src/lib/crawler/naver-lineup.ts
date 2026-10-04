@@ -10,7 +10,7 @@
 // 스냅샷은 side 별 "선발투수 정확히 1 + 타자 정확히 9" 검증을 통과한 **완전 라인업**일 때만
 // 존재한다(confirmed=true). 부분 응답·조회 실패는 null — 확정알림 오발송 방지 fail-close.
 
-import { naverGameId } from "@/lib/crawler/naver-record";
+import { naverGameId } from "@/lib/crawler/naver-game-id";
 
 const NAVER_API = "https://api-gw.sports.naver.com/schedule/games";
 
@@ -148,7 +148,7 @@ export function parseNaverPreviewLineup(json: unknown): NaverLineupSnapshot | nu
  */
 export async function fetchNaverLineup(
   kboGameId: string,
-  opts?: { signal?: AbortSignal; timeoutMs?: number },
+  opts?: { signal?: AbortSignal; timeoutMs?: number; requireGameIdentity?: boolean },
 ): Promise<NaverLineupSnapshot | null> {
   try {
     const nId = naverGameId(kboGameId);
@@ -160,7 +160,12 @@ export async function fetchNaverLineup(
       signal,
     });
     if (!res.ok) return null;
-    return parseNaverPreviewLineup(await res.json());
+    const json = await res.json();
+    // Opt-in for factual QA: bind the response date/teams, not just its URL.
+    // Doubleheaders need an explicit full-game identity; date/teams alone are
+    // insufficient, so this path deliberately holds them for now.
+    if (opts?.requireGameIdentity && (kboGameId.slice(12) !== "0" || !parseNaverPreviewStarters(json, kboGameId))) return null;
+    return parseNaverPreviewLineup(json);
   } catch {
     return null;
   }
