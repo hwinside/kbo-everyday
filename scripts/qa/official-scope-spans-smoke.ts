@@ -1,4 +1,4 @@
-/** Reviewer-run, offline only. No server import, credentials, model or DB access. */
+/** Author self-check and independent reviewer check. Offline only; no model or DB access. */
 import assert from 'node:assert/strict';
 import parentheticals from './fixtures/official-parenthetical-serving.json';
 import { officialParentheticalNote } from '../../src/lib/baseball-qa/rag/official-parenthetical-evidence';
@@ -35,6 +35,26 @@ async function main() {
   assert.ok(census.every(r=>r.applied === r.manual.startsWith('통과:')),'HOLD: per-row census differs');
   assert.equal(EXTRA_UNITS,19);
   const p62 = row(fixtures.rows.find(r=>r.id===192183)!);
+  // Topic vs adnominal, particle allomorphs, and list boundaries: synthetic
+  // vocabulary and identities, independent of the frozen corpus row IDs.
+  for (const content of [
+    '차단막은 플레이 과정에 눌린 부분을 제외하고 나머지는 유지한다.',
+    '플레이 장비에 닿는 부분을 제외하고 나머지는 유지한다.',
+    '장비이 물체에 닿는 부분을 제외하고 나머지는 유지한다.',
+    '장벽가 물체에 닿는 부분을 제외하고 나머지는 유지한다.',
+    '장비가 표면은 닿는 부분을 제외하고 나머지는 유지한다.',
+  ]) assert.equal(parseScope({...p62,content}).relation,undefined,content);
+  for (const bullet of ['- ', '·', '• ', '* ']) {
+    const lead = `앞선 제목\n  ${bullet}`;
+    const sentence = '장비가 물체에 닿는 부분을 제외하고 나머지는 유지한다.';
+    const source = {...p62,content:lead+sentence};
+    const parsed = parseScope(source).relation!;
+    assert.ok(parsed,'list marker must delimit the scope');
+    assert.equal(parsed.sentence[0],lead.length);
+    assert.equal(renderScope(source,parsed).content,lead+'[예외절 원문]장비가 물체에 닿는 부분을 제외하고\n[적용 본문 원문] 나머지는 유지한다.');
+    assert.equal(parseScope({...source,content:lead+'차단막은 플레이 과정에 눌린 부분을 제외하고 나머지는 유지한다.'}).relation,undefined);
+  }
+  assert.ok(parseScope({...p62,content:'장벽이 물체에 닿는 부분을 제외하고 나머지는 유지한다.'}).relation);
   const emoji = {...p62,content:'😀\n'+p62.content};
   const relation = parseScope(emoji).relation!;
   assert.equal(emoji.content.slice(...relation.excludedScope),'인필드 플라이 규칙이 적용되는 경우');

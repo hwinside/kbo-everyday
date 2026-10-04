@@ -1,6 +1,6 @@
 /** Scripts-only, reject-only experiment. No question, rule-name or page routing. */
 import { createHash } from 'node:crypto';
-export const PARSER_VERSION = 'scope-spans-v1';
+export const PARSER_VERSION = 'scope-spans-v2';
 export const SCOPE_LABEL = '[예외절 원문]';
 export const BODY_LABEL = '[적용 본문 원문]';
 export const EXTRA_UNITS = SCOPE_LABEL.length + BODY_LABEL.length + 1;
@@ -29,7 +29,7 @@ export function parseScope(source: Source): ParseResult {
   const m = markers[0], at = m.index!, split = at + m[0].length;
   // A PDF linebreak is not a sentence boundary. Never trim/normalize the source.
   const prefix = c.slice(0, at);
-  const boundaries = [...prefix.matchAll(/다\.[ \t\r\n]+|\[(?:부기|주\d*)\][ \t\r\n]*|(?:^|\n)[⑴-⒇①-⑳⒜-⒵][ \t\r\n]*/g)];
+  const boundaries = [...prefix.matchAll(/다\.[ \t\r\n]+|\[(?:부기|주\d*)\][ \t\r\n]*|(?:^|\n)[⑴-⒇①-⑳⒜-⒵][ \t\r\n]*|(?:^|\n)[ \t]*(?:[-*][ \t]+|[·•][ \t]*)/g)];
   let start = boundaries.length ? boundaries.at(-1)!.index! + boundaries.at(-1)![0].length : 0;
   // A numeric citation belongs to the preceding sentence; preserve it outside spans.
   const citation = c.slice(start, at).match(/^\s*\([0-9][0-9.⒜-⒵⑴-⒇\s]*\)\s*/);
@@ -49,9 +49,16 @@ export function parseScope(source: Source): ParseResult {
   // Deliberately narrow grammar, not a domain noun whitelist. Conditional '경우'
   // or a present-adnominal modifier followed by its single nominal scope only.
   const conditional = /경우\s*$/.test(scope);
-  const adnominal = /[가-힣]는\s+[가-힣\s]+$/.test(scope);
+  // An unanchored suffix match confuses a topic N+는 with a verb modifier,
+  // and a word ending in 이 with a subject. Support only a leading nominative
+  // subject, zero or more case-marked complements, then V-는 + nominal head.
+  // This is deliberately incomplete grammar; uncertain structures stay raw.
+  const subject = scope.match(/^([가-힣]+)(이|가)\s+/);
+  const hasFinalConsonant = subject ? (subject[1].charCodeAt(subject[1].length - 1) - 0xac00) % 28 !== 0 : false;
+  const nominative = Boolean(subject && (subject[2] === '이' ? hasFinalConsonant : !hasFinalConsonant));
+  const modifier = subject ? scope.slice(subject[0].length) : '';
+  const adnominal = nominative && /^(?:[가-힣]+(?:에게|에서|으로|를|을|에|로)\s+)*[가-힣]+는\s+[가-힣]+(?:\s+[가-힣]+)*$/.test(modifier);
   if (!conditional && !adnominal) return { reason: 'unsupported-leading-scope' };
-  if (!conditional && !/[가-힣](?:가|이)\s/.test(scope)) return { reason: 'ambiguous-topic-or-range' };
   // A complete source sentence, not a heading/paragraph tail pulled into the scope.
   if (/[.!?;:]/.test(scope.replace(/\d+(?:\.\d+)+/g, '')) || scope.length > 240)
     return { reason: 'ambiguous-boundary' };

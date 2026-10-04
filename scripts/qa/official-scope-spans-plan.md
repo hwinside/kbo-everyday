@@ -1,4 +1,4 @@
-# #1534 후속: scripts-only 원문 span 후보 R0
+# #1534 후속: scripts-only 원문 span 후보 R1
 
 기준: #1534 승인 head `82324652d28d8bdca355f0999fabc8f1d8cbfd84`, squash `6d90de9cf251dd7c50ca553dce867e53788a31a8`.
 설계 SSOT: https://www.notion.so/3aec901bb37281408cecf4c700b96487#3efc901bb37281ebbc19da7b135b6363
@@ -6,8 +6,9 @@
 ## 범위와 상태
 
 - src·DB·ingestion·설정·시스템 지침 변경 0. scripts-only 실험이며 제품 연결 아님.
-- 구현 후보와 오프라인 smoke를 작성했다. 작성자는 타입 검사만 수행한다. QA 스크립트 실행·판정은 삼식 담당이고 새 모델 재생은 구현 리뷰 뒤다.
-- 자동 census/효과 PASS를 주장하지 않는다. smoke의 census assertion은 실행 결과가 아니라 HOLD 게이트다.
+- R0 독립 smoke는 exit 1: 자동 8/수동 6 불일치로 HOLD였다. CI GREEN은 이 smoke 통과를 뜻하지 않았다.
+- R1은 리뷰 요청에 따라 작성자도 오프라인 smoke를 실행해 exit 0을 확인했다(18행 전수 일치: 통과 6/reject 8/미지원 4). 독립 QA 판정은 삼식 담당이며 효과 PASS가 아니다. 새 모델 재생은 R1 GO 뒤다.
+- R1은 불릿 경계와 선두 주격 주어→격표지 보어→현재 관형형→명사 구조만 허용한다. 이/가 이형태의 받침 조건도 확인하며 주제절·불명확한 구조는 거절한다. id/sectionPath/도메인 단어 허용·제외 목록은 없다. 이는 완전한 한국어 형태소 분석이 아니다.
 - 순수 파서는 원문 전체의 SHA256/URL/revision/sectionPath와 UTF-16 half-open span을 결속한다. 렌더 때 재파싱·전체 계약 대조하며, 불일치면 원문 유지다.
 - 문법 범위는 완결 한국어 서술문과 단일 선행 조건/현재 관형절로 좁혔다. 과거 서술·비용 공제·보조사·주제절의 의미를 추론하지 않는다. 파서 거절 이유는 과거 수동 의미 판독 사유와 같다는 주장이 아니다.
 - 원문 18행 fixture는 읽기 전용 9,152행 스냅샷에서 복사한 테스트 데이터다. 배포 매니페스트/문항 분기/허용목록이 아니다. 각 원문 hash 및 수동 PASS/reject와 자동 결과를 행별 비교한다.
@@ -31,6 +32,8 @@ npx tsx scripts/qa/official-scope-spans-smoke.ts
 검증: 실제 census·각 원문 SHA, 무손실 복원, identity/offset 변조, UTF-16 surrogate, 중첩/절단/다중 범위, raw/guard 보존, 기존 #1520 괄호 주석·문맥 지침·metadata/clock 보존, 실제 sibling builder anchor 경계, 미적용 payload byte-identical, mock fetch 1회/URL·header·signal 보존/실패 복구.
 
 ## 모델 재생 옵션 (리뷰 뒤에만)
+
+R1 GO 뒤 첫 재생은 `--scope-spans=base` 1회로 실제 `server.callOfficialRagLlm` body와 하네스 baseRequest의 byte-identical 전송 계약부터 확인한다. mismatch면 재시도 없이 HOLD다. mock smoke만으로 이 실제 전송 계약을 검증했다고 주장하지 않는다.
 
 기존 하네스에 `--scope-spans=base|candidate`, `--scope-snapshot-file=<absolute json>`을 함께 지정한다. 다른 실험 옵션과 혼용 금지. scope off는 기존 경로다. snapshot 없이 live 검색으로 양 arm을 비교하는 실행은 거절한다.
 
