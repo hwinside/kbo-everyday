@@ -9,6 +9,8 @@
  */
 import { contextRoutingRequest, callContextRouting, CONTEXT_ROUTING_NOTE } from "../baseball-qa/rag/experimental-context-routing";
 import fs from "node:fs";
+import { scopeRequest, withScopeTransport } from "../baseball-qa/rag/experimental-scope-request";
+import type { OfficialEvidenceBundle } from "../../src/lib/baseball-qa/rag/official-sibling-evidence";
 import { createHash } from "node:crypto";
 import { officialModelEvidenceContent } from "../../src/lib/baseball-qa/rag/official-parenthetical-evidence";
 import { annotationContentDigest } from "../baseball-qa/rag/official-parenthetical-structure.mjs";
@@ -35,7 +37,20 @@ const distance = (a: number[], b: number[]) => 1 - a.reduce((s, n, i) => s + n *
 
 async function main() {
   const suite = option("suite") ?? "original";
-  if (!["context-rules", "original", "exclusions", "exclusion-focus", "flyout-regression", "flyout-context", "official-documents", "official81"].includes(suite)) throw new Error("unknown suite");
+  if (!["fair-catch", "context-rules", "original", "exclusions", "exclusion-focus", "flyout-regression", "flyout-context", "official-documents", "official81"].includes(suite)) throw new Error("unknown suite");
+  const scopeMode = option("scope-spans");
+  if (scopeMode && scopeMode !== "candidate" && scopeMode !== "base") throw new Error("unknown scope-spans mode");
+  if (scopeMode && ["routing", "selection", "annotations", "supplement"].some(k => option(k)))
+    throw new Error("scope-spans experiment must be isolated");
+  const snapshotFile = option("scope-snapshot-file");
+  if (Boolean(scopeMode) !== Boolean(snapshotFile)) throw new Error("scope mode requires frozen retrieval snapshot");
+  const scopeSnapshot: {version: number; referenceTimeMs: number; queries: Record<string, RagEvidence[]>} | undefined
+    = snapshotFile ? JSON.parse(fs.readFileSync(snapshotFile, "utf8")) : undefined;
+  if (scopeSnapshot && (scopeSnapshot.version !== 1 || !Number.isFinite(scopeSnapshot.referenceTimeMs)
+    || !scopeSnapshot.queries || Object.values(scopeSnapshot.queries).some(rows => !Array.isArray(rows)
+      || rows.some(r=>!r.content || !r.canonicalUrl || !r.revision || !r.sectionPath))))
+    throw new Error("invalid frozen retrieval snapshot");
+  const snapshotSha256 = snapshotFile ? createHash("sha256").update(fs.readFileSync(snapshotFile)).digest("hex") : null;
   const routingMode = option("routing");
   if (routingMode && routingMode !== "context") throw new Error("unknown routing mode");
   const selectionMode = option("selection");
@@ -76,13 +91,20 @@ async function main() {
     "2사 1·2루에서 내야수가 평범하게 잡을 수 있는 페어 플라이면 인필드플라이야?",
     "1사 만루에서 번트가 아닌 직선타구도 인필드플라이야?",
     "2024년 최다안타는 누구야?");
+  if (suite === "fair-catch") QUESTIONS.splice(0, QUESTIONS.length,
+    "타자의 페어 플라이 타구를 야수가 땅에 닿기 전에 정규로 포구하면 타자는 아웃이야?");
   const contextFile = option("context-file");
   if ((["flyout-context", "context-rules"].includes(suite)) !== Boolean(contextFile)) throw new Error("flyout-context/context-rules require --context-file, other suites forbid it");
   const previousTurn = contextFile ? JSON.parse(fs.readFileSync(contextFile, "utf8")) : null;
   if (previousTurn && (!previousTurn.question || !previousTurn.answer || !previousTurn.answeredAt || !previousTurn.currentCreatedAt)) throw new Error("complete previous turn required");
+  if (scopeMode && contextFile && createHash("sha256").update(fs.readFileSync(contextFile)).digest("hex")
+    !== "e5425e169ac62fefc88aa7b22e83fb3b665daff233a6d937001a3e4ddef80ae2")
+    throw new Error("scope experiment requires the reviewed 222-character context fixture");
   const out = option("out");
   const reps = Number(option("reps") ?? "3");
   if (!out || !path.isAbsolute(out) || fs.existsSync(out) || !Number.isInteger(reps) || reps < 1 || reps > 10) throw new Error("new absolute --out and reps 1..10 required");
+  if (scopeMode && suite === "original" && reps !== 3) throw new Error("scope original requires reps=3");
+  if (suite === "fair-catch" && reps !== 3) throw new Error("fair-catch requires reps=3");
   if (suite === "context-rules" && reps !== 5) throw new Error("context-rules requires reps=5");
   if (suite === "official81" && reps !== 1) throw new Error("official81 requires reps=1");
   if (suite === "exclusion-focus" && reps !== 5) throw new Error(`${suite} requires fixed --reps=5 budget`);
@@ -119,12 +141,15 @@ async function main() {
       } });
     }
   }
+  let scopeEligibleCalls = 0;
   const runs: unknown[] = [];
-  const save = () => fs.writeFileSync(out, JSON.stringify({ suite, plannedRuns: QUESTIONS.length * reps, mode: routingMode ? "context-routing-experiment" : selectionMode ? "contextual-selection-experiment" : file ? "local-ranked-supplement" : annotationFile ? "source-bound-annotation-experiment" : "production-read-only", reps, previousTurn, annotations, annotatedCalls, experimentCalls, questions: QUESTIONS, runs }, null, 2));
+  const save = () => fs.writeFileSync(out, JSON.stringify({ suite, scopeEligibleCalls, snapshotSha256, referenceTimeMs: scopeSnapshot?.referenceTimeMs, plannedRuns: QUESTIONS.length * reps, mode: scopeMode ? `scope-spans-${scopeMode}` : routingMode ? "context-routing-experiment" : selectionMode ? "contextual-selection-experiment" : file ? "local-ranked-supplement" : annotationFile ? "source-bound-annotation-experiment" : "production-read-only", reps, previousTurn, annotations, annotatedCalls, experimentCalls, questions: QUESTIONS, runs }, null, 2));
   for (let rep = 0; rep < reps; rep++) for (const question of QUESTIONS) {
     const trace: unknown[] = [];
+    let observedBundle: OfficialEvidenceBundle | undefined;
     const deps: QaDeps = {
       // Explicit read/model allowlist. Never spread makeDeps: it contains writes.
+      ...(scopeSnapshot ? {now: () => scopeSnapshot.referenceTimeMs} : {}),
       loadPreviousTurn: async () => previousTurn,
       loadGlossary: production.loadGlossary, loadPlayers: production.loadPlayers,
       normalizeQuestionLlm: production.normalizeQuestionLlm,
@@ -132,9 +157,10 @@ async function main() {
       reserveDaily: async () => ({ allowed: true, remaining: 9 }),
       getCache: async () => null, setCache: async () => {},
       log: async entry => { trace.push({ stage: "final-log", entry }); },
-      observeOfficialEvidence: bundle => { trace.push({ stage: "official-evidence-bundle", ...bundle }); },
+      observeOfficialEvidence: bundle => { observedBundle = structuredClone(bundle); trace.push({ stage: "official-evidence-bundle", ...bundle }); },
       searchOfficialRag: async query => {
-        const baseline = await server.searchOfficialRag(query);
+        if (scopeSnapshot && !Object.hasOwn(scopeSnapshot.queries,query)) throw new Error("HOLD: query absent from frozen retrieval snapshot");
+        const baseline = scopeSnapshot ? structuredClone(scopeSnapshot.queries[query]) : await server.searchOfficialRag(query);
         let selected = baseline;
         if (additions.length) {
           const embedded = await embedText(query, "query");
@@ -153,6 +179,8 @@ async function main() {
         return selected;
       },
       callOfficialRagLlm: async (q, evidence, extras) => {
+        // Freeze the existing reference clock once for preview and the original server call.
+        if (scopeMode) extras = {...extras, referenceTimeMs: scopeSnapshot!.referenceTimeMs};
         const matched: number[] = [];
         const modelEvidence = evidence.map((row, index) => {
           if (row.sourceKind !== "kbo_ebook" || row.sourceGrade !== "tier1") return row;
@@ -166,11 +194,20 @@ async function main() {
           return { ...row, content: `${officialModelEvidenceContent(row)}\n[원문 구조화 주석 — 파생 데이터]\n${annotation.note}` };
         });
         if (matched.length) experimentCalls++;
-        const request = routingMode && extras?.context ? contextRoutingRequest(q, modelEvidence, extras) : server.buildProductionRagRequest(q, modelEvidence, RAG_OFFICIAL_SYSTEM_PROMPT, extras);
+        const baseRequest = routingMode && extras?.context ? contextRoutingRequest(q, modelEvidence, extras) : server.buildProductionRagRequest(q, modelEvidence, RAG_OFFICIAL_SYSTEM_PROMPT, extras);
+        const scope = scopeMode ? scopeRequest(baseRequest, modelEvidence, observedBundle) : undefined;
+        if (scope?.applied) scopeEligibleCalls++;
+        const request = scopeMode === "candidate" && scope ? scope.request : baseRequest;
+        if (scopeMode) trace.push({stage: "scope-spans", mode: scopeMode, applied: scopeMode === "candidate" ? scope?.applied : 0,
+          eligible: scope?.applied, addedUnits: scopeMode === "candidate" ? scope?.addedUnits : 0,
+          reason: scope?.reason, spans: scope?.trace,
+          basePayloadSha256: createHash("sha256").update(JSON.stringify(baseRequest)).digest("hex"),
+          candidatePayloadSha256: createHash("sha256").update(JSON.stringify(request)).digest("hex")});
         const routingApplied = request.systemInstruction.parts[0].text.includes(CONTEXT_ROUTING_NOTE);
         const servingAnnotationCount = request.contents[0].parts[0].text.split("[원문 구조화 주석 — 파생 데이터]").length - 1;
         if (servingAnnotationCount) annotatedCalls++;
-        const raw = routingMode && routingApplied ? await callContextRouting(request, extras) : await server.callOfficialRagLlm(q, modelEvidence, extras);
+        const raw = scopeMode ? await withScopeTransport(baseRequest, request,
+          () => server.callOfficialRagLlm(q, modelEvidence, extras)) : routingMode && routingApplied ? await callContextRouting(request, extras) : await server.callOfficialRagLlm(q, modelEvidence, extras);
         trace.push({ stage: "official-generation", question: q, evidence, extras, matchedAnnotations: matched,
           request, routingApplied, servingAnnotationCount, raw });
         return raw;
@@ -187,9 +224,12 @@ async function main() {
       runs.push({ rep, question, result, trace, elapsedMs: Date.now() - started });
     } catch (error) {
       runs.push({ rep, question, error: error instanceof Error ? error.name : "error", trace, elapsedMs:Date.now()-started });
+      if (scopeMode) { save(); throw error; } // fixed-input experiment fails closed; no live fallback or retry
     }
     save();
   }
+  if (scopeMode && ["flyout-regression", "flyout-context"].includes(suite) && scopeEligibleCalls === 0)
+    throw new Error("HOLD: no eligible original scope reached generation");
   if (annotationFile && experimentCalls === 0) throw new Error("HOLD: no experimental annotation reached generation");
   if (option("require-annotations") === "1" && annotatedCalls === 0) throw new Error("HOLD: no source-bound annotation reached generation");
   console.log(`Saved ${runs.length} observations; semantic judgement required: ${out}`);
