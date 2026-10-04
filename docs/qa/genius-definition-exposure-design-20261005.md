@@ -1,4 +1,4 @@
-# 직접 정의 근거 노출 측정 설계 R0 — 생성 재생 없음
+# 직접 정의 근거 노출 측정 설계 R1 — 생성 재생 없음
 
 상태: 설계 리뷰 요청. 구현·실행·효과·머지·배포 승인 아님. Notion SSOT: https://app.notion.com/p/R0-2026-10-05-3efc901bb37281b7a87cff1b13055538
 
@@ -27,15 +27,15 @@
 - 검색 후보는12개. 단독/문맥 동일 query의 보존 스냅샷이다. 실제 번들은 단독 primary6/physical7, 문맥 primary6/physical6이다.
 - 검색 rank11 p60은 단독 형제로 노출되지만 내용은 제3스트라이크·번트파울·인필드 플라이 선언·타구 신체 접촉이다. 정규 포구→타자 아웃 조항이라고 셀 수 없다.
 - rank2 p65의 “정규로 포구”는 **주자 리터치 어필 아웃**이다. rank5 p150은 희생플라이 기록, rank6 p66은 주자 접촉 조항이다. 관련 단어가 있어도 직접 근거가 아니다.
-- 작성자 사전 판독: 보존12개 검색 원문 및 두 payload에 BATTER_OUT_EFFECT 직접 조항을 확인하지 못했다. 독립 판독 전 잠정이다. **서빙 코퍼스 전체에 원문이 없다는 결론이 아니다.** 원문 존재 단계는 UNVERIFIED로 남긴다.
+- R0 독립 리뷰(1791130993.527529): 검색12행의 CATCH_ACTION/BATTER_OUT_EFFECT DIRECT는 모두0/12. 10/02 `excl-serving-r1.jsonl` 규칙집119페이지, revision `sha256:de8715105c8984be`·`sha256:07651ec70e392723`에서 두 단위는 ABSENT_CORPUS다. p58=5.08, p59 없음, p60=⒜⑶ 중간부터여서 5.09⒜ 머리말·⑴ 포구 조항이 없고, p194=14 CALLED GAME·p195=16/17 CATCHER로 정의15 CATCH가 결손이다. 이는 해당 역사적 revision에 한정한 판정이며 현재 서빙 판정은 Phase 0b 재결속 전 UNVERIFIED/HOLD다.
 - 따라서 #1537에서 p60 노출을 포구 정의 근거의 노출로 치환하지 않는다. 역전 감소와 직접 정의 정답 회복은 계속 별개다.
 
 ## 4. 측정 층위·결속 계약
 
 각 fixture/의미 단위마다 다음 칸을 별도로 채운다:
-`서빙 코퍼스 원문 존재 → 검색 반환/rank → primary 선택 → rawEvidence(형제 포함) → guardEvidence → modelEvidence → 최종 직렬화 자료 블록 → 실제 provider body`.
+`서빙 코퍼스 원문 존재 → 검색 반환/rank → primary 선택 → 800 UTF-16 cap 절단 → rawEvidence(형제 포함) → guardEvidence → modelEvidence → 최종 직렬화 자료 블록 → 실제 provider body`.
 
-- 식별자는 URL/revision/sectionPath/원문 SHA256 네 항목이다. sectionPath만 같은 다른 청크를 합치지 않는다. 전체 스냅샷 파일 SHA·순서·거리도 보존한다.
+- 식별자는 URL/revision/sectionPath/원문 SHA256 네 항목이다. 변환 후 contentSha256은 별도로 보존하며 sourceContentSha256과 같아야 한다고 강제하지 않는다. cap은 source→derived lineage로 검증한다. sectionPath만 같은 다른 청크를 합치지 않는다. 전체 스냅샷 파일 SHA·순서·거리도 보존한다.
 - 원문은 UTF-16 half-open span, 필요 머리말/조건/효과는 각각 span으로 결속한다. 전체 원문 SHA 및 span text SHA가 같아야 한다. 부분 문장·부정/예외 경계가 잘리면 PARTIAL이지 COMPLETE가 아니다.
 - modelEvidence의 객체 존재와 payload의 실제 자료 영역 노출을 구분한다. 헤더/주석/질문/직전 답변의 단어를 원문 근거로 세지 않는다.
 - 형제 JSON은 기존 envelope를 파싱하고 decoded 원문의 span과 직렬화 body 범위를 매핑한다. JSON의 `\\n` escaping 때문에 원문 단순 substring이 없다는 이유로 누락 판정하지 않는다. provenance/escaping 역매핑 실패는 UNVERIFIED/HOLD다.
@@ -47,21 +47,32 @@
 
 ### Phase 0 — 보존 입력 감사(설계 리뷰 대상)
 
-단독/문맥2개 입력, 검색 원문12개 전수. 추가 네트워크·생성·DB쓰기0. 12개 원문을 reviewer가 CATCH_ACTION/BATTER_OUT_EFFECT별 판독하고, 각 층위 원문 식별자와 span을 대조한다. 작성자 판독은 reviewer QA를 대체하지 않는다. 해시/identity/범위 불일치면 HOLD, 데이터 수리·추정·자동 fallback 없음.
+단독/문맥2개 입력, 검색 원문12개 전수. 추가 네트워크·생성·DB쓰기0. 12개 원문을 reviewer가 CATCH_ACTION/BATTER_OUT_EFFECT별 판독하고, 각 층위 원문 식별자와 span을 대조한다. 작성자 판독은 reviewer QA를 대체하지 않는다. 알 수 없는 해시/identity/범위 불일치면 HOLD, 데이터 수리·추정·자동 fallback 없음. 검증된 cap prefix 절단은 아래 계약에 따라 DIRECT_PARTIAL로 기록하며 HOLD로 오인하지 않는다.
+
+### Phase 0b — 현재 서빙 revision 원문 존재 재결속(Phase 1의 선행 게이트)
+
+10/02 인벤토리 파일 SHA·119개 규칙집 행·두 revision·행별 URL/section/content hash를 고정한다. 현재 서빙의 읽기 전용 전체 규칙집 인벤토리에 조회 시각·출처·페이지네이션 완결성·행 수·revision 집합·정렬된 행 식별자/content 해시 집합 서명을 남겨 역사 자료와 대조한다. revision 문자열만 같아도 행/본문이 다르면 동일 스냅샷으로 간주하지 않는다. 현재 자료 미확보 또는 불완전 조회는 UNVERIFIED/HOLD다. 변경 revision이면 새 전체 원문을 독립 판독하고 옛 ABSENT를 승계하지 않는다.
+
+동일성이 재확인되면 CATCH_ACTION/BATTER_OUT_EFFECT를 현재 revision의 ABSENT_CORPUS로 확정하고 Phase 1 세 요청 capture를 보류한다. 다음은 #1401 v3.1 재적재 트랙의 원문 누락 보완·서빙 반영 검증이다. #1401은 미실행이며 이 설계가 ingestion/DB쓰기·재적재·배포를 승인하지 않는다. 재적재 후 새 revision에서 직접 원문 존재가 검증되어야 Phase 1을 다시 검토한다. 원문 존재 확인만으로 실행 승인까지 자동 승계하지 않는다.
+
+### 절단 계약 — 검색→rawEvidence
+
+800 UTF-16 unit cap의 알려진 변환은 원문 prefix [0,min(800,N))와 파생 본문을 정확히 대조하고 source/derived SHA를 각각 기록한다. N>800이면 소실 span [800,N), 소실 원문·SHA·단위 수를 남기고 노출 완전성은 DIRECT_PARTIAL이다. 동일 URL/revision/section이어도 prefix 불일치면 UNVERIFIED/HOLD다. 원문 정체성/변환 검증과 의미 적합성은 별도 열이다. p150은 808→800, 소실 [800,808)로 DIRECT_PARTIAL이지만 CATCH_ACTION/BATTER_OUT_EFFECT의 의미 라벨은 RELATED_NOT_DIRECT 그대로이며 직접 근거로 승격하지 않는다. 777자 INFIELD FLY는 cap 통과이며 경계 smoke는 799/800 온전·801 한 unit 소실을 포함한다. 필요 머리말/조건/효과 span과 소실 span의 교집합도 따로 기록한다.
 
 ### Phase 1 — 최신 main의 생성 없는 capture(아직 구현·실행 승인 아님)
 
-별도 scripts-only 구현과 독립 smoke GO 뒤에만 진행한다. 고정 요청은 단독 “그건 플라이아웃 아니야?”, 같은 질문+승인222자 직전 턴, 명시 포구 대조 “타자의 페어 플라이 타구를 야수가 땅에 닿기 전에 정규로 포구하면 타자는 아웃이야?” 3개다. 마지막 요청은 **검색/전달 대조**이며 original18/fair-catch 생성 확장을 재개하는 것이 아니다.
+Phase 0b에서 직접 원문 존재가 확인되고 별도 scripts-only 구현·독립 smoke GO·실행 허용이 결속된 뒤에만 진행한다. ABSENT_CORPUS이면 이 단계는 실행하지 않는다. 고정 요청은 단독 “그건 플라이아웃 아니야?”, 같은 질문+승인222자 직전 턴, 명시 포구 대조 “타자의 페어 플라이 타구를 야수가 땅에 닿기 전에 정규로 포구하면 타자는 아웃이야?” 3개다. 마지막 요청은 **검색/전달 대조**이며 original18/fair-catch 생성 확장을 재개하는 것이 아니다.
 
 - 담당: 삼순 구현/manifest, 삼식 독립 측정/판정. 최신 main exact SHA·검색 설정·resolved 모델 설정·고정 now·fixture 전체 해시·corpus revision을 실행 전 고정한다. 현재 fresh snapshot/now가 미준비이므로 manifest에 명시적으로 HOLD한다.
 - 의미를 바꾸지 않는 관측 훅으로 원래 선택과 request builder까지 기록하고 모델 전송 직전에 중단한다. normalizeQuestionLlm/callLlm/callOfficialRagLlm을 포함한 생성 호출은 전부0. 해당 경로가 모델을 요구하면 응답을 꾸며 계속하지 않고 HOLD한다. 서빙 코드·prompt·분류·후처리 변경 금지.
 - 외부 읽기는 별도 capture 허용 후에만 한다. 요청당1회 capture(3요청), 고유 검색 query당 최대1회 검색/embedding(최대3); 재시도 없음. 생성 endpoint는 차단한다. 필요 query가 늘거나 호출 경로가 미확정이면 실행 전 HOLD한다. 이 허용은 현재 설계 제출에서 실행하지 않는다.
-- 서빙 코퍼스 전체 원문 존재 판정에는 동일 revision의 읽기 전용 인벤토리와 hash 결속이 필요하다. 확보 못 하면 corpus-existence는 UNVERIFIED. RPC 상위12건에 없다는 것만으로 ABSENT_CORPUS 판정 금지.
+- 원문 존재 판정은 Phase 0b에서 완료한다. RPC 상위12건에 없다는 것만으로 ABSENT_CORPUS 판정 금지.
 - 완성 capture snapshot 밖 질의는 live fallback 없이 HOLD. 검색/선택 상한6·물리7·형제1·문맥/recordbook skip 유지. p60/p59 pinning·질문regex 라우팅·수기답·보충적재·재정렬·renderer 변경 금지.
 - fake 모델 응답을 넣어 final 경로를 통과시키지 않는다. dry capture는 generation 결과가 아니라 직전 요청 준비까지만 측정한다.
 
 ## 6. 무엇을 결정할 수 있는가
 
+- 원문 ABSENT_CORPUS: capture 보류, #1401 v3.1 원문 누락·재적재 트랙과 연결(미실행·별도 승인).
 - 원문 존재 미확인: source 인벤토리 확인 과제. 검색/생성의 탓으로 단정하지 않는다.
 - 검증된 직접 원문은 있으나 검색 반환 없음: 검색 후보 도달 문제의 증거. 선택/렌더 변경은 아직 안 한다.
 - 검색 반환엔 있으나 선택 없음: 선택 손실. 상한 우회나 특정 페이지 강제 선택의 승인이 아니다.

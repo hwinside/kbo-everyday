@@ -1,5 +1,5 @@
 {
-  "schemaVersion": 1,
+  "schemaVersion": 2,
   "status": "DESIGN_REVIEW_ONLY_NOT_EXECUTION_APPROVAL",
   "baseline": {
     "requestedAncestor": "07bfae497f83230a9c0be9f98b7d65aee7b5f346",
@@ -44,130 +44,179 @@
   ],
   "sourceInventory": [
     {
-      "rank1": 1,
       "canonicalUrl": "https://www.koreabaseball.com/kbo/board/ebook/ebookpublication.aspx",
       "revision": "sha256:de8715105c8984be",
       "sectionPath": "2026 공식야구규칙#p62",
       "contentSha256": "fb0bcfd2bd3308ac6dcd5f8d3af0d37e40922e668996b0e215841aabdbef9d00",
       "utf16Units": 174,
-      "semanticLabel": "REQUIRES_INDEPENDENT_REVIEW",
-      "p60PresenceNotDirectCatchProof": false
+      "semanticLabel": "NOT_DIRECT_REVIEWER_CONFIRMED",
+      "p60PresenceNotDirectCatchProof": false,
+      "rank": 1,
+      "reviewerDirectUnits": {
+        "CATCH_ACTION": false,
+        "BATTER_OUT_EFFECT": false
+      }
     },
     {
-      "rank1": 2,
       "canonicalUrl": "https://www.koreabaseball.com/kbo/board/ebook/ebookpublication.aspx",
       "revision": "sha256:de8715105c8984be",
       "sectionPath": "2026 공식야구규칙#p65",
       "contentSha256": "1f2720e5f3c97392f87f26311819a331fccc83edbad578c2c02a2b8b85532e73",
       "utf16Units": 195,
-      "semanticLabel": "REQUIRES_INDEPENDENT_REVIEW",
-      "p60PresenceNotDirectCatchProof": false
+      "semanticLabel": "NOT_DIRECT_REVIEWER_CONFIRMED",
+      "p60PresenceNotDirectCatchProof": false,
+      "rank": 2,
+      "reviewerDirectUnits": {
+        "CATCH_ACTION": false,
+        "BATTER_OUT_EFFECT": false
+      }
     },
     {
-      "rank1": 3,
       "canonicalUrl": "https://6ptotvmi5753.edge.naverncp.com/KBO_FILE/ebook/pdf/2026_야구규칙.pdf",
       "revision": "sha256:07651ec70e392723",
       "sectionPath": "2026 공식야구규칙#40. INFIELD FLY (인필드 플라이)",
       "contentSha256": "d549530b145f0329133b25f4a23469f38d4f01f0a3dcc6ca3417f9cdfd12b740",
       "utf16Units": 777,
-      "semanticLabel": "REQUIRES_INDEPENDENT_REVIEW",
-      "p60PresenceNotDirectCatchProof": false
+      "semanticLabel": "NOT_DIRECT_REVIEWER_CONFIRMED",
+      "p60PresenceNotDirectCatchProof": false,
+      "rank": 3,
+      "reviewerDirectUnits": {
+        "CATCH_ACTION": false,
+        "BATTER_OUT_EFFECT": false
+      }
     },
     {
-      "rank1": 4,
       "canonicalUrl": "https://6ptotvmi5753.edge.naverncp.com/KBO_FILE/ebook/pdf/2026_야구규칙.pdf",
       "revision": "sha256:07651ec70e392723",
       "sectionPath": "2026 공식야구규칙#40. INFIELD FLY (인필드 플라이)",
       "contentSha256": "7f94266a65ae70ec598dcf0cc956ebcfbbf487986015e79eddb13c44acc3a22f",
       "utf16Units": 473,
-      "semanticLabel": "REQUIRES_INDEPENDENT_REVIEW",
-      "p60PresenceNotDirectCatchProof": false
+      "semanticLabel": "NOT_DIRECT_REVIEWER_CONFIRMED",
+      "p60PresenceNotDirectCatchProof": false,
+      "rank": 4,
+      "reviewerDirectUnits": {
+        "CATCH_ACTION": false,
+        "BATTER_OUT_EFFECT": false
+      }
     },
     {
-      "rank1": 5,
       "canonicalUrl": "https://www.koreabaseball.com/kbo/board/ebook/ebookpublication.aspx",
       "revision": "sha256:de8715105c8984be",
       "sectionPath": "2026 공식야구규칙#p150",
       "contentSha256": "cd96fecbb84dd099fa523cb238062138504d69bd3351804511d79f1a7677cd15",
       "utf16Units": 808,
-      "semanticLabel": "REQUIRES_INDEPENDENT_REVIEW",
-      "p60PresenceNotDirectCatchProof": false
+      "semanticLabel": "NOT_DIRECT_REVIEWER_CONFIRMED",
+      "p60PresenceNotDirectCatchProof": false,
+      "rank": 5,
+      "reviewerDirectUnits": {
+        "CATCH_ACTION": false,
+        "BATTER_OUT_EFFECT": false
+      }
     },
     {
-      "rank1": 6,
       "canonicalUrl": "https://www.koreabaseball.com/kbo/board/ebook/ebookpublication.aspx",
       "revision": "sha256:de8715105c8984be",
       "sectionPath": "2026 공식야구규칙#p66",
       "contentSha256": "7f3f80bf8ac85940b6ac1709e2f424ffbbcc2f325f2b03ddbd266f2eec298e90",
       "utf16Units": 191,
-      "semanticLabel": "REQUIRES_INDEPENDENT_REVIEW",
-      "p60PresenceNotDirectCatchProof": false
+      "semanticLabel": "NOT_DIRECT_REVIEWER_CONFIRMED",
+      "p60PresenceNotDirectCatchProof": false,
+      "rank": 6,
+      "reviewerDirectUnits": {
+        "CATCH_ACTION": false,
+        "BATTER_OUT_EFFECT": false
+      }
     },
     {
-      "rank1": 7,
       "canonicalUrl": "https://www.koreabaseball.com/kbo/board/ebook/ebookpublication.aspx",
       "revision": "sha256:de8715105c8984be",
       "sectionPath": "2026 공식야구규칙#p64",
       "contentSha256": "2fe617f8d6c9fbc89951fe39237af6f7ea3d6922d74365d10d6dca11664bcfce",
       "utf16Units": 89,
-      "semanticLabel": "REQUIRES_INDEPENDENT_REVIEW",
-      "p60PresenceNotDirectCatchProof": false
+      "semanticLabel": "NOT_DIRECT_REVIEWER_CONFIRMED",
+      "p60PresenceNotDirectCatchProof": false,
+      "rank": 7,
+      "reviewerDirectUnits": {
+        "CATCH_ACTION": false,
+        "BATTER_OUT_EFFECT": false
+      }
     },
     {
-      "rank1": 8,
       "canonicalUrl": "https://www.koreabaseball.com/kbo/board/ebook/ebookpublication.aspx",
       "revision": "sha256:ea7d1aa559c06a0c",
       "sectionPath": "2021 클린베이스볼 가이드북#p54",
       "contentSha256": "83b9ee4e42ef8321055f793be4130c8692232dad4e0a9286e9dc7eaa34c7466b",
       "utf16Units": 185,
-      "semanticLabel": "REQUIRES_INDEPENDENT_REVIEW",
-      "p60PresenceNotDirectCatchProof": false
+      "semanticLabel": "NOT_DIRECT_REVIEWER_CONFIRMED",
+      "p60PresenceNotDirectCatchProof": false,
+      "rank": 8,
+      "reviewerDirectUnits": {
+        "CATCH_ACTION": false,
+        "BATTER_OUT_EFFECT": false
+      }
     },
     {
-      "rank1": 9,
       "canonicalUrl": "https://www.koreabaseball.com/kbo/board/ebook/ebookpublication.aspx",
       "revision": "sha256:5b3ad2878dfbf830",
       "sectionPath": "2026 KBO 연감#p484",
       "contentSha256": "cf5495e449592bd4ed99f4a45c4eee9066f050d5f76a28a1b072da7cc8020da3",
       "utf16Units": 197,
-      "semanticLabel": "REQUIRES_INDEPENDENT_REVIEW",
-      "p60PresenceNotDirectCatchProof": false
+      "semanticLabel": "NOT_DIRECT_REVIEWER_CONFIRMED",
+      "p60PresenceNotDirectCatchProof": false,
+      "rank": 9,
+      "reviewerDirectUnits": {
+        "CATCH_ACTION": false,
+        "BATTER_OUT_EFFECT": false
+      }
     },
     {
-      "rank1": 10,
       "canonicalUrl": "https://www.koreabaseball.com/kbo/board/ebook/ebookpublication.aspx",
       "revision": "sha256:5b3ad2878dfbf830",
       "sectionPath": "2026 KBO 연감#p17",
       "contentSha256": "f94d3ecbbd17916e9667f807353cb5d3a19f751d645b64f1e7a55afeebe62888",
       "utf16Units": 189,
-      "semanticLabel": "REQUIRES_INDEPENDENT_REVIEW",
-      "p60PresenceNotDirectCatchProof": false
+      "semanticLabel": "NOT_DIRECT_REVIEWER_CONFIRMED",
+      "p60PresenceNotDirectCatchProof": false,
+      "rank": 10,
+      "reviewerDirectUnits": {
+        "CATCH_ACTION": false,
+        "BATTER_OUT_EFFECT": false
+      }
     },
     {
-      "rank1": 11,
       "canonicalUrl": "https://www.koreabaseball.com/kbo/board/ebook/ebookpublication.aspx",
       "revision": "sha256:de8715105c8984be",
       "sectionPath": "2026 공식야구규칙#p60",
       "contentSha256": "e0b2b334c015d4811cf60987aadde2e297cd84164d6d0922bd41fa9fd04d55a3",
       "utf16Units": 216,
-      "semanticLabel": "REQUIRES_INDEPENDENT_REVIEW",
-      "p60PresenceNotDirectCatchProof": true
+      "semanticLabel": "NOT_DIRECT_REVIEWER_CONFIRMED",
+      "p60PresenceNotDirectCatchProof": true,
+      "rank": 11,
+      "reviewerDirectUnits": {
+        "CATCH_ACTION": false,
+        "BATTER_OUT_EFFECT": false
+      }
     },
     {
-      "rank1": 12,
       "canonicalUrl": "https://www.koreabaseball.com/kbo/board/ebook/ebookpublication.aspx",
       "revision": "sha256:ea7d1aa559c06a0c",
       "sectionPath": "2021 클린베이스볼 가이드북#p18",
       "contentSha256": "4abac881d1f2ae7958a49a512d3147dc4df2a8a970be5fe8ce99af4709a9bb26",
       "utf16Units": 255,
-      "semanticLabel": "REQUIRES_INDEPENDENT_REVIEW",
-      "p60PresenceNotDirectCatchProof": false
+      "semanticLabel": "NOT_DIRECT_REVIEWER_CONFIRMED",
+      "p60PresenceNotDirectCatchProof": false,
+      "rank": 12,
+      "reviewerDirectUnits": {
+        "CATCH_ACTION": false,
+        "BATTER_OUT_EFFECT": false
+      }
     }
   ],
   "measurementAxes": [
     "serving-corpus-existence",
     "retrieval-return-rank",
     "primary-selection",
+    "retrieval-to-raw-cap-truncation",
     "rawEvidence-including-sibling",
     "guardEvidence",
     "modelEvidence",
@@ -192,19 +241,21 @@
     "DIRECT_PARTIAL",
     "RELATED_NOT_DIRECT",
     "ABSENT_IN_THIS_STAGE",
-    "UNVERIFIED"
+    "UNVERIFIED",
+    "ABSENT_CORPUS"
   ],
   "matching": {
-    "identity": [
+    "offsets": "UTF-16 half-open in ORIGINAL source, plus decoded material block offset and serialized body range",
+    "normalization": "NONE; optional search normalization may discover candidates but cannot establish exposure",
+    "nestedSibling": "parse existing JSON envelope and exact-match decoded source spans; JSON escapes are not raw substring absence",
+    "authorLabels": "offline audit labels never used as retrieval pins, prompts, filters, or routing",
+    "sourceIdentity": [
       "canonicalUrl",
       "revision",
       "sectionPath",
       "contentSha256"
     ],
-    "offsets": "UTF-16 half-open in ORIGINAL source, plus decoded material block offset and serialized body range",
-    "normalization": "NONE; optional search normalization may discover candidates but cannot establish exposure",
-    "nestedSibling": "parse existing JSON envelope and exact-match decoded source spans; JSON escapes are not raw substring absence",
-    "authorLabels": "offline audit labels never used as retrieval pins, prompts, filters, or routing"
+    "derivedIdentity": "sourceContentSha256 + derivedContentSha256 + exact prefix transform + retained/lost UTF-16 spans"
   },
   "phase0": {
     "inputCases": 2,
@@ -214,7 +265,7 @@
     "writes": "new docs/fixtures only",
     "coverage": "historical snapshot and preserved payloads only, not full corpus",
     "success": "every source row and each layer classified with exact evidence or UNVERIFIED; reviewer adjudication",
-    "stop": "any hash/identity/span mismatch => HOLD, no repaired or guessed text"
+    "stop": "unexplained hash/identity/span mismatch => HOLD; verified 800-unit prefix truncation => DIRECT_PARTIAL, semantic relevance separately classified"
   },
   "phase1Proposal": {
     "approval": "separate implementation smoke GO and frozen fresh-input manifest required",
@@ -242,8 +293,9 @@
     "freshReferenceTimeMs": null,
     "retrievalSettings": "must hash exact main search implementation and resolved settings before capture; no live fallback after freezing",
     "captureMode": "reviewer read-only bounded capture; stop before any model call including normalization; unexpected model need => HOLD",
-    "corpusExistence": "read-only full serving revision inventory if available; otherwise UNVERIFIED, never corpus-absent",
-    "transport": "offline exact request preview only; actual provider exposure remains UNVERIFIED without separately approved send"
+    "corpusExistence": "resolved first by Phase0b; no capture while absent or unverified",
+    "transport": "offline exact request preview only; actual provider exposure remains UNVERIFIED without separately approved send",
+    "precondition": "Phase0b verified direct source existence; ABSENT_CORPUS blocks all 3 requests"
   },
   "futureGeneration": "NOT_AUTHORIZED; new protocol required, no revival of #1537 40/154/484 budgets",
   "report": {
@@ -259,9 +311,91 @@
       "sourceButNotRetrieved": "retrieval candidate for later design, no auto pinning",
       "retrievedButNotSelected": "selection loss measurement only",
       "selectedButNotPayload": "assembly/truncation boundary investigation",
-      "verifiedCompletePayloadButWrong": "generation intent/scope hypothesis, requires separately approved test"
+      "verifiedCompletePayloadButWrong": "generation intent/scope hypothesis, requires separately approved test",
+      "absentCorpus": "HOLD capture; #1401 v3.1 reingestion track, no execution authorization"
     },
     "inference": "#1537 HOLD unchanged; block AB/BA not causal pairs; do not claim statistically established deterioration"
   },
-  "notionDesignUrl": "https://app.notion.com/p/R0-2026-10-05-3efc901bb37281b7a87cff1b13055538"
+  "notionDesignUrl": "https://app.notion.com/p/R0-2026-10-05-3efc901bb37281b7a87cff1b13055538",
+  "revision": "R1",
+  "phase0b": {
+    "historicalInventory": "/Volumes/T7-Dev/reviews/runtime/excl-serving-r1.jsonl",
+    "historicalInventorySha256": "06a277315dce24fdd7364b2a1b4cb1e008d500fe52918025b34d83f281f44e6f",
+    "historicalDate": "2026-10-02",
+    "rulebookRows": 119,
+    "revisions": [
+      "sha256:07651ec70e392723",
+      "sha256:de8715105c8984be"
+    ],
+    "reviewerEvidence": "slack:1791130993.527529",
+    "historicalVerdict": {
+      "CATCH_ACTION": "ABSENT_CORPUS",
+      "BATTER_OUT_EFFECT": "ABSENT_CORPUS"
+    },
+    "currentServingRebind": "UNPERFORMED_HOLD",
+    "requiredBinding": [
+      "observedAt",
+      "source",
+      "paginationComplete",
+      "rowCount",
+      "revisionSet",
+      "sorted URL/section/content SHA identity set"
+    ],
+    "onSameCompleteInventory": "ABSENT_CORPUS; BLOCK Phase1 capture; refer #1401 v3.1 reingestion (not executed or authorized)",
+    "onChangedRevision": "independent full inventory adjudication; do not inherit old absence",
+    "onUnavailableOrIncomplete": "UNVERIFIED_HOLD"
+  },
+  "truncation": {
+    "capUtf16Units": 800,
+    "mapping": "exact prefix only; unexplained mismatch HOLD",
+    "semanticRelevanceIndependent": true,
+    "observations": [
+      {
+        "case": "reg-base",
+        "sectionPath": "2026 공식야구규칙#p150",
+        "sourceUnits": 808,
+        "derivedUnits": 800,
+        "sourceContentSha256": "cd96fecbb84dd099fa523cb238062138504d69bd3351804511d79f1a7677cd15",
+        "derivedContentSha256": "8cc0eaec33340767c897b7c54b0e636b1ad6369db522538ecef026eb3cc3a94c",
+        "retainedSpan": [
+          0,
+          800
+        ],
+        "lostSpan": [
+          800,
+          808
+        ],
+        "lostText": "이를 기록한다.",
+        "lostTextSha256": "18365c2043e986da32e2ca988783e7262b0c3cc9f67a18b6eee4de867c41f44e",
+        "exposureCompleteness": "DIRECT_PARTIAL",
+        "semanticRelevance": "RELATED_NOT_DIRECT"
+      },
+      {
+        "case": "ctx-base",
+        "sectionPath": "2026 공식야구규칙#p150",
+        "sourceUnits": 808,
+        "derivedUnits": 800,
+        "sourceContentSha256": "cd96fecbb84dd099fa523cb238062138504d69bd3351804511d79f1a7677cd15",
+        "derivedContentSha256": "8cc0eaec33340767c897b7c54b0e636b1ad6369db522538ecef026eb3cc3a94c",
+        "retainedSpan": [
+          0,
+          800
+        ],
+        "lostSpan": [
+          800,
+          808
+        ],
+        "lostText": "이를 기록한다.",
+        "lostTextSha256": "18365c2043e986da32e2ca988783e7262b0c3cc9f67a18b6eee4de867c41f44e",
+        "exposureCompleteness": "DIRECT_PARTIAL",
+        "semanticRelevance": "RELATED_NOT_DIRECT"
+      }
+    ],
+    "smokeBoundaryUnits": [
+      799,
+      800,
+      801
+    ],
+    "infieldFly777": "cap retains full text; not direct catch proof"
+  }
 }
