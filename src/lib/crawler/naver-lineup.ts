@@ -10,7 +10,7 @@
 // 스냅샷은 side 별 "선발투수 정확히 1 + 타자 정확히 9" 검증을 통과한 **완전 라인업**일 때만
 // 존재한다(confirmed=true). 부분 응답·조회 실패는 null — 확정알림 오발송 방지 fail-close.
 
-import { naverGameId } from "@/lib/crawler/naver-record";
+import { naverGameId } from "@/lib/crawler/naver-game-id";
 
 const NAVER_API = "https://api-gw.sports.naver.com/schedule/games";
 

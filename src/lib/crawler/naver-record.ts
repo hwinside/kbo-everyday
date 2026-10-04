@@ -5,7 +5,8 @@
 // canonical-not-settled(409) 로 생성을 거부한다(2026-07-28 종료경기 AI요약 전면 중단).
 // game-detail 은 이 경우 이미 Naver record API 의 scoreBoard 로 fallback 한다 — 그 소스를 공용화한다.
 
-import { isAllStarGameId } from "@/lib/constants/teams";
+import { naverGameId } from "./naver-game-id";
+export { naverGameId } from "./naver-game-id";
 import { resolvePlayer } from "@/lib/utils/resolve-player";
 import { BS_POS_MAP } from "@/lib/crawler/kbo-api";
 import type {
@@ -16,13 +17,6 @@ import type {
 } from "@/lib/crawler/kbo-api";
 
 const NAVER_API = "https://api-gw.sports.naver.com/schedule/games";
-
-/** KBO gameId → Naver gameId (연도 접미). 올스타는 앞 4자리를 9999 로 서비스. */
-export function naverGameId(kboGameId: string): string {
-  const year = kboGameId.slice(0, 4);
-  const base = isAllStarGameId(kboGameId) ? `9999${kboGameId.slice(4)}` : kboGameId;
-  return `${base}${year}`;
-}
 
 interface NaverScoreBoard {
   inn?: { away?: (number | null)[]; home?: (number | null)[] };
