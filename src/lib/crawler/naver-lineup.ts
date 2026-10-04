@@ -148,7 +148,7 @@ export function parseNaverPreviewLineup(json: unknown): NaverLineupSnapshot | nu
  */
 export async function fetchNaverLineup(
   kboGameId: string,
-  opts?: { signal?: AbortSignal; timeoutMs?: number },
+  opts?: { signal?: AbortSignal; timeoutMs?: number; requireGameIdentity?: boolean },
 ): Promise<NaverLineupSnapshot | null> {
   try {
     const nId = naverGameId(kboGameId);
@@ -160,7 +160,12 @@ export async function fetchNaverLineup(
       signal,
     });
     if (!res.ok) return null;
-    return parseNaverPreviewLineup(await res.json());
+    const json = await res.json();
+    // Opt-in for factual QA: bind the response date/teams, not just its URL.
+    // Doubleheaders need an explicit full-game identity; date/teams alone are
+    // insufficient, so this path deliberately holds them for now.
+    if (opts?.requireGameIdentity && (kboGameId.slice(12) !== "0" || !parseNaverPreviewStarters(json, kboGameId))) return null;
+    return parseNaverPreviewLineup(json);
   } catch {
     return null;
   }

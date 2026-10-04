@@ -5,6 +5,7 @@ import type { ContextTurn } from "./context";
 
 /** Facts come from the same dated snapshot as the app, never from generated prose. */
 export interface ConversationGame {
+  gameId?: string;
   awayName: string;
   homeName: string;
   stadium: string;
@@ -20,6 +21,7 @@ export interface GameConversationInput {
   date: string;
   nowMs?: number;
   appFacts?: AppFactSnapshot;
+  lineups?: Record<string, import("./app-lineup").AppLineupSnapshot>;
   favoriteTeam: string | null;
   games: ConversationGame[] | null;
   /** Ambiguous whole-word candidates, scoped to app-fact interpretation. */
@@ -29,6 +31,7 @@ export interface GameConversationInput {
 }
 export interface ConversationEntityResolver {
   isBare: (text: string) => boolean;
+  onLineupGames?: (games: ConversationGame[], date: string) => void;
 }
 export interface GameConversationResult {
   text: string;

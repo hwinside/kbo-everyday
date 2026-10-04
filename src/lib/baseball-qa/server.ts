@@ -1,3 +1,4 @@
+import { loadAppLineups } from "./app-lineup";
 import { buildOfficialContextRequest } from "./rag/official-context-request";
 import { normalizeKey, originalSpellingScope } from "./normalize";
 import type { OriginalSpellingAssessment } from "./correction-term-identity";
@@ -1069,6 +1070,7 @@ export function makeDeps(
     loadPlayers: loadRosterPlayers,
     callLlm,
     callGameConversation,
+    loadGameLineups: loadAppLineups,
     loadGameConversation: async (date) => {
       const tomorrowDate = new Date(Date.parse(`${date}T00:00:00Z`) + 86_400_000).toISOString().slice(0, 10);
       const [games, tomorrowGames, standings, favoriteTeam] = await Promise.all([

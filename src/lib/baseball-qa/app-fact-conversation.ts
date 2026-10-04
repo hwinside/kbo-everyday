@@ -1,3 +1,4 @@
+import { renderAppLineup } from "./app-lineup";
 import { bindConversationTeamCandidates } from "./conversation-team-candidates";
 import type { GameConversationInput, ConversationEntityResolver } from "./game-conversation";
 import { LIVE_TEAM_BLOCK_MAX_AGE_MS, type StandingsSnapshot } from "./stats/team-record";
@@ -19,7 +20,7 @@ appRequest.quote는 현재 발화에서 요청 의도를 드러내는 원문 그
 지시어(거기/그 경기/그 팀)는 새 구단명이 아닙니다. 같은 경기의 후속이면 target.source=context_question으로 두고 직전 사용자 질문이 명시한 조회 대상만 유지합니다. 직전 답변이나 games에 나온 상대팀·구장을 target.teams/stadium에 추가하지 않습니다. 한 구단을 물었던 후속은 그 구단 조건 하나로 실제 경기를 찾고, 두 구단의 맞대결을 명시했던 후속만 두 조건을 유지합니다. target.quote도 직전 사용자 질문의 원문이며 답변에서 가져오지 않습니다. 현재 명시한 구단·전체 요청·주제 전환은 이 계승보다 우선합니다.
 기간만 바꾼 짧은 후속은 직전 사용자 질문의 지원 요청 사실과 조회 대상을 유지하고 현재의 기간만 적용합니다. 이때 intentSource=context_question, intentQuote는 직전 질문의 요청 원문, appRequest.quote는 현재 기간 발화입니다. 직전 요청이 무관하거나 없으면 경기 요청을 만들어내지 않으며, 지원하지 않는 기간은 unsupported를 유지합니다.
 두 팀의 맞대결 요청이면 teams에 두 팀을 모두 넣습니다. 자료가 없거나 선발 미발표여도 요청 종류를 바꾸지 않습니다. 코드는 미조회·빈 일정·미발표를 구별합니다.
-lineup은 현재 연결된 데이터에 타순이 없으므로 옛 라인업 대신 확인 불가와 실제 경기만 안내합니다. prediction/postseason은 승패/진출을 단정하지 않고 실제 경기/현재 순위만 안내합니다. 조회 결과가 질문을 바꾸지는 않습니다.
+lineup은 요청한 날짜·경기에 결속된 선발 타순만 코드가 조회합니다. 현재 타석·경기 중 교체 선수 요청은 선발 타순으로 대체하지 않고 action=other, informationNeed=none으로 양보합니다. 모델은 타자명이나 타순을 생성하지 않습니다. prediction/postseason은 승패/진출을 단정하지 않고 실제 경기/현재 순위만 안내합니다. 조회 결과가 질문을 바꾸지는 않습니다.
 app_facts에서는 attendanceEvidence="", evidenceSource=none입니다. 이 evidenceSource는 관람 근거만 뜻하며 target.source와 무관합니다. 현재 질문의 teamNames.question은 코드가 조회 대상으로 사용합니다. 모델은 제외·배경 역할을 원문에 근거해 구분하며, evidenceSource=none 때문에 target을 비우지 않습니다. 현재 시각·영업시간 등 야구와 무관한 시간 질문은 other이며, 앱 일정이나 프로필을 보고 야구 질문으로 바꾸지 않습니다. 기존 관람 계획은 원래 match/clarify/other 계약을 유지합니다. 행사 정보 요청을 관람 계획으로 간주하지 않습니다. app_facts가 아니면 kind="none", period="unsupported", intentSource="none", intentQuote=""입니다. event_date/player_availability 요청은 각각의 informationNeed와 현재 요청 원문 quote를 유지하며, 그 외에는 informationNeed="none", quote=""입니다.`;
 
 export const APP_REQUEST_SCHEMA = { type: "OBJECT", properties: {
@@ -129,18 +130,32 @@ export function renderAppFacts(value: Record<string, unknown>, input: GameConver
       : [{ date: input.date, games: input.games }];
   const lines: string[] = [];
   if (req.kind === "prediction") lines.push("승패를 예측해 단정할 수는 없지만, 확인된 경기 일정과 선발 정보를 안내하겠습니다.");
-  if (req.kind === "lineup") lines.push("현재 타순·타자 라인업은 이 답변의 데이터에 연결되어 있지 않아 확인할 수 없습니다. 과거 라인업으로 대신 답하지 않겠습니다.");
-  let partial = req.kind === "lineup";
+  let partial = false;
   for (const slot of slots) {
     if (slot.games === null) { lines.push(`${slot.date} 경기 일정을 조회하지 못했습니다.`); partial = true; continue; }
     const games = slot.games.filter((g) => teams.every((t) => t === g.awayName || t === g.homeName)
       && !excluded.some((t) => t === g.awayName || t === g.homeName) && (!stadium || stadium === g.stadium)
       && !excludedStadiums.includes(g.stadium));
     if (!games.length) { lines.push(`${slot.date} 앱 일정에 ${teams.length || stadium ? "요청하신 대상의 " : ""}등록된 경기가 없습니다.`); continue; }
+    if (req.kind === "lineup") entities?.onLineupGames?.(games.filter((g) => g.status !== "cancelled"), slot.date);
     lines.push(`${slot.date} 경기 일정:`);
     for (const g of games) {
       const status: Record<string, string> = { scheduled: "예정", live: "진행 중", final: "종료", cancelled: "취소" };
       lines.push(`· ${g.awayName} vs ${g.homeName} — ${g.stadium || "구장 확인 중"}, ${g.time || "시각 확인 중"} (${status[g.status] ?? "상태 확인 중"})`);
+      if (req.kind === "lineup") {
+        if (g.status === "cancelled") {
+          lines.push("  취소 경기이므로 타순을 출전 예정으로 안내하지 않습니다.");
+          continue;
+        }
+        const lineup = renderAppLineup(g.gameId ? input.lineups?.[g.gameId] : undefined, g, slot.date, input.nowMs, teams);
+        if (lineup) {
+          lines.push(...lineup);
+          lines.push("  경기 시작 선발 타순이며, 경기 중 교체·현재 타석을 뜻하지 않습니다.");
+        } else {
+          lines.push("  해당 경기의 확정 타순을 확인하지 못했습니다. 과거 라인업으로 대신 답하지 않겠습니다.");
+          partial = true;
+        }
+      }
       if (req.kind === "starters" || req.kind === "prediction") {
         if (g.status === "cancelled") { lines.push("  취소 경기이므로 예고 선발을 출전 예정으로 안내하지 않습니다."); continue; }
         if (!g.starterSourceOk) { lines.push("  선발 정보의 출처를 확인하지 못했습니다."); partial = true; continue; }

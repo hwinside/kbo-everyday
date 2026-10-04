@@ -1,3 +1,4 @@
+import { checkAppLineup } from "./genius-app-lineup";
 import "./genius-grounded-team-followup";
 import { checkAppFactConversation } from "./genius-app-fact-conversation";
 import assert from "node:assert/strict";
@@ -276,6 +277,7 @@ async function main() {
   assert.equal(replayedAck.answer, acknowledged.answer);
   assert.equal(replayedAck.source, "ack");
   await checkAppFactConversation();
+  await checkAppLineup();
   for (const row of r1Cases) {
     const testDeps = deps([]);
     testDeps.loadGameConversation = async () => ({ games: r1Schedule, favoriteTeam: input.favoriteTeam });
