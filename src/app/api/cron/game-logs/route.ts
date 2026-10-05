@@ -77,10 +77,10 @@ export async function GET(req: NextRequest) {
       : "";
 
     const summary = `${dates.join(",")} | final ${finals.length} (complete ${complete}/incomplete ${incomplete.length}/에러 ${gamesFailed}) | upsert ${upserted}행${incompleteNote}${gapNote}`;
-    const ok = failedDates.length === 0 && gamesFailed === 0;
+    const ok = failedDates.length === 0 && gamesFailed === 0 && incomplete.length === 0;
     const fetchError = failedDates.map((r) => `${r.date}: ${r.error}`).join("; ");
     await finishJob(logId, ok ? "success" : "error", summary,
-      ok ? undefined : `date fetch failures: ${fetchError || "none"}; game failures: ${gamesFailed}`);
+      ok ? undefined : `date fetch failures: ${fetchError || "none"}; game failures: ${gamesFailed}; incomplete: ${incomplete.length}; roster alert: ${gapResult.status}`);
 
     return NextResponse.json({
       ok,
