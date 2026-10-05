@@ -45,6 +45,7 @@ import {
   type RagEvidence,
 } from "../../src/lib/baseball-qa/rag/retrieve";
 import { gradeForSourceKind } from "../../src/lib/baseball-qa/rag/contracts";
+import { hasUnrequestedCompound } from "../../src/lib/baseball-qa/rag/term-referent";
 
 let pass = 0;
 const fail: string[] = [];
@@ -310,6 +311,55 @@ check("미배선이면 기존 동작 불변", async () => {
 
 const asyncChecks: { name: string; fn: () => Promise<void> }[] = [];
 function checkAsync(name: string, fn: () => Promise<void>) { asyncChecks.push({ name, fn }); }
+
+// The reviewed vocabulary is data, never a question blacklist. Include a
+// different compound so this cannot pass by special-casing the reported word.
+const REFERENT_GLOSSARY: GlossaryEntry[] = [
+  { term: "워닝 트랙", aliases: ["워닝트랙", "warning track"], answer: "펜스 앞 경고 구역입니다." },
+  { term: "불펜 포수", aliases: ["불펜포수", "bullpen catcher"], answer: "불펜에서 공을 받는 포수입니다." },
+];
+for (const [question, answer, rejected, previous] of [
+  ["워닝", "워닝트랙은 펜스 앞 구역입니다.", true, undefined],
+  ["트랙", "워닝 트랙은 펜스 앞 구역입니다.", true, undefined],
+  ["warning 메시지가 뭐야?", "야구에서 워닝 메시지는 워닝트랙을 의미합니다.", true, undefined],
+  ["warning 메시지가 뭐야?", "워닝트랙과 관련이 있습니다.", true, "워닝 트랙이 뭐야?"],
+  ["워닝", "워닝은 영어로 경고라는 뜻입니다.", false, undefined],
+  ["워닝 트랙이 뭐야?", "워닝트랙은 펜스 앞 구역입니다.", false, undefined],
+  ["warning track이 뭐야?", "워닝트랙은 펜스 앞 구역입니다.", false, undefined],
+  ["트랙", "워닝트랙은 펜스 앞 구역입니다.", false, "워닝 트랙이 뭐야?"],
+  ["불펜이 뭐야?", "불펜 포수는 불펜에서 공을 받는 포수입니다.", true, undefined],
+  ["워닝트랙이랑 불펜 포수는 무슨 관계야?", "워닝트랙과 불펜 포수는 다른 개념입니다.", false, undefined],
+  ["야구장잔디는천연잔디야인조야", "야구장에는 천연잔디나 인조잔디가 사용됩니다.", false, undefined],
+] as const) {
+  check(`복합어 성분 결속 ${question}/${previous ?? "no context"}`, () => {
+    assert.equal(hasUnrequestedCompound(question, answer, REFERENT_GLOSSARY, previous), rejected);
+    for (const status of [RAG_GENERAL_SENTINEL, RAG_GROUNDED_SENTINEL]) {
+      const result = validateRagResponse(JSON.stringify({ status, answer, calendarClaims: [] }), {
+        officialQuestion: question, numericEvidence: true, evidence: [OFFICIAL],
+        generalFallback: { question },
+        termReferent: { glossary: REFERENT_GLOSSARY, previousQuestion: previous },
+      });
+      assert.equal(result.kind, rejected ? "insufficient" : status === RAG_GENERAL_SENTINEL ? "general" : "grounded");
+    }
+  });
+}
+for (const status of [RAG_GENERAL_SENTINEL, RAG_GROUNDED_SENTINEL]) {
+  checkAsync(`복합어 수용 경계 실제 pipeline 배선 ${status}`, async () => {
+    const answer = "워닝트랙은 펜스 앞 구역입니다.";
+    const { deps, calls } = makeDeps({
+      loadGlossary: async () => REFERENT_GLOSSARY,
+      searchOfficialRag: async () => [OFFICIAL],
+      callOfficialRagLlm: async () => {
+        calls.push("callOfficialRagLlm");
+        return { text: JSON.stringify({ status, answer, calendarClaims: [] }), inputTokens: 1, outputTokens: 1 };
+      },
+    });
+    const result = await answerQuestion("u", "트랙", deps);
+    assert.notEqual(result.answer, answer);
+    assert.equal(calls.filter(call => call === "callOfficialRagLlm").length, 1);
+    assert.ok(!calls.includes("callLlm"), "rejected prose must not trigger a second generation");
+  });
+}
 
 // Synthetic adversarial fixtures: exact provider status must not waive event identity.
 for (const [name, question, content, answer, expected] of [

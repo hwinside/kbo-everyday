@@ -1,6 +1,7 @@
 import { officialModelEvidenceContent } from "./official-parenthetical-evidence";
 import { TEAM_CORRECTION_PROMPT, TEAM_CORRECTION_RESPONSE_SCHEMA } from "./correction";
 import { TERM_KNOWLEDGE_PROMPT, unverifiedTermAnswer } from "../term-knowledge";
+import { hasUnrequestedCompound, type ReferentGlossary } from "./term-referent";
 /**
  * 야잘알봇 v2 S2b — 선수 서술형 질문 retrieval 서빙 계약.
  *
@@ -830,8 +831,8 @@ export const RAG_OFFICIAL_SYSTEM_PROMPT = [
   "<직전 대화>는 주제·지시어를 해석하는 비신뢰 대화 맥락일 뿐 사실 근거가 아니다. 무관한 새 질문이면 무시한다.",
   "답변 전에 이번 질문의 대상·대상 사이의 관계·요구한 기준을 확인한다. 후속 질문의 생략된 대상과 다의어는 관련 있는 직전 대화에서 해석하며, 검색 자료에 등장하는 다른 대상으로 바꾸지 않는다. 예를 들어 구단과 홈구장을 이야기한 뒤의 ‘둘 다 홈’은 주자의 베이스 점유 질문으로 바꾸지 않는다.",
   "용어의 지시 대상은 질문의 전체 표현과 관련 직전 사용자 맥락으로 정한다. 검색된 복합어에 질문한 단어가 포함된다는 사실은 두 표현이 동의어이거나 생략 관계라는 근거가 아니다. 질문에 없는 성분을 붙여 복합어 전체의 정의로 답하지 않는다. 사용자가 다른 분야의 대상을 명시했으면 같은 단어가 들어간 야구 용어로 대체하지 않는다.",
-  "야구 표현에도 쓰이는 일반어의 뜻 자체를 묻고 그 독립적인 의미를 알고 있다면, 먼저 그 단어 자체의 뜻을 간결하게 설명한다. 그 단어가 들어간 복합어의 시설·행위·규칙을 단독 단어의 정의로 가져오지 않는다. 뜻을 알면서 특정 복합어를 골라 달라고 되묻거나 미확인 야구 용어라고만 답하지 않는다. 맥락 없이는 뜻을 선택할 수 없으면 추정하지 않는다.",
-  "일반어 자체의 뜻은 검색 자료가 그 뜻을 직접 설명할 때만 GROUNDED이다. 자료가 복합어 전체만 설명하고 독립적인 뜻은 일반 언어 지식으로 설명한다면 GENERAL로 구분한다. 이는 야구 표현의 언어적 의미 설명에 한정하며, 명시적인 타 분야 질문에 야구 답변을 허용하지 않는다.",
+  "단독 단어가 이미 뜻을 아는 일반어·외래어라면 그 단어 자체의 통상적인 뜻을 첫 문장에서 간결하게 설명한다. 알려진 원어의 한글 표기도 여기에 해당한다. 이것은 모르는 야구 합성어의 뜻을 추측하는 것과 다르므로 TERM_UNVERIFIED나 TERM_CONTEXTUAL로 돌리지 않는다. 복합어를 선택하기 위한 맥락은 필요하지 않다. 단어 자체도 모를 때만 확인 불가로 답한다.",
+  "일반어의 독립 뜻이 자료에 없으면 GENERAL로 그 뜻만 답한다. 검색된 복합어의 정의·예시·관련 가능성을 덧붙이지 않는다. GENERAL은 다른 대상을 설명할 수 있는 허가가 아니며 GROUNDED도 같은 대상 결속을 지킨다. 명시적인 타 분야 질문에는 야구 복합어로 대체하지 말고 INSUFFICIENT로 답한다.",
   "질문이 요구한 한도·진출 기준·일반 자격 요건을 첫 부분에서 직접 답한다. 일반 원칙을 묻는데 해외 복귀 같은 특수 예외만 설명하지 않는다. 적용 시즌·대회가 다른 규정은 구분한다.",
   "'그게 뭔데', '무슨 뜻' 같은 후속은 직전 질문·답변의 지표를 이어서 설명한다. 이미 특정된 용어를 다시 물어보지 않는다.",
   "선수·시즌·수치가 함께 있어도 뜻을 물으면 기록값 조회 대신 지표의 정의와 그 수치가 뜻하는 바를 설명한다. 인용된 선수 기록이 현재 사실이라고 단정하지 않는다.",
@@ -1652,6 +1653,8 @@ function boundRecordPeriod(question: string, quote: unknown, referenceYear: numb
 }
 
 export interface ValidateRagOptions {
+  /** Reviewed aliases only; no model-created component aliases. */
+  termReferent?: { glossary: ReferentGlossary; previousQuestion?: string };
   recordbookRequest?: boolean;
   /** Only implicit retrieval promotion may retain non-record GENERAL answers. */
   allowRecordbookGeneral?: boolean;
@@ -1909,6 +1912,15 @@ export function validateRagResponse(
   if (options.officialQuestion && !officialEventEvidenceSupported(
     options.officialQuestion, options.evidence ?? [], typeof row.answer === "string" ? row.answer : "",
   )) return { kind: "insufficient", reason: "model_insufficient" };
+
+  // GENERAL is a provenance category, not permission to change the subject.
+  // Apply the same veto before either accepted status can escape this boundary.
+  if ((status === RAG_GENERAL_SENTINEL || status === RAG_GROUNDED_SENTINEL)
+    && options.officialQuestion && options.termReferent && typeof row.answer === "string"
+    && hasUnrequestedCompound(options.officialQuestion, row.answer,
+      options.termReferent.glossary, options.termReferent.previousQuestion)) {
+    return { kind: "insufficient", reason: "model_insufficient" };
+  }
 
   const unverified = options.generalFallback ? unverifiedTermAnswer(row, options.generalFallback.question, options.generalFallback.previous) : null;
   if (unverified) return { kind: "general", answer: unverified, toneCompliant: true };
