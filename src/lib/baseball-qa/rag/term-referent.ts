@@ -123,9 +123,47 @@ export function hasDefinitionAnchor(content: string, referent: DefinitionReferen
   return surfaces.some(surface => {
     const literal = surface.normalize("NFKC").trim().split(/\s+/u)
       .map(word => word.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")).join("\\s*");
-    return new RegExp(`(?:^|[^\\p{L}\\p{N}])${literal}(?=$|[^\\p{L}\\p{N}]|(?:은|는|이|가|을|를|의|와|과|도|만|부터|까지|에게|에서|에|로|으로|란|이라|라고)(?:는|도|만)?(?:$|[^\\p{L}\\p{N}]))`, "iu")
+    return new RegExp(`(?:^|[^\\p{L}\\p{N}])${literal}(?=$|[^\\p{L}\\p{N}]|(?:은|는|이|가|을|를|의|와|과|도|만|부터|까지|에게|에서|에|로|으로|란|이라|라고|다|이다|이며|이고|입니다)(?:는|도|만)?(?:$|[^\\p{L}\\p{N}]))`, "iu")
       .test(content.normalize("NFKC"));
   });
+}
+
+/** The model must account for the visible rows before choosing its answer mode.
+ * Quote identity and plan/status consistency are deterministic; the claimed
+ * semantic relation is NOT. Never promote a rejected answer or retry here.
+ * Old stored responses without a plan retain their historical contract.
+ */
+export function acceptsDefinitionEvidence(
+  row: Record<string, unknown>,
+  visible: readonly { evidence: number; content: string }[],
+  referent?: DefinitionReferent,
+): boolean {
+  if (row.definitionPlan === undefined) return true;
+  if (!Array.isArray(row.definitionEvidence) || row.definitionEvidence.length !== visible.length) return false;
+  const seen = new Set<number>();
+  const support = new Set<string>();
+  for (const raw of row.definitionEvidence) {
+    if (!raw || typeof raw !== "object") return false;
+    const item = raw as Record<string, unknown>;
+    if (typeof item.evidence !== "number" || !Number.isInteger(item.evidence) || seen.has(item.evidence)) return false;
+    const source = visible.find(value => value.evidence === item.evidence);
+    if (!source || typeof item.quote !== "string") return false;
+    seen.add(item.evidence);
+    if (item.role === "definition" || item.role === "relation") {
+      // Citation is copied from the actual generation input, not raw retrieval.
+      if (!item.quote.trim() || !source.content.includes(item.quote)) return false;
+      if (referent && !/\s/u.test(referent.quote) && !hasDefinitionAnchor(item.quote, referent)) return false;
+      support.add(item.role);
+    } else if (item.role !== "mention" && item.role !== "unrelated") return false;
+    else if (item.quote !== "") return false;
+  }
+  switch (row.definitionPlan) {
+    case "source_definition": return row.status === "GROUNDED" && support.has("definition");
+    case "source_relation": return row.status === "GROUNDED" && support.has("relation");
+    case "general_meaning": return row.status === "GENERAL" && support.size === 0;
+    case "unknown": return support.size === 0 && ["INSUFFICIENT", "TERM_UNVERIFIED", "TERM_CONTEXTUAL"].includes(String(row.status));
+    default: return false;
+  }
 }
 
 /** No forced subject enum: read the generated referent, then check it. A

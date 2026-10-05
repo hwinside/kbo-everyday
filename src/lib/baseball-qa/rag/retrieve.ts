@@ -1,7 +1,7 @@
 import { officialModelEvidenceContent } from "./official-parenthetical-evidence";
 import { TEAM_CORRECTION_PROMPT, TEAM_CORRECTION_RESPONSE_SCHEMA } from "./correction";
 import { TERM_KNOWLEDGE_PROMPT, unverifiedTermAnswer } from "../term-knowledge";
-import { acceptsIndependentSubject, acceptsDefinitionSubject, hasDefinitionAnchor, resolveDefinitionReferent, type DefinitionReferent, type IndependentSubject } from "./term-referent";
+import { acceptsIndependentSubject, acceptsDefinitionSubject, acceptsDefinitionEvidence, hasDefinitionAnchor, resolveDefinitionReferent, type DefinitionReferent, type IndependentSubject } from "./term-referent";
 /**
  * 야잘알봇 v2 S2b — 선수 서술형 질문 retrieval 서빙 계약.
  *
@@ -830,8 +830,10 @@ export const RAG_OFFICIAL_SYSTEM_PROMPT = [
   "일정의 calendarClaims는 인용 자료의 calendarSeason.season과 요청 연도가 같은 경우에만 허용된다. calendarSeason이 null이거나 불일치하면 그 자료로 일정 날짜를 답하지 말고 INSUFFICIENT로 판정한다. calendarSeason은 섹션 속 사건의 발생 연도이며 FA 자격 시즌·규정 시행연도 등 다른 사실의 적용 연도를 보증하지 않는다. 무관한 자료의 시즌을 빌려 날짜를 결속하지 않는다.",
   "<직전 대화>는 주제·지시어를 해석하는 비신뢰 대화 맥락일 뿐 사실 근거가 아니다. 무관한 새 질문이면 무시한다.",
   "답변 전에 이번 질문의 대상·대상 사이의 관계·요구한 기준을 확인한다. 후속 질문의 생략된 대상과 다의어는 관련 있는 직전 대화에서 해석하며, 검색 자료에 등장하는 다른 대상으로 바꾸지 않는다. 예를 들어 구단과 홈구장을 이야기한 뒤의 ‘둘 다 홈’은 주자의 베이스 점유 질문으로 바꾸지 않는다.",
-  "정의 요청은 definitionPlan을 먼저 고른 뒤 설명 대상을 subject에 기록한다. 질문 단어를 주어로 복사해서 자료의 다른 정의를 붙이지 않는다. 일반 뜻은 general_meaning, 자료가 바로 정의하는 대상은 source_definition이다. expansions는 검수 사전의 약칭 확장 후보이며 뜻의 증명이 아니다. 실제 통용 약칭이면 근거에 등장한 정식 명칭을 subject와 첫 문장에 그대로 쓸 수 있다. 자료가 없는 독립 일반 뜻은 GENERAL, 모르는 말은 기존 미확인 상태로 남긴다.",
+  "정의 요청은 definitionEvidence에서 입력된 모든 자료 번호를 한 번씩 평가한 다음 definitionPlan과 status를 고른다. 자료가 요청 대상의 뜻을 직접 설명하면 role=definition, 요청한 관계·조건·사례를 설명하면 relation, 단어만 언급하면 mention, 무관하면 unrelated다. definition/relation은 판단을 뒷받침하는 원문 구절을 quote에 그대로 인용하고 나머지는 빈 문자열이다. 원문에 없는 뜻이나 관계를 만들어 인용하지 않는다. 자료가 비었으면 빈 배열이다. 단어의 등장(sourceAnchored)은 뜻의 증명이 아니다.",
+  "정의 근거가 있으면 source_definition/GROUNDED, 관계 근거가 있으면 source_relation/GROUNDED로 답한다. 근거가 답하지 않는 경우에만 general_meaning/GENERAL 또는 unknown/미확인 상태를 고른다. source_definition/GENERAL처럼 계획과 상태를 다르게 쓰지 않는다. 자료가 요청 범위를 지지하는데 정식 용어 표제가 없다는 이유만으로 unknown으로 버리지 않는다. 반대로 자료의 다른 정의를 질문 단어에 붙이지 않는다. expansions는 검수 사전의 약칭 확장 후보이며 뜻의 증명이 아니다. 실제 통용 약칭이면 근거에 등장한 정식 명칭을 subject와 첫 문장에 그대로 쓸 수 있다.",
   "<검색 전 독립 단어 해석>의 quote는 이번 질문의 독립 단어다. 이 요청에서는 복합어 검색 자료를 제공하지 않으며 GENERAL로 단어 자체의 뜻만 답한다. subject=quote로 두고 첫 문장을 quote로 시작한다. meaning은 비어 있을 수 있는 참고 뜻이며 복사할 의무는 없다. 첫 문장에서는 독립 뜻만 정의하고 복합어를 같은 뜻으로 쓰지 않는다. 정확한 뜻을 모르면 INSUFFICIENT로 남긴다. 뒤 문장에 명확히 구분한 사용 예는 허용한다.",
+  "독립 일반어의 뜻은 야구 도우미라는 역할과 분리한다. 요청하지 않은 종목별 용법·심판 절차·시설 용도를 덧붙이지 않는다. 일반 뜻을 안다는 사실은 야구에서의 고유 용법이나 야구에서 쓰이지 않는다는 단정을 뒷받침하지 않는다.",
   "여러 단어로 물은 대상은 정식 합성어 정의인지, 장소·행위·결과의 서술형 관계인지 분리한다. 정식 명칭이 없다는 이유만으로 후자의 설명을 버리지 않는다. 자료가 실제 관계를 설명하면 source_relation으로 고르고 subject에는 질문 범위를 기록하되, 답변은 그 관계와 조건을 직접 설명한다. 새 용어를 정의하지 말고 질문 범위를 주제로 관계부터 설명한다. 자료의 특수 사례는 조건을 함께 밝힌 사례로만 설명하고 전체 표현의 뜻이라고 하지 않는다. 단어 조각만 있을 뿐 관계 근거가 없으면 unknown이다. 일반어·타 분야 표현은 아는 일반 뜻으로 답하고 야구 합성어를 끼워 넣지 않는다. GENERAL의 하위 유형 설명도 숫자 제한을 지킨다.",
   "질문이 요구한 한도·진출 기준·일반 자격 요건을 첫 부분에서 직접 답한다. 일반 원칙을 묻는데 해외 복귀 같은 특수 예외만 설명하지 않는다. 적용 시즌·대회가 다른 규정은 구분한다.",
   "'그게 뭔데', '무슨 뜻' 같은 후속은 직전 질문·답변의 지표를 이어서 설명한다. 이미 특정된 용어를 다시 물어보지 않는다.",
@@ -856,6 +858,7 @@ export const RAG_OFFICIAL_SYSTEM_PROMPT = [
   "답변은 자료를 그대로 옮기지 말고 한국어 존댓말로 다시 서술한다.",
   BASEBALL_GENIUS_DEPTH_PROMPT,
   "GENERAL 정의 답변은 위의 분량 목표보다 정확한 핵심 뜻이 우선이다. 핵심 정의와 용도만 숫자 없이 짧게 답하고, 요청하지 않은 경기 수·루 번호·기록 예시로 늘리지 않는다. 숫자가 필수인 설명은 자료가 직접 지지할 때 GROUNDED로 답하고, 그렇지 않으면 수량을 변조해 설명하지 않는다.",
+  "정의의 상대적 기준과 숫자로 든 예시를 구분한다. 비교·비율로 정의되는 개념을 임의의 고정 횟수나 특정 경기 편성으로 바꾸지 않는다. 숫자 예시를 생략해도 정의의 조건이 보존되면 조건 자체를 설명하고, 수량이 정의의 필수 조건이면 근거 없이 생략하거나 다른 수량으로 바꾸지 않는다.",
   `답변은 ${RAG_OFFICIAL_ANSWER_MAX_CHARS}자 이하이며 URL·링크·마크다운을 포함하지 않는다.`,
   `반드시 JSON 하나만 출력한다: {"subject":"답변 첫 문장의 주어","status":"${RAG_GROUNDED_SENTINEL}|${RAG_GENERAL_SENTINEL}|${RAG_INSUFFICIENT_SENTINEL}|TERM_UNVERIFIED|TERM_CONTEXTUAL","answer":"${RAG_GROUNDED_SENTINEL} 또는 ${RAG_GENERAL_SENTINEL}일 때만 답변", "correctsPrevious":false,"contextMeaning":"","calendarClaims":[]}`,
 ].join("\n");
@@ -1137,17 +1140,30 @@ export function buildRagLlmRequest(
     ? evidence.filter(row => hasDefinitionAnchor(officialModelEvidenceContent(row), referent)) : evidence;
   const officialSchema = requestedSubject ? {
     ...OFFICIAL_RAG_RESPONSE_SCHEMA,
-    propertyOrdering: ["definitionPlan", "status", "subject", "answer", "correctsPrevious", "contextMeaning", "calendarClaims"],
+    propertyOrdering: ["definitionEvidence", "definitionPlan", "status", "subject", "answer", "correctsPrevious", "contextMeaning", "calendarClaims"],
     properties: {
       ...OFFICIAL_RAG_RESPONSE_SCHEMA.properties,
       ...(independent ? { subject: { type: "STRING", enum: [independent.quote] } } : {}),
+      definitionEvidence: {
+        type: "ARRAY",
+        items: {
+          type: "OBJECT",
+          propertyOrdering: ["evidence", "role", "quote"],
+          properties: {
+            evidence: { type: "INTEGER", description: "입력 자료의 원래 번호. 모든 자료를 한 번씩 평가한다." },
+            role: { type: "STRING", enum: ["definition", "relation", "mention", "unrelated"] },
+            quote: { type: "STRING", description: "definition/relation을 지지하는 원문의 짧은 연속 인용. 나머지는 빈 문자열." },
+          },
+          required: ["evidence", "role", "quote"],
+        },
+      },
       // An observable generation plan, NOT an independent semantic certificate.
       definitionPlan: { type: "STRING", enum: independent ? ["general_meaning", "unknown"]
         : ["source_definition", "source_relation", "general_meaning", "unknown"] },
       ...(independent ? { status: { type: "STRING", enum: ["GENERAL", "INSUFFICIENT"] } }
         : modelEvidence.length === 0 ? { status: { type: "STRING", enum: ["GENERAL", "INSUFFICIENT", "TERM_UNVERIFIED", "TERM_CONTEXTUAL"] } } : {}),
     },
-    required: [...OFFICIAL_RAG_RESPONSE_SCHEMA.required, "definitionPlan"],
+    required: [...OFFICIAL_RAG_RESPONSE_SCHEMA.required, "definitionEvidence", "definitionPlan"],
   } : OFFICIAL_RAG_RESPONSE_SCHEMA;
   // 🔴 근거 헤더에 **시점 주석**을 붙인다 (삼순 2026-08-28 재리뷰 P0-①).
   //   검색이 lane 으로 최신을 골라와도 모델이 "이게 언제 자료인지"를 모르면 쓸 수 없다.
@@ -1691,6 +1707,9 @@ function boundRecordPeriod(question: string, quote: unknown, referenceYear: numb
 export interface ValidateRagOptions {
   independentSubject?: IndependentSubject;
   definitionReferent?: DefinitionReferent;
+  /** Model-input rows retain sibling packaging and original citation numbers;
+   * the numeric guard's expanded evidence is deliberately a different view. */
+  definitionInputEvidence?: RagEvidence[];
   recordbookRequest?: boolean;
   /** Only implicit retrieval promotion may retain non-record GENERAL answers. */
   allowRecordbookGeneral?: boolean;
@@ -1948,6 +1967,13 @@ export function validateRagResponse(
   if (options.officialQuestion && !officialEventEvidenceSupported(
     options.officialQuestion, options.evidence ?? [], typeof row.answer === "string" ? row.answer : "",
   )) return { kind: "insufficient", reason: "model_insufficient" };
+
+  if (options.officialQuestion && row.definitionPlan !== undefined) {
+    const referent = options.definitionReferent ?? resolveDefinitionReferent(options.officialQuestion, []);
+    const visible = (options.definitionInputEvidence ?? options.evidence ?? []).map((value, index) => ({ evidence: index + 1, content: officialModelEvidenceContent(value) }))
+      .filter(value => !options.independentSubject && (!referent || /\s/u.test(referent.quote) || hasDefinitionAnchor(value.content, referent)));
+    if (!acceptsDefinitionEvidence(row, visible, referent)) return { kind: "insufficient", reason: "model_insufficient" };
+  }
 
   // Bind a retrieval-blind ordinary-word interpretation to the actual prose.
   // No same-model relation labels and no whole-answer substring veto.

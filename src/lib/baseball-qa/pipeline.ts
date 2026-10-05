@@ -5265,6 +5265,7 @@ async function answerOfficialDocumentQuestion(
     officialQuestion: question,
     independentSubject: recordbookRequest ? undefined : independentSubject,
     definitionReferent: recordbookRequest ? undefined : definitionReferent,
+    definitionInputEvidence: officialBundle.modelEvidence,
     numericEvidence: true, evidence,
     ruleRequest: requiredRule ?? undefined,
     // Only compound definitions may echo user quantities, under the same
