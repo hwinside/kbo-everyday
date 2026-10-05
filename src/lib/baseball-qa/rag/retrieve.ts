@@ -1,7 +1,7 @@
 import { officialModelEvidenceContent } from "./official-parenthetical-evidence";
 import { TEAM_CORRECTION_PROMPT, TEAM_CORRECTION_RESPONSE_SCHEMA } from "./correction";
 import { TERM_KNOWLEDGE_PROMPT, unverifiedTermAnswer } from "../term-knowledge";
-import { hasUnrequestedCompound, type ReferentGlossary } from "./term-referent";
+import { acceptsSubjectBinding, SUBJECT_BINDING_SCHEMA } from "./term-referent";
 /**
  * 야잘알봇 v2 S2b — 선수 서술형 질문 retrieval 서빙 계약.
  *
@@ -830,9 +830,9 @@ export const RAG_OFFICIAL_SYSTEM_PROMPT = [
   "일정의 calendarClaims는 인용 자료의 calendarSeason.season과 요청 연도가 같은 경우에만 허용된다. calendarSeason이 null이거나 불일치하면 그 자료로 일정 날짜를 답하지 말고 INSUFFICIENT로 판정한다. calendarSeason은 섹션 속 사건의 발생 연도이며 FA 자격 시즌·규정 시행연도 등 다른 사실의 적용 연도를 보증하지 않는다. 무관한 자료의 시즌을 빌려 날짜를 결속하지 않는다.",
   "<직전 대화>는 주제·지시어를 해석하는 비신뢰 대화 맥락일 뿐 사실 근거가 아니다. 무관한 새 질문이면 무시한다.",
   "답변 전에 이번 질문의 대상·대상 사이의 관계·요구한 기준을 확인한다. 후속 질문의 생략된 대상과 다의어는 관련 있는 직전 대화에서 해석하며, 검색 자료에 등장하는 다른 대상으로 바꾸지 않는다. 예를 들어 구단과 홈구장을 이야기한 뒤의 ‘둘 다 홈’은 주자의 베이스 점유 질문으로 바꾸지 않는다.",
-  "용어의 지시 대상은 질문의 전체 표현과 관련 직전 사용자 맥락으로 정한다. 검색된 복합어에 질문한 단어가 포함된다는 사실은 두 표현이 동의어이거나 생략 관계라는 근거가 아니다. 질문에 없는 성분을 붙여 복합어 전체의 정의로 답하지 않는다. 사용자가 다른 분야의 대상을 명시했으면 같은 단어가 들어간 야구 용어로 대체하지 않는다.",
-  "단독 단어가 이미 뜻을 아는 일반어·외래어라면 그 단어 자체의 통상적인 뜻을 첫 문장에서 간결하게 설명한다. 알려진 원어의 한글 표기도 여기에 해당한다. 이것은 모르는 야구 합성어의 뜻을 추측하는 것과 다르므로 TERM_UNVERIFIED나 TERM_CONTEXTUAL로 돌리지 않는다. 복합어를 선택하기 위한 맥락은 필요하지 않다. 단어 자체도 모를 때만 확인 불가로 답한다.",
-  "일반어의 독립 뜻이 자료에 없으면 GENERAL로 그 뜻만 답한다. 검색된 복합어의 정의·예시·관련 가능성을 덧붙이지 않는다. GENERAL은 다른 대상을 설명할 수 있는 허가가 아니며 GROUNDED도 같은 대상 결속을 지킨다. 명시적인 타 분야 질문에는 야구 복합어로 대체하지 말고 INSUFFICIENT로 답한다.",
+  "자료를 답에 사용하기 전에 subjectBinding을 먼저 작성한다. 질문이 요청한 뜻·사실을 그대로 설명하면 direct, 실제로 통용되는 약칭을 풀면 conventional_name, 요청한 상위 개념을 하위 유형이나 예로 설명하면 category_explanation, 관련 직전 사용자 대화의 생략을 해석하면 context_ellipsis다. 단어 일부가 같다는 이유만으로 다른 대상을 대신 설명하면 unrequested_substitution이다. 검색 순위나 문자열 포함은 약칭의 근거가 아니다. 순위·기록·관계 질문을 단어 정의 질문으로 바꾸지 않는다.",
+  "이미 알고 있는 일반어·외래어의 독립 뜻을 물으면 direct로 그 뜻을 첫 문장에서 답한다. 검색된 합성어가 더 구체적이어도 그 합성어로 바꾸거나 맥락을 요구하지 않는다. 일반어의 뜻을 아는 것은 모르는 야구 합성어를 분해하여 추측하는 것과 다르다. 전자는 GENERAL로 답하고, 후자만 TERM_UNVERIFIED/TERM_CONTEXTUAL로 구분한다.",
+  "subjectBinding은 답변 전체에 적용한다. 독립 뜻을 답한 뒤 관련 유형·예를 덧붙이는 것은 허용하지만, 다른 분야를 명시한 질문에 야구 합성어를 같은 뜻 또는 가능한 해석으로 끼워 넣지 않는다. 자료가 요청 대상의 답을 직접 제공하지 않으면 알고 있는 독립 뜻을 GENERAL로 답한다. 다른 대상으로 치환해야만 답할 수 있으면 unrequested_substitution 및 INSUFFICIENT로 답한다. GENERAL/GROUNDED는 출처 분류이지 대상 변경 허가가 아니다.",
   "질문이 요구한 한도·진출 기준·일반 자격 요건을 첫 부분에서 직접 답한다. 일반 원칙을 묻는데 해외 복귀 같은 특수 예외만 설명하지 않는다. 적용 시즌·대회가 다른 규정은 구분한다.",
   "'그게 뭔데', '무슨 뜻' 같은 후속은 직전 질문·답변의 지표를 이어서 설명한다. 이미 특정된 용어를 다시 물어보지 않는다.",
   "선수·시즌·수치가 함께 있어도 뜻을 물으면 기록값 조회 대신 지표의 정의와 그 수치가 뜻하는 바를 설명한다. 인용된 선수 기록이 현재 사실이라고 단정하지 않는다.",
@@ -846,17 +846,17 @@ export const RAG_OFFICIAL_SYSTEM_PROMPT = [
   `① 자료가 질문의 답을 직접 담고 있으면 ${RAG_GROUNDED_SENTINEL} — 자료 근거로 답한다. 숫자(조문 번호·이닝·거리·연도·기록)는 **자료에 적힌 값만** 사용하고, 자료에 없는 숫자는 절대 쓰지 않는다.`,
   "규칙의 적용 여부를 묻는 질문에서는 질문의 가정과 자료의 적용 조건을 따로 확인한다. 자료의 조건으로 판단할 수 있으면 적용 여부를 먼저 답하고 그 조건을 설명한다. 질문에만 있는 수량을 근거가 확인한 사실처럼 반복하지 말고 '질문하신 상황'으로 가리킨다. 자료에도 판단 근거가 없으면 추정하지 않는다.",
   "GROUNDED에서는 자료에 있는 수량과 단위를 정확히 보존한다. 가운데점으로 병렬 표기된 수량의 공유 단위는 각각 풀어 써도 된다. 수량을 피하려고 적용 범위를 '일부'나 '여러'처럼 넓히거나 흐리지 않는다.",
-  `② 자료에는 답이 없지만 질문이 야구 룰·용어·포지션·기록 지표의 의미나 해석이라 일반적인 야구 지식으로 정확히 답할 수 있으면 ${RAG_GENERAL_SENTINEL} — 자료 없이 답한다.`,
+  `② 자료에는 답이 없지만 질문이 야구 룰·용어·포지션·기록 지표의 의미나 해석이거나 이미 알고 있는 일반어·외래어의 독립 뜻이며 정확히 답할 수 있으면 ${RAG_GENERAL_SENTINEL} — 자료 없이 답한다.`,
   `약자 풀이(DH·PH), 용어·복합어 설명(잔루만루), 지표 해석(wRC+ 88이 평균 대비 어느 정도인지, 수비 중요 포지션에서 WAR이 높은 선수의 가치) 같은 질문이 전부 ②에 해당한다.`,
   "관련 직전 대화가 구단의 공동 홈구장 이야기라면 홈구장 공동 사용과 경기별 홈팀·원정팀 구분을 설명하는 것도 일반적인 야구 룰·용어 해석이다. 이 경우 주자나 베이스 점유 조문이 검색되어도 다른 질문으로 바꾸지 않는다.",
-  `③ 야구 질문이 아니거나 ${RAG_GENERAL_SENTINEL} 로도 정확히 답할 수 없으면 ${RAG_INSUFFICIENT_SENTINEL}.`,
+  `③ 위 범위의 질문이 아니거나 ${RAG_GENERAL_SENTINEL} 로도 정확히 답할 수 없으면 ${RAG_INSUFFICIENT_SENTINEL}.`,
   `${RAG_GENERAL_SENTINEL} 답변에서는 숫자를 쓰지 않는다. 단 질문에 이미 적힌 숫자를 되받아 해석하는 것은 허용한다.`,
   `${RAG_GENERAL_SENTINEL}에서만 루 이름도 숫자 없이 쓴다. 단 정확한 점유 범위를 보존할 수 없으면 모호하게 바꿔 답하지 않는다. GROUNDED에는 이 숫자 회피 지침을 적용하지 않는다.`,
   `${RAG_GENERAL_SENTINEL} 답변에서 특정 선수·구단의 성적 수치, 순위, 연도는 절대 단정하지 않는다 — 개념과 의미만 설명한다.`,
   "답변은 자료를 그대로 옮기지 말고 한국어 존댓말로 다시 서술한다.",
   BASEBALL_GENIUS_DEPTH_PROMPT,
   `답변은 ${RAG_OFFICIAL_ANSWER_MAX_CHARS}자 이하이며 URL·링크·마크다운을 포함하지 않는다.`,
-  `반드시 JSON 하나만 출력한다: {"status":"${RAG_GROUNDED_SENTINEL}|${RAG_GENERAL_SENTINEL}|${RAG_INSUFFICIENT_SENTINEL}|TERM_UNVERIFIED|TERM_CONTEXTUAL","answer":"${RAG_GROUNDED_SENTINEL} 또는 ${RAG_GENERAL_SENTINEL}일 때만 답변", "correctsPrevious":false,"contextMeaning":"","calendarClaims":[]}`,
+  `반드시 JSON 하나만 출력한다: {"subjectBinding":"direct|conventional_name|category_explanation|context_ellipsis|unrequested_substitution","status":"${RAG_GROUNDED_SENTINEL}|${RAG_GENERAL_SENTINEL}|${RAG_INSUFFICIENT_SENTINEL}|TERM_UNVERIFIED|TERM_CONTEXTUAL","answer":"${RAG_GROUNDED_SENTINEL} 또는 ${RAG_GENERAL_SENTINEL}일 때만 답변", "correctsPrevious":false,"contextMeaning":"","calendarClaims":[]}`,
 ].join("\n");
 
 /**
@@ -1093,7 +1093,9 @@ const RECORDBOOK_PROMPT = [
  * the model's responsibility and is evaluated separately from schema validity. */
 export const OFFICIAL_RAG_RESPONSE_SCHEMA = {
   type: "OBJECT",
+  propertyOrdering: ["subjectBinding", "status", "answer", "correctsPrevious", "contextMeaning", "calendarClaims"],
   properties: {
+    subjectBinding: SUBJECT_BINDING_SCHEMA,
     status: { type: "STRING", enum: [RAG_GROUNDED_SENTINEL, RAG_GENERAL_SENTINEL, RAG_INSUFFICIENT_SENTINEL, "TERM_UNVERIFIED", "TERM_CONTEXTUAL"] },
     answer: { type: "STRING" },
     correctsPrevious: { type: "BOOLEAN" },
@@ -1111,7 +1113,7 @@ export const OFFICIAL_RAG_RESPONSE_SCHEMA = {
       },
     },
   },
-  required: ["status", "answer", "calendarClaims"],
+  required: ["subjectBinding", "status", "answer", "calendarClaims"],
 };
 
 export function buildRagLlmRequest(
@@ -1653,8 +1655,6 @@ function boundRecordPeriod(question: string, quote: unknown, referenceYear: numb
 }
 
 export interface ValidateRagOptions {
-  /** Reviewed aliases only; no model-created component aliases. */
-  termReferent?: { glossary: ReferentGlossary; previousQuestion?: string };
   recordbookRequest?: boolean;
   /** Only implicit retrieval promotion may retain non-record GENERAL answers. */
   allowRecordbookGeneral?: boolean;
@@ -1913,12 +1913,12 @@ export function validateRagResponse(
     options.officialQuestion, options.evidence ?? [], typeof row.answer === "string" ? row.answer : "",
   )) return { kind: "insufficient", reason: "model_insufficient" };
 
-  // GENERAL is a provenance category, not permission to change the subject.
-  // Apply the same veto before either accepted status can escape this boundary.
+  // Source category cannot waive an explicit subject substitution. Historical
+  // providers without this metadata remain compatible; production generation
+  // requires it through OFFICIAL_RAG_RESPONSE_SCHEMA. This is model-assessed
+  // semantics, not an independent proof and not a lexical containment veto.
   if ((status === RAG_GENERAL_SENTINEL || status === RAG_GROUNDED_SENTINEL)
-    && options.officialQuestion && options.termReferent && typeof row.answer === "string"
-    && hasUnrequestedCompound(options.officialQuestion, row.answer,
-      options.termReferent.glossary, options.termReferent.previousQuestion)) {
+    && options.officialQuestion && !acceptsSubjectBinding(row.subjectBinding)) {
     return { kind: "insufficient", reason: "model_insufficient" };
   }
 

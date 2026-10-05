@@ -5154,7 +5154,6 @@ async function answerOfficialDocumentQuestion(
   definition?: StatDefinitionIntent | null,
   context?: ContextTurn | null,
   recordbookRequest = false,
-  referentGlossary: GlossaryEntry[] = [],
 ): Promise<QaResult | null> {
   const explicitRecordbookRequest = recordbookRequest;
   let evidence: RagEvidence[];
@@ -5258,7 +5257,6 @@ async function answerOfficialDocumentQuestion(
     allowRecordbookGeneral: recordbookRequest && !explicitRecordbookRequest,
     calendarContract: { referenceTimeMs },
     officialQuestion: question,
-    termReferent: recordbookRequest ? undefined : { glossary: referentGlossary, previousQuestion: context?.question },
     numericEvidence: true, evidence,
     ruleRequest: requiredRule ?? undefined,
     // Only compound definitions may echo user quantities, under the same
@@ -7059,7 +7057,7 @@ async function answerQuestionObserved(userId: string, rawQuestion: string, deps:
     deps.searchOfficialRag &&
     deps.callOfficialRagLlm
   ) {
-    const official = await answerOfficialDocumentQuestion(userId, question, questionNorm, remaining, deps, statDefinition, context, false, glossary);
+    const official = await answerOfficialDocumentQuestion(userId, question, questionNorm, remaining, deps, statDefinition, context);
     if (official) return official;
   }
 

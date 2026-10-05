@@ -1,39 +1,24 @@
-import { normalizeKey, originalSpellingScope } from "../normalize";
-
-export type ReferentGlossary = ReadonlyArray<{ term: string; aliases: readonly string[] }>;
-
-/** A veto, not a definition router or an alias generator. Only an explicit
- * definition subject (the existing normalizer's literal prefix) or a bare
- * lexical token participates. Retrieval alone cannot promote a component into
- * a reviewed compound. Never infer equivalence from a proper substring.
- *
- * This deliberately conservative boundary also rejects unsolicited compound
- * examples in these short definitions. It does not prove semantic correctness
- * or cover compounds absent from the reviewed glossary.
+/** Same-call semantic classification, never a substring/definition router.
+ * The provider must distinguish conventional names and category examples from
+ * substituting an unrelated subject. The server cannot prove this assessment.
  */
-export function hasUnrequestedCompound(
-  question: string,
-  answer: string,
-  glossary: ReferentGlossary,
-  previousQuestion?: string,
-): boolean {
-  const scope = originalSpellingScope(question);
-  const bare = /^[\p{L}\p{N}]+[?!.]*$/u.test(question.trim());
-  if (scope === question && !bare) return false;
-  const parts = scope.match(/[\p{L}\p{N}]+/gu) ?? [];
-  const questionKey = normalizeKey(question);
-  const previousKey = normalizeKey(previousQuestion ?? "");
-  const answerKey = normalizeKey(answer);
-  return glossary.some(entry => {
-    const aliases = [entry.term, ...entry.aliases].map(normalizeKey).filter(Boolean);
-    // A complete, reviewed spelling in the user turn licenses this referent.
-    // Previous bot prose and retrieved documents never license it.
-    if (aliases.some(alias => questionKey.includes(alias) || (bare && previousKey.includes(alias)))) return false;
-    const component = parts.some(part => {
-      const key = normalizeKey(part);
-      // Single letters/syllables are not enough to establish a component.
-      return [...key].length >= 2 && aliases.some(alias => alias !== key && alias.includes(key));
-    });
-    return component && aliases.some(alias => answerKey.includes(alias));
-  });
+const SUBJECT_BINDINGS = [
+  "direct", "conventional_name", "category_explanation", "context_ellipsis",
+  "unrequested_substitution",
+] as const;
+
+export const SUBJECT_BINDING_SCHEMA = {
+  type: "STRING",
+  enum: [...SUBJECT_BINDINGS],
+  description: "Classify the relationship of the entire answer to the requested subject before writing the answer. Shared spelling alone never establishes equivalence.",
+};
+
+export function acceptsSubjectBinding(binding: unknown): boolean {
+  // Legacy responses/recordbook schema have no field. Do not retroactively
+  // reject valid prose based on lexical overlap. New official generation
+  // requires the field through its response schema; this is not semantic proof.
+  if (binding === undefined) return true;
+  return typeof binding === "string"
+    && SUBJECT_BINDINGS.some(value => value === binding)
+    && binding !== "unrequested_substitution";
 }
