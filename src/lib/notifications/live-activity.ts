@@ -24,6 +24,7 @@ import {
   selectWakeGapRows,
   isLiveBornChannel,
   START_SEND_CHUNK_SIZE,
+  START_CLAIM_CHUNK_SIZE,
   p2sSendPlan,
   type P2sSendPlan,
   startTokenResultFence,
@@ -685,6 +686,7 @@ async function startForTeamSide(params: {
     }
     return true;
   });
+  // 평시 기존 claim은 decideStartReissue에서 제외되어 선점 upsert 없이 종료한다.
   if (eligible.length === 0) return { sent: 0, failed: false };
 
   // R3 (삼순 PR #808 blocker①): channel-capable(iOS18+/build16+) 토큰은 active 채널이
@@ -721,25 +723,9 @@ async function startForTeamSide(params: {
     if (error) return { sent: 0, failed: true }; // 무효화 실패 → 재시도(이번 틱은 재선점 불가)
   }
 
-  // 유저 단위 1회 선점 — (game_id, user_id) insert(ON CONFLICT DO NOTHING). 이미 발송한
-  // 유저는 충돌로 제외되고 *새로 선점된 유저만* 반환된다. 게임 단위 선점과 달리 윈도우
-  // 도중 늦게 등록된 토큰도 그 시점 cron이 처음 선점 → 발송된다.
-  const claimed: { user_id: string }[] = [];
-  for (let i = 0; i < sendable.length; i += 200) {
-    const chunk = sendable.slice(i, i + 200);
-    const { data, error } = await supabase
-      .from("live_activity_started_users")
-      .upsert(
-        chunk.map(([userId]) => ({ game_id: params.gameId, user_id: userId })),
-        { onConflict: "game_id,user_id", ignoreDuplicates: true },
-      )
-      .select("user_id");
-    if (error) return { sent: 0, failed: true }; // 선점 실패 → 재시도
-    claimed.push(...((data ?? []) as { user_id: string }[]));
-  }
-  if (claimed.length === 0) return { sent: 0, failed: false };
-  const claimedSet = new Set(claimed.map((r) => r.user_id));
-  const toSend = sendable.filter(([userId]) => claimedSet.has(userId));
+  // 한 팀 전체를 미리 선점하면 함수 cutoff 뒤 미발송자까지 재시도가 차단된다.
+  // 아래 prepareChunk에서 실제 발송 직전의 200명만 원자적으로 선점한다.
+  let claimFailed = false;
 
   let sent = 0;
   let transientFail = false;
@@ -787,8 +773,24 @@ async function startForTeamSide(params: {
     );
   };
   await runStartSendChunks({
-    items: toSend,
+    items: sendable,
     chunkSize: START_SEND_CHUNK_SIZE,
+    claimChunkSize: START_CLAIM_CHUNK_SIZE,
+    prepareChunk: async (chunk) => {
+      const { data, error } = await supabase
+        .from("live_activity_started_users")
+        .upsert(
+          chunk.map(([userId]) => ({ game_id: params.gameId, user_id: userId })),
+          { onConflict: "game_id,user_id", ignoreDuplicates: true },
+        )
+        .select("user_id");
+      if (error) {
+        claimFailed = true;
+        return null; // 조회/선점 실패 시 이번 실행을 중단; 미선점자는 다음 틱에서 재시도
+      }
+      const claimed = new Set((data ?? []).map((r: { user_id: string }) => r.user_id));
+      return chunk.filter(([userId]) => claimed.has(userId));
+    },
     persistChunk: persistChunkMarks,
     sendOne: async ([userId, meta]) => {
       // p2s per-attempt env 쌍 규칙 (스펙 v4): env known = 그 쌍만 / null = prod 쌍 →
@@ -884,7 +886,7 @@ async function startForTeamSide(params: {
       .eq("game_id", params.gameId)
       .eq("user_id", u);
   }
-  return { sent, failed: transientFail && sent === 0 };
+  return { sent, failed: (transientFail || claimFailed) && sent === 0 };
 }
 
 /**
