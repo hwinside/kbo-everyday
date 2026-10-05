@@ -24,6 +24,7 @@ import {
   selectWakeGapRows,
   isLiveBornChannel,
   START_SEND_CHUNK_SIZE,
+  START_CLAIM_CHUNK_SIZE,
   p2sSendPlan,
   type P2sSendPlan,
   startTokenResultFence,
@@ -685,6 +686,7 @@ async function startForTeamSide(params: {
     }
     return true;
   });
+  // 평시 기존 claim은 decideStartReissue에서 제외되어 선점 upsert 없이 종료한다.
   if (eligible.length === 0) return { sent: 0, failed: false };
 
   // R3 (삼순 PR #808 blocker①): channel-capable(iOS18+/build16+) 토큰은 active 채널이
@@ -722,7 +724,7 @@ async function startForTeamSide(params: {
   }
 
   // 한 팀 전체를 미리 선점하면 함수 cutoff 뒤 미발송자까지 재시도가 차단된다.
-  // 아래 prepareChunk에서 실제 발송 직전의 100명만 원자적으로 선점한다.
+  // 아래 prepareChunk에서 실제 발송 직전의 200명만 원자적으로 선점한다.
   let claimFailed = false;
 
   let sent = 0;
@@ -773,6 +775,7 @@ async function startForTeamSide(params: {
   await runStartSendChunks({
     items: sendable,
     chunkSize: START_SEND_CHUNK_SIZE,
+    claimChunkSize: START_CLAIM_CHUNK_SIZE,
     prepareChunk: async (chunk) => {
       const { data, error } = await supabase
         .from("live_activity_started_users")
