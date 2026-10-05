@@ -53,7 +53,11 @@ async function main() {
       const deps: QaDeps = {
         loadGlossary: production.loadGlossary, loadPlayers: production.loadPlayers,
         callLlm: production.callLlm, mapGlossaryDefinition: production.mapGlossaryDefinition,
-        normalizeQuestionLlm: production.normalizeQuestionLlm,
+        normalizeQuestionLlm: async (...args) => {
+          const result = await production.normalizeQuestionLlm!(...args);
+          officialTrace.push({ stage: "pre_retrieval_normalize", question: args[0], result });
+          return result;
+        },
         searchRag: production.searchRag, callRagLlm: production.callRagLlm,
         callTeamRagLlm: production.callTeamRagLlm, enablePlayerRag: production.enablePlayerRag,
         enableTeamRag: production.enableTeamRag, searchNewsRag: production.searchNewsRag,
