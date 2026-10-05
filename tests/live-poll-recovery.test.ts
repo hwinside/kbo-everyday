@@ -1,6 +1,7 @@
 /** Developer regression: real hooks, abort-ignoring fetch/body/stream failures. */
 import assert from 'node:assert/strict';
-import { JSDOM } from 'jsdom';
+import { createRequire } from 'node:module';
+const { JSDOM } = createRequire(import.meta.url)('jsdom');
 import React from 'react';
 import { createRoot } from 'react-dom/client';
 import { withRequestDeadline, LIVE_REQUEST_TIMEOUT_MS, RELAY_REQUEST_TIMEOUT_MS } from '../src/lib/polling/request-deadline';
@@ -15,7 +16,7 @@ async function main() {
   const { useGameRelay } = await import('../src/lib/hooks/useGameRelay');
   const { supabase } = await import('../src/lib/supabase/client');
   const channel = { on() { return this; }, subscribe() { return this; } };
-  supabase.channel = (() => channel) as typeof supabase.channel;
+  supabase.channel = (() => channel) as unknown as typeof supabase.channel;
   supabase.removeChannel = (async () => 'ok') as typeof supabase.removeChannel;
   const nativeTimeout = globalThis.setTimeout;
   const originalFetch = globalThis.fetch;
@@ -39,8 +40,8 @@ async function main() {
   const payload = (name: string) => ({ games: [{ gameId, currentBatter: name, isLive: true }], trace: { sourceAtMs: Date.now(), fetchedAtMs: Date.now() } });
   const relayPayload = (name: string) => ({ gameId, innings: [], currentInning: 9, marker: name });
   const envelope = (channel: string, data: unknown) => JSON.stringify({ channel, ok: true, status: 200, data }) + '\n';
-  let live: ReturnType<typeof useLiveGame>;
-  let relay: ReturnType<typeof useGameRelay>;
+  let live!: ReturnType<typeof useLiveGame>;
+  let relay!: ReturnType<typeof useGameRelay>;
   const onLiveFrame = (data: unknown) => embedded.push(data);
   let embedded: unknown[] = [];
   function Live({ interval = 20 }: { interval?: number }) {
