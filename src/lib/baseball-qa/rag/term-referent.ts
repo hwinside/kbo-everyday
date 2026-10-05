@@ -128,6 +128,24 @@ export function hasDefinitionAnchor(content: string, referent: DefinitionReferen
   });
 }
 
+/** A numbered official definition heading owns only the following body up to
+ * the next numbered heading. An anchor elsewhere in a chunk is insufficient.
+ */
+function quoteHasDefinitionHeading(content: string, quote: string, referent: DefinitionReferent): boolean {
+  const lines = content.split(/\r?\n/u);
+  const heading = /^\s*\d+\.\s+[A-Z][A-Z ()/–—-]*\s*\([^\n]+\)\s*$/u;
+  const boundary = /^\s*\d+\.\s+/u;
+  const normalizedQuote = quote.replace(/\s+/gu, " ").trim();
+  for (let i = 0; i < lines.length; i++) {
+    if (!heading.test(lines[i]) || !hasDefinitionAnchor(lines[i], referent)) continue;
+    let end = i + 1;
+    while (end < lines.length && !boundary.test(lines[end])) end++;
+    const body = lines.slice(i + 1, end).join(" ").replace(/\s+/gu, " ").trim();
+    if (body.includes(normalizedQuote)) return true;
+  }
+  return false;
+}
+
 /** The model must account for the visible rows before choosing its answer mode.
  * Quote identity and plan/status consistency are deterministic; the claimed
  * semantic relation is NOT. Never promote a rejected answer or retry here.
@@ -153,7 +171,8 @@ export function acceptsDefinitionEvidence(
       // Compare the actual generation input. Layout whitespace may change
       // during citation, but never erase word boundaries or alter punctuation.
       if (!item.quote.trim() || !source.content.replace(/\s+/gu, " ").trim().includes(item.quote.replace(/\s+/gu, " ").trim())) return false;
-      if (referent && !/\s/u.test(referent.quote) && !hasDefinitionAnchor(item.quote, referent)) return false;
+      if (referent && !/\s/u.test(referent.quote) && !hasDefinitionAnchor(item.quote, referent)
+        && !(item.role === "definition" && quoteHasDefinitionHeading(source.content, item.quote, referent))) return false;
       support.add(item.role);
     } else if (item.role !== "mention" && item.role !== "unrelated") return false;
     else if (item.quote !== "") return false;

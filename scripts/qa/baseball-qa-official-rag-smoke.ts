@@ -441,6 +441,25 @@ check("R8 evidence ledger binds source plan to grounded mode, never upgrades a g
   assert.equal(acceptsDefinitionEvidence({ ...unknown, status: "GENERAL" }, visible, scope), false);
   assert.equal(acceptsDefinitionEvidence({ definitionPlan: "general_meaning", status: "GENERAL", definitionEvidence: [] }, []), true);
 });
+check("R10 definition body inherits only its own numbered heading", () => {
+  const quote = "어떤 이유로든지 주심이 종료를 선언한 게임을 가리킨다.";
+  const heading = "14. CALLED GAME (콜드게임·중도종료경기)";
+  const scope = { quote: "콜드", expansions: ["콜드게임"] };
+  const row = { definitionPlan: "source_definition", status: "GROUNDED",
+    definitionEvidence: [{ evidence: 2, role: "definition", quote }] };
+  const accepts = (content: string) => acceptsDefinitionEvidence(row, [{ evidence: 2, content }], scope);
+  assert.equal(accepts(`${heading}\n${quote}`), true);
+  assert.equal(accepts(`${heading}\n어떤 이유로든지\n주심이 종료를 선언한 게임을 가리킨다.`), true);
+  assert.equal(accepts(`15. CATCHER (포수)\n${quote}`), false);
+  assert.equal(accepts(`${heading}\n다른 내용.\n15. CATCHER (포수)\n${quote}`), false);
+  assert.equal(accepts(`콜드게임을 언급한다.\n${quote}`), false);
+  assert.equal(accepts(`${quote}\n${heading}`), false);
+  assert.equal(accepts(`${heading}\n${quote.replace("종료", "재개")}`), false);
+  assert.equal(acceptsDefinitionEvidence({ ...row, definitionPlan: "source_relation",
+    definitionEvidence: [{ evidence: 2, role: "relation", quote }] },
+    [{ evidence: 2, content: `${heading}\n${quote}` }], scope), false);
+});
+
 check("R9 citation accepts layout whitespace only, preserving text and word boundaries", () => {
   const content = "(콜드게임·중도종료경기)\r\n어떤 이유로든지\t주심이 종료를 선언한 경기다.";
   const quote = "(콜드게임·중도종료경기) 어떤 이유로든지 주심이 종료를 선언한 경기다.";
@@ -474,6 +493,10 @@ checkAsync("R9 actual pipeline preserves filtered source numbers and binds packa
       assert.equal(evidence.length, 2);
       const request = buildRagLlmRequest(question, evidence, RAG_OFFICIAL_SYSTEM_PROMPT, extras);
       const body = request.contents[0].parts[0].text;
+      const instruction = request.systemInstruction.parts[0].text;
+      assert.ok(instruction.includes("실제 제시된 자료 1건을 모두 평가한다."));
+      assert.ok(instruction.includes("원래 자료번호는 [2]이다."));
+      assert.ok(instruction.includes("정의의 구성원 범위를 기억으로 임의 제외하거나"));
       assert.ok(body.includes("[자료2]"));
       assert.ok(!body.includes("[자료1]"));
       const schema = request.generationConfig.responseSchema as { properties: { definitionEvidence: { minItems: number; maxItems: number } }; required: string[] };
