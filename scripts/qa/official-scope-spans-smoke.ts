@@ -3,12 +3,19 @@ import assert from 'node:assert/strict';
 import parentheticals from './fixtures/official-parenthetical-serving.json';
 import { officialParentheticalNote } from '../../src/lib/baseball-qa/rag/official-parenthetical-evidence';
 import fixtures from './fixtures/official-scope-spans-census.json';
-import { parseScope, renderScope, sha256, EXTRA_UNITS, type Source } from '../baseball-qa/rag/experimental-scope-spans';
-import { scopeRequest, withScopeTransport } from '../baseball-qa/rag/experimental-scope-request';
+import { parseScope, renderScope as renderLabels, sha256, EXTRA_UNITS, type Source } from '../baseball-qa/rag/experimental-scope-spans';
+import { scopeRequest as originalScopeRequest, withScopeTransport } from '../baseball-qa/rag/experimental-scope-request';
 import { buildOfficialContextRequest } from '../../src/lib/baseball-qa/rag/official-context-request';
 import { siblingEvidence, standaloneSiblingEvidence, type OfficialEvidenceBundle } from '../../src/lib/baseball-qa/rag/official-sibling-evidence';
 import type { RagEvidence } from '../../src/lib/baseball-qa/rag/retrieve';
 
+import { renderClosedScope, CLOSED_TAGS, CLOSED_EXTRA_UNITS, BOUNDARY_CONTRACT } from '../baseball-qa/rag/experimental-scope-boundary';
+const closed = process.argv.includes('--closed');
+const renderScope = closed ? renderClosedScope : renderLabels;
+const extraUnits = closed ? CLOSED_EXTRA_UNITS : EXTRA_UNITS;
+const strip = (s: string) => closed ? CLOSED_TAGS.reduce((text, tag) => text.replaceAll(tag, ''), s)
+  : s.replace('[예외절 원문]', '').replace('\n[적용 본문 원문]', '');
+const scopeRequest = (...args: Parameters<typeof originalScopeRequest>) => originalScopeRequest(args[0], args[1], args[2], closed ? 'closed' : 'labels');
 const row = (s: Source): RagEvidence => ({...s, pageTitle: '공식 원문', asOf: '2026-10-04', sourceGrade: 'tier1', sourceKind: 'kbo_ebook'});
 const plainBundle = (rows: RagEvidence[]): OfficialEvidenceBundle => ({modelEvidence:rows,rawEvidence:rows,guardEvidence:rows,
   trace:[],primaryCount:rows.length,physicalChunkCount:rows.length,skippedForContext:false,skipReason:null});
@@ -19,8 +26,17 @@ async function main() {
     if (parsed.relation) {
       const rendered = renderScope(s, parsed.relation);
       assert.equal(rendered.applied, true);
-      assert.equal(rendered.content.length - s.content.length, 19);
-      assert.equal(rendered.content.replace('[예외절 원문]', '').replace('\n[적용 본문 원문]', ''), s.content);
+      const E = s.content.slice(parsed.relation.sentence[0], parsed.relation.connective[1]);
+      const G = s.content.slice(...parsed.relation.governedClause);
+      assert.equal(E + G, s.content.slice(...parsed.relation.sentence), 'E+G must equal original span');
+      if (closed) {
+        const renderedE = rendered.content.split(CLOSED_TAGS[0])[1].split(CLOSED_TAGS[1])[0];
+        const renderedG = rendered.content.split(CLOSED_TAGS[2])[1].split(CLOSED_TAGS[3])[0];
+        assert.equal(renderedE + renderedG, s.content.slice(...parsed.relation.sentence), 'rendered E+G must equal original span');
+        assert.ok(rendered.content.endsWith(CLOSED_TAGS[3] + s.content.slice(parsed.relation.sentence[1])), 'closing tag must precede untouched suffix');
+      }
+      assert.equal(rendered.content.length - s.content.length, extraUnits);
+      assert.equal(strip(rendered.content), s.content);
       for (const changed of [{...s,revision:s.revision+'x'}, {...s,canonicalUrl:s.canonicalUrl+'x'},
         {...s,sectionPath:s.sectionPath+'x'}, {...s,content:s.content+' '}])
         assert.equal(renderScope(changed,parsed.relation).content,changed.content);
@@ -34,7 +50,15 @@ async function main() {
   assert.equal(census.filter(r=>r.applied).length,6,'HOLD: automatic census differs');
   assert.ok(census.every(r=>r.applied === r.manual.startsWith('통과:')),'HOLD: per-row census differs');
   assert.equal(EXTRA_UNITS,19);
+  assert.equal(CLOSED_EXTRA_UNITS,38);
+  assert.equal(BOUNDARY_CONTRACT.holdComparison,'semantic-correct-GROUNDED-count-per-suite-raw-and-final');
   const p62 = row(fixtures.rows.find(r=>r.id===192183)!);
+  if (closed) for (const tag of CLOSED_TAGS) {
+    const collision = {...p62,content:p62.content + ' ' + tag};
+    const parsed = parseScope(collision).relation!;
+    assert.ok(parsed);
+    assert.deepEqual(renderClosedScope(collision,parsed),{content:collision.content,applied:false,reason:'tag-collision'});
+  }
   // Topic vs adnominal, particle allomorphs, and list boundaries: synthetic
   // vocabulary and identities, independent of the frozen corpus row IDs.
   for (const content of [
@@ -51,7 +75,7 @@ async function main() {
     const parsed = parseScope(source).relation!;
     assert.ok(parsed,'list marker must delimit the scope');
     assert.equal(parsed.sentence[0],lead.length);
-    assert.equal(renderScope(source,parsed).content,lead+'[예외절 원문]장비가 물체에 닿는 부분을 제외하고\n[적용 본문 원문] 나머지는 유지한다.');
+    assert.equal(renderScope(source,parsed).content,closed ? lead+'<예외절 원문>장비가 물체에 닿는 부분을 제외하고</예외절 원문><적용 본문 원문> 나머지는 유지한다.</적용 본문 원문>' : lead+'[예외절 원문]장비가 물체에 닿는 부분을 제외하고\n[적용 본문 원문] 나머지는 유지한다.');
     assert.equal(parseScope({...source,content:lead+'차단막은 플레이 과정에 눌린 부분을 제외하고 나머지는 유지한다.'}).relation,undefined);
   }
   assert.ok(parseScope({...p62,content:'장벽이 물체에 닿는 부분을 제외하고 나머지는 유지한다.'}).relation);
@@ -73,13 +97,13 @@ async function main() {
   const baseBytes = JSON.stringify(base);
   const changed = scopeRequest(base,rows,bundle);
   assert.equal(changed.applied,1);
-  assert.equal(changed.addedUnits,19);
+  assert.equal(changed.addedUnits,extraUnits);
   assert.ok(changed.request.contents[0].parts[0].text.includes(note));
   assert.equal(JSON.stringify(bundle),frozen,'raw/guard/model input immutable');
   assert.equal(JSON.stringify(base),baseBytes,'base immutable');
   assert.deepEqual(changed.request.systemInstruction,base.systemInstruction);
   assert.deepEqual(changed.request.generationConfig,base.generationConfig);
-  assert.equal(changed.request.contents[0].parts[0].text.replace('[예외절 원문]','').replace('\n[적용 본문 원문]',''),base.contents[0].parts[0].text);
+  assert.equal(strip(changed.request.contents[0].parts[0].text),base.contents[0].parts[0].text);
   for (const skipped of [undefined, {...bundle,physicalChunkCount:8}, {...bundle,modelEvidence:[]}]) {
     assert.equal(JSON.stringify(scopeRequest(base,rows,skipped).request),baseBytes);
   }
@@ -87,6 +111,16 @@ async function main() {
   const noRequest = buildOfficialContextRequest('정의?',noScope,extras);
   assert.equal(scopeRequest(noRequest,noScope,plainBundle(noScope)).request,noRequest);
 
+  if (closed) {
+    const six = Array.from({length:6},(_,i)=>({...p62,sectionPath:`synthetic#${i}`}));
+    const req = buildOfficialContextRequest('budget',six,extras);
+    const result = scopeRequest(req,six,plainBundle(six));
+    assert.equal(result.applied,6); assert.equal(result.addedUnits,228);
+    assert.equal(strip(result.request.contents[0].parts[0].text),req.contents[0].parts[0].text);
+    const seven = [...six,{...p62,sectionPath:'synthetic#6'}];
+    const over = buildOfficialContextRequest('budget',seven,extras);
+    assert.equal(scopeRequest(over,seven,plainBundle(seven)).request,over);
+  }
   // Real sibling builder: transform bound anchor only, never parse the synthetic block.
   const anchor = {...p62,content:'5.09 아웃\n[부기] 인필드 플라이 규칙이 적용되는 경우를 제외하고 타자는 아웃이 되지 않는다.'};
   const sibling = {...p62,sectionPath:'test#p60',content:'5.09 아웃\n⑸ 인필드 플라이가 선언되었을 경우'};
@@ -101,7 +135,7 @@ async function main() {
   const sbChanged=scopeRequest(sbRequest,sb.modelEvidence,sb);
   assert.equal(sbChanged.applied,1);
   assert.equal(JSON.stringify(sb),sbFrozen);
-  assert.equal(sbChanged.request.contents[0].parts[0].text.replace('[예외절 원문]','').replace('\n[적용 본문 원문]',''),sbRequest.contents[0].parts[0].text);
+  assert.equal(strip(sbChanged.request.contents[0].parts[0].text),sbRequest.contents[0].parts[0].text);
   assert.equal(standaloneSiblingEvidence([anchor],[sibling],manifest,extras).skipReason,'context');
 
   // A fake transport observes URL/headers/signal/options unchanged and one call only.
