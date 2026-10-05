@@ -45,7 +45,7 @@ import {
   type RagEvidence,
 } from "../../src/lib/baseball-qa/rag/retrieve";
 import { gradeForSourceKind } from "../../src/lib/baseball-qa/rag/contracts";
-import { acceptsIndependentSubject, contextualSubject, readIndependentSubject } from "../../src/lib/baseball-qa/rag/term-referent";
+import { acceptsIndependentSubject, contextualSubject, resolveIndependentSubject, readIndependentSubject } from "../../src/lib/baseball-qa/rag/term-referent";
 
 let pass = 0;
 const fail: string[] = [];
@@ -333,6 +333,21 @@ check("only bare followup with previous user full term can release word binding"
   assert.deepEqual(contextualSubject("트랙이 뭐야?", track, "워닝 트랙이 뭐야?", glossary), track);
   assert.deepEqual(contextualSubject("트랙", track, "야구장에 가요", glossary), track);
 });
+check("R4 no meaning echo; lexical scope survives missing blind label", () => {
+  assert.equal(acceptsIndependentSubject({ status: "GENERAL", subject: "위닝", answer: "위닝은 이김이나 승리를 뜻해요." }, { quote: "위닝", meaning: "이김, 승리" }), true);
+  const glossary = [
+    { term: "워닝 트랙", aliases: ["워닝트랙"] },
+    { term: "콜드게임", aliases: ["콜드 게임"] },
+    { term: "위닝시리즈", aliases: ["위닝 시리즈"] },
+  ];
+  for (const q of ["워닝", "워닝이 뭐야?", "워닝이 무슨 뜻이야?"]) {
+    assert.deepEqual(resolveIndependentSubject(q, undefined, undefined, glossary), { quote: "워닝", meaning: "" });
+  }
+  assert.equal(resolveIndependentSubject("콜드", { quote: "콜드", meaning: "차가움" }, undefined, glossary), undefined);
+  assert.equal(resolveIndependentSubject("위닝은 뭐야?", { quote: "위닝", meaning: "승리" }, undefined, glossary), undefined);
+  assert.equal(resolveIndependentSubject("트랙", { quote: "트랙", meaning: "길" }, "워닝 트랙이 뭐야?", glossary), undefined);
+  assert.equal(resolveIndependentSubject("워닝 시리즈", undefined, undefined, glossary), undefined);
+});
 check("subject schema and independent input transport", () => {
   const request = buildRagLlmRequest("워닝", [OFFICIAL], RAG_OFFICIAL_SYSTEM_PROMPT, { independentSubject: WORD_SUBJECT });
   const schema = request.generationConfig.responseSchema as { required: string[]; propertyOrdering: string[] };
@@ -347,7 +362,7 @@ for (const [status, subject, answer, accepted] of [
   ["GENERAL", "워닝트랙", "워닝트랙은 경고 구역입니다.", false],
   ["GENERAL", "워닝", "워닝트랙은 경고 구역입니다.", false],
   ["GENERAL", "워닝", "워닝 트랙은 경고 구역입니다.", false],
-  ["GENERAL", "워닝", "워닝은 펜스 앞 구역입니다.", false],
+  ["GENERAL", "워닝", "워닝은 펜스 앞 구역입니다.", true], // structural pass, semantic failure belongs in live review
   ["GENERAL", undefined, "워닝은 경고를 뜻합니다.", false],
 ] as const) {
   check(`독립 주어·실제 첫 문장 ${status}/${subject}/${answer}`, () => {
@@ -396,6 +411,20 @@ for (const [status, subject, answer, accepted] of [
     assert.ok(!calls.includes("callLlm"), "no second answer generation");
   });
 }
+
+checkAsync("R4 missing blind subject still binds canonical spaced component in pipeline", async () => {
+  const { deps } = makeDeps({
+    loadGlossary: async () => [{ term: "워닝 트랙", aliases: ["워닝트랙"], answer: "펜스 앞 구역입니다." }],
+    normalizeQuestionLlm: async () => ({ text: null, inputTokens: 1, outputTokens: 1 }),
+    searchOfficialRag: async () => [OFFICIAL],
+    callOfficialRagLlm: async (_q, _e, extras) => {
+      assert.deepEqual(extras?.independentSubject, { quote: "워닝", meaning: "" });
+      return { text: JSON.stringify({ status: "GROUNDED", subject: "워닝", answer: "워닝트랙은 펜스 앞 구역입니다.", calendarClaims: [] }), inputTokens: 1, outputTokens: 1 };
+    },
+  });
+  const result = await answerQuestion("u", "워닝", deps);
+  assert.equal(result.source, "unsure");
+});
 
 // Synthetic adversarial fixtures: exact provider status must not waive event identity.
 for (const [name, question, content, answer, expected] of [

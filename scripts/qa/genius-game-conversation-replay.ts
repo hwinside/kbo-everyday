@@ -10,7 +10,7 @@ import { pathToFileURL } from "node:url";
 import { answerQuestion, type QaDeps, type QaResult } from "../../src/lib/baseball-qa/pipeline";
 import type { AppFactSnapshot } from "../../src/lib/baseball-qa/app-fact-conversation";
 import type { ConversationGame } from "../../src/lib/baseball-qa/game-conversation";
-import type { PreviousTurnRow } from "../../src/lib/baseball-qa/context";
+import { selectContextTurn, type PreviousTurnRow } from "../../src/lib/baseball-qa/context";
 
 type Row = { id: string; kst: string; user_id: string; q: string; a: string; mp: string };
 type Snapshot = { games: ConversationGame[] | null; favoriteTeams?: Record<string, string>; appFacts?: AppFactSnapshot; source?: string; capturedAt?: string };
@@ -96,7 +96,7 @@ async function main() {
         const result = await run("qa-game-conversation-replay", row.q, deps);
         previous.set(row.user_id, { row, result });
         output.push({ variant, id: row.id, question: row.q, originalAnswer: row.a, originalSource: row.mp,
-          result, selector, officialTrace, pipelineLog, elapsedMs: Date.now() - start, grade: null });
+          result, selector, contextInput: context, contextSelected: selectContextTurn(context), officialTrace, pipelineLog, elapsedMs: Date.now() - start, grade: null });
       } catch (error) {
         previous.delete(row.user_id); // Failure is a context barrier, never silently skip backwards.
         output.push({ variant, id: row.id, question: row.q, error: error instanceof Error ? error.name : "Error", elapsedMs: Date.now() - start, grade: null });

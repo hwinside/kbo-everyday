@@ -1,4 +1,4 @@
-import { contextualSubject, readIndependentSubject, type IndependentSubject } from "./rag/term-referent";
+import { resolveIndependentSubject, readIndependentSubject, type IndependentSubject } from "./rag/term-referent";
 import { prepareOfficialEvidence } from "./rag/official-sibling-evidence";
 import { collectConversationTeamCandidates } from "./conversation-team-candidates";
 import { renderRagHold } from "./rag/hold-answer";
@@ -5204,8 +5204,9 @@ async function answerOfficialDocumentQuestion(
 
   if (definition) definition = definitionWithEvidence(definition, true);
 
-  const officialExtras = { independentSubject: recordbookRequest ? undefined : independentSubject, recordbookRequest, context: definition?.context ?? context ?? undefined, definition: definition ?? undefined, referenceTimeMs };
-  const officialBundle = prepareOfficialEvidence(evidence, candidates, officialExtras);
+  const officialExtras = { recordbookRequest, context: definition?.context ?? context ?? undefined, definition: definition ?? undefined, referenceTimeMs };
+  const subjectExtras = { ...officialExtras, independentSubject: recordbookRequest ? undefined : independentSubject };
+  const officialBundle = prepareOfficialEvidence(evidence, candidates, subjectExtras);
   // Post-generation guards and observations include the independently bound sibling.
   evidence = officialBundle.guardEvidence;
   deps.observeOfficialEvidence?.(officialBundle);
@@ -5245,7 +5246,7 @@ async function answerOfficialDocumentQuestion(
       if (!won) return { status: 202, answer: "", source: "pending", remaining };
     }
     try {
-      llm = await deps.callOfficialRagLlm!(question, officialBundle.modelEvidence, { ...officialExtras,
+      llm = await deps.callOfficialRagLlm!(question, officialBundle.modelEvidence, { ...subjectExtras,
         allowRecordbookGeneral: recordbookRequest && !explicitRecordbookRequest,
         ...(requiredRule ? { ruleRequest: { kind: requiredRule.kind, season: requiredRule.season, competition: requiredRule.competition, faFocus: requiredRule.faFocus, postseasonStage: requiredRule.postseasonStage, ...(currentRuleFact ? { fact: currentRuleFact } : {}) } } : {}),
       });
@@ -6229,7 +6230,7 @@ async function answerQuestionObserved(userId: string, rawQuestion: string, deps:
       draftContext = null;
     }
   }
-  independentSubject = contextualSubject(question, independentSubject, context?.question, glossary);
+  independentSubject = resolveIndependentSubject(question, independentSubject, context?.question, glossary);
   setContextSelected(context !== null);
   // 축 D — 질문·직전 턴이 지목한 선수의 현재 소속(로스터 SSOT)을 모든 LLM 경로에 준다.
   // Safety/service gates keep precedence over the definition routing exception.

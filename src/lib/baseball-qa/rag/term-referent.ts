@@ -19,6 +19,34 @@ export function readIndependentSubject(question: string, raw: unknown): Independ
   return { quote, meaning };
 }
 
+/** Resolve lexical scope from reviewed canonical spellings, not model labels.
+ * A standalone orthographic component of a spaced term is not the whole term.
+ * A prefix inside an unspaced canonical word may be an abbreviation: abstain
+ * from imposing an ordinary-language sense, without declaring that sense correct.
+ * Aliases cannot erase canonical word boundaries by removing spaces.
+ */
+export function resolveIndependentSubject(
+  question: string, blind: IndependentSubject | undefined,
+  previousQuestion: string | undefined,
+  glossary: ReadonlyArray<{ term: string; aliases: readonly string[] }>,
+): IndependentSubject | undefined {
+  const quote = originalSpellingScope(question).replace(/[?!.]+$/u, "").trim();
+  if (!/^[\p{L}]{2,40}$/u.test(quote)) return undefined;
+  const key = normalizeKey(quote);
+  const exact = glossary.some(entry => [entry.term, ...entry.aliases].some(value => normalizeKey(value) === key));
+  if (exact) return undefined;
+  const component = glossary.some(entry => {
+    const words = entry.term.trim().split(/\s+/u);
+    return words.length > 1 && words.some(word => normalizeKey(word) === key);
+  });
+  const possibleAbbreviation = glossary.some(entry => !/\s/u.test(entry.term.trim())
+    && normalizeKey(entry.term) !== key && normalizeKey(entry.term).startsWith(key));
+  if (!component && possibleAbbreviation) return undefined;
+  // Empty meaning is intentional: lexical boundaries supply no definition.
+  const subject = blind ?? (component ? { quote, meaning: "" } : undefined);
+  return contextualSubject(question, subject, previousQuestion, glossary);
+}
+
 /** Only a bare follow-up after an explicit reviewed full term may set aside
  * the independent word reading. Prior assistant text never licenses expansion.
  */
@@ -39,7 +67,7 @@ export function contextualSubject(
 }
 
 /** Bind BOTH the declared subject and actual first clause to the independent
- * quote, and retain its meaning in the first sentence. No answer rewriting,
+ * quote. Meaning is a fallible hint, never a literal substring requirement. No answer rewriting,
  * no whole-answer compound ban. A wrong blind interpretation remains possible.
  */
 export function acceptsIndependentSubject(
@@ -51,6 +79,5 @@ export function acceptsIndependentSubject(
   if (!answer.startsWith(subject.quote)) return false;
   const tail = answer.slice(subject.quote.length);
   if (!/^\s*(?:은|는|이란|란|이라는|라는|:)/u.test(tail)) return false;
-  const firstSentence = answer.split(/[.!?\n]/u, 1)[0];
-  return normalizeKey(firstSentence).includes(normalizeKey(subject.meaning));
+  return true;
 }
