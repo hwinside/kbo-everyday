@@ -452,11 +452,13 @@ check("subject schema and independent input transport", () => {
   const request = buildRagLlmRequest("워닝", [OFFICIAL], RAG_OFFICIAL_SYSTEM_PROMPT, { independentSubject: WORD_SUBJECT });
   const schema = request.generationConfig.responseSchema as { required: string[]; propertyOrdering: string[] };
   assert.ok(schema.required.includes("subject"));
-  assert.equal(schema.propertyOrdering[0], "subject");
+  assert.deepEqual(schema.propertyOrdering.slice(0, 4), ["definitionPlan", "status", "subject", "answer"]);
   assert.ok(request.contents[0].parts[0].text.includes(JSON.stringify(WORD_SUBJECT)));
   assert.ok(!request.contents[0].parts[0].text.includes(OFFICIAL.content), "independent general meaning must not see compound evidence");
-  const normal = buildRagLlmRequest("콜드", [OFFICIAL], RAG_OFFICIAL_SYSTEM_PROMPT);
-  assert.ok(normal.contents[0].parts[0].text.includes(OFFICIAL.content), "abbreviation path keeps its official evidence");
+  const cold = { ...OFFICIAL, content: "콜드게임은 주심이 종료를 선언한 정식 경기입니다." };
+  const referent = resolveDefinitionReferent("콜드가 뭐야?", [{ term: "콜드게임", aliases: [] }]);
+  const normal = buildRagLlmRequest("콜드가 뭐야?", [cold], RAG_OFFICIAL_SYSTEM_PROMPT, { definitionReferent: referent });
+  assert.ok(normal.contents[0].parts[0].text.includes(cold.content), "reviewed abbreviation keeps matching official evidence");
 });
 for (const [status, subject, answer, accepted] of [
   ["GENERAL", "워닝", "워닝은 경고를 뜻합니다.", true],
@@ -545,13 +547,23 @@ checkAsync("R6 pipeline carries reviewed prefix evidence contract through genera
   assert.ok(!calls.includes("callLlm"));
 });
 checkAsync("R6 provider forcing requested subject cannot serve neighbor definition as GROUNDED", async () => {
-  const { deps } = makeDeps({
-    searchOfficialRag: async () => [{ ...OFFICIAL, content: "워닝트랙은 펜스 앞 구간이다." }],
-    callOfficialRagLlm: async () => ({ text: JSON.stringify({ status: "GROUNDED", subject: "위닝",
-      definitionPlan: "source_definition", answer: "위닝은 펜스 앞 구간이에요.", calendarClaims: [] }), inputTokens: 1, outputTokens: 1 }),
+  const neighbor = { ...OFFICIAL, content: "워닝트랙은 외야 안전 펜스 바로 앞에 조성된 일정한 폭의 구간이다." };
+  assert.equal(selectEvidence([neighbor]).length, 1, "fixture must reach the official provider, not the empty-search fallback");
+  const { deps, calls } = makeDeps({
+    searchOfficialRag: async () => [neighbor],
+    callOfficialRagLlm: async (_question, evidence, extras) => {
+      calls.push("callOfficialRagLlm");
+      assert.ok(evidence.some(row => row.content === neighbor.content), "raw evidence remains available to the request builder");
+      assert.deepEqual(extras?.definitionReferent, { quote: "위닝", expansions: [] });
+      return { text: JSON.stringify({ status: "GROUNDED", subject: "위닝",
+        definitionPlan: "source_definition", answer: "위닝은 펜스 앞 구간이에요.", calendarClaims: [] }), inputTokens: 1, outputTokens: 1 };
+    },
   });
   const result = await answerQuestion("u", "위닝은 뭐야?", deps);
+  assert.equal(calls.filter(call => call === "callOfficialRagLlm").length, 1);
+  assert.ok(!calls.includes("callLlm"), "must not pass via the generic fallback");
   assert.equal(result.source, "unsure");
+  assert.ok(!result.answer.includes("위닝은 펜스 앞 구간"), "rejected neighbor definition is never served");
 });
 
 // Synthetic adversarial fixtures: exact provider status must not waive event identity.
