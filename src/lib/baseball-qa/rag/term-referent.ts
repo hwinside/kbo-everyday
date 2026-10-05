@@ -1,10 +1,15 @@
-import { normalizeKey, originalSpellingScope } from "../normalize";
+import { normalizeKey, originalSpellingScope, definitionQuestionSubject } from "../normalize";
 
 /** A candidate/retrieval-blind interpretation, not a reviewed dictionary fact.
  * Only an ordinary single-word sense can bind an answer; sport-specific names,
  * conventional abbreviations, uncertain and non-definition requests abstain.
  */
-export interface IndependentSubject { quote: string; meaning: string }
+export interface IndependentSubject {
+  quote: string;
+  meaning: string;
+  /** Reviewed spaced compounds containing this standalone word; not meanings. */
+  compounds?: readonly string[];
+}
 
 export function readIndependentSubject(question: string, raw: unknown): IndependentSubject | undefined {
   if (!raw || typeof raw !== "object") return undefined;
@@ -35,15 +40,16 @@ export function resolveIndependentSubject(
   const key = normalizeKey(quote);
   const exact = glossary.some(entry => [entry.term, ...entry.aliases].some(value => normalizeKey(value) === key));
   if (exact) return undefined;
-  const component = glossary.some(entry => {
+  const compounds = glossary.filter(entry => {
     const words = entry.term.trim().split(/\s+/u);
     return words.length > 1 && words.some(word => normalizeKey(word) === key);
-  });
+  }).map(entry => entry.term);
+  const component = compounds.length > 0;
   const possibleAbbreviation = glossary.some(entry => !/\s/u.test(entry.term.trim())
     && normalizeKey(entry.term) !== key && normalizeKey(entry.term).startsWith(key));
   if (!component && possibleAbbreviation) return undefined;
   // Empty meaning is intentional: lexical boundaries supply no definition.
-  const subject = blind ?? (component ? { quote, meaning: "" } : undefined);
+  const subject = component ? { quote, meaning: blind?.meaning ?? "", compounds } : blind;
   return contextualSubject(question, subject, previousQuestion, glossary);
 }
 
@@ -79,5 +85,21 @@ export function acceptsIndependentSubject(
   if (!answer.startsWith(subject.quote)) return false;
   const tail = answer.slice(subject.quote.length);
   if (!/^\s*(?:은|는|이란|란|이라는|라는|:)/u.test(tail)) return false;
+  // A component cannot be defined as its containing reviewed compound, even
+  // when the declared/actual subject matches. Later usage examples remain legal.
+  const firstSentence = normalizeKey(answer.split(/[.!?。！？]/u, 1)[0]);
+  if (subject.compounds?.some(term => firstSentence.includes(normalizeKey(term)))) return false;
   return true;
+}
+
+/** New schema-bearing definition answers must preserve the asked subject.
+ * Legacy stored responses without subject retain their previous acceptance.
+ * This is referent identity, not proof that the following definition is true.
+ */
+export function acceptsDefinitionSubject(row: Record<string, unknown>, question: string): boolean {
+  const subject = definitionQuestionSubject(question);
+  if (!subject || row.subject === undefined) return true;
+  if (row.subject !== subject || typeof row.answer !== "string") return false;
+  const answer = row.answer.trim();
+  return answer.startsWith(subject) && /^\s*(?:은|는|이란|란|이라는|라는|:)/u.test(answer.slice(subject.length));
 }
