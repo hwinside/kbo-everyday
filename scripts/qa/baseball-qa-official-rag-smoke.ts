@@ -46,7 +46,7 @@ import {
   type RagEvidence,
 } from "../../src/lib/baseball-qa/rag/retrieve";
 import { gradeForSourceKind } from "../../src/lib/baseball-qa/rag/contracts";
-import { acceptsIndependentSubject, acceptsDefinitionSubject, contextualSubject, resolveIndependentSubject, readIndependentSubject } from "../../src/lib/baseball-qa/rag/term-referent";
+import { acceptsIndependentSubject, acceptsDefinitionSubject, hasDefinitionAnchor, resolveDefinitionReferent, contextualSubject, resolveIndependentSubject, readIndependentSubject } from "../../src/lib/baseball-qa/rag/term-referent";
 
 let pass = 0;
 const fail: string[] = [];
@@ -354,14 +354,14 @@ check("R5 exact canonical and exact alias win over component binding and blind m
   assert.equal(resolveIndependentSubject("워닝", WORD_SUBJECT, undefined, glossary), undefined);
   assert.equal(resolveIndependentSubject("트랙", { quote: "트랙", meaning: "길" }, undefined, glossary), undefined);
 });
-check("R5 literal definition subject does not repeatedly strip noun endings", () => {
+check("R6 definition scope is data, not a forced subject enum", () => {
   for (const [question, expected] of [["희생 플레이가 뭐야?", "희생 플레이"], ["투수가 뭐야?", "투수"], ["인필드 아웃은 뭐야", "인필드 아웃"], ["위닝은 뭐야?", "위닝"]]) {
     assert.equal(definitionQuestionSubject(question), expected);
     const request = buildRagLlmRequest(question, [OFFICIAL], RAG_OFFICIAL_SYSTEM_PROMPT);
-    const schema = request.generationConfig.responseSchema as { properties: { subject: { enum: string[] } }; required: string[] };
-    assert.deepEqual(schema.properties.subject.enum, [expected]);
+    const schema = request.generationConfig.responseSchema as { properties: { subject: { enum?: string[] } }; required: string[] };
+    assert.equal(schema.properties.subject.enum, undefined);
     assert.ok(schema.required.includes("definitionPlan"));
-    assert.ok(request.contents[0].parts[0].text.includes(OFFICIAL.content));
+    assert.equal(request.contents[0].parts[0].text.includes(OFFICIAL.content), /\s/u.test(expected));
   }
   for (const question of ["오늘 투수 기록 알려줘", "인필드플라이 좋아?", "콜드"]) assert.equal(definitionQuestionSubject(question), undefined);
   const followup = buildRagLlmRequest("그게 뭔데?", [OFFICIAL], RAG_OFFICIAL_SYSTEM_PROMPT, {
@@ -376,6 +376,61 @@ check("R5 literal definition subject does not repeatedly strip noun endings", ()
     officialQuestion: "투수가 뭐야?", numericEvidence: true, evidence: [OFFICIAL], generalFallback: { question: "투수가 뭐야?" },
   });
   assert.equal(result.kind, "insufficient");
+});
+check("R6 lexical anchors reject neighbor and suffix definitions without altering raw evidence", () => {
+  for (const [question, body] of [
+    ["위닝은 뭐야?", "워닝트랙은 펜스 앞 구간이다."],
+    ["쿼터가 뭐야?", "아시아쿼터 선수와 계약을 체결할 수 있다."],
+  ]) {
+    const referent = resolveDefinitionReferent(question, [])!;
+    const evidence = [{ ...OFFICIAL, content: body }];
+    const before = JSON.stringify(evidence);
+    assert.equal(hasDefinitionAnchor(body, referent), false);
+    const request = buildRagLlmRequest(question, evidence, RAG_OFFICIAL_SYSTEM_PROMPT, { definitionReferent: referent });
+    assert.ok(!request.contents[0].parts[0].text.includes(body));
+    const schema = request.generationConfig.responseSchema as { properties: { status: { enum: string[] } } };
+    assert.ok(!schema.properties.status.enum.includes("GROUNDED"));
+    assert.equal(JSON.stringify(evidence), before);
+    const raw = JSON.stringify({ subject: referent.quote, status: "GROUNDED", definitionPlan: "source_definition", answer: `${referent.quote}는 자료의 다른 정의예요.`, calendarClaims: [] });
+    assert.equal(validateRagResponse(raw, { officialQuestion: question, definitionReferent: referent,
+      numericEvidence: true, evidence, generalFallback: { question } }).kind, "insufficient");
+    const general = JSON.stringify({ subject: referent.quote, status: "GENERAL", answer: `${referent.quote}는 일반 단어예요.` });
+    assert.equal(validateRagResponse(general, { officialQuestion: question, definitionReferent: referent,
+      evidence, generalFallback: { question } }).kind, "general");
+  }
+  assert.equal(hasDefinitionAnchor("쿼터는 할당량이다.", { quote: "쿼터", expansions: [] }), true);
+  assert.equal(hasDefinitionAnchor("슈퍼쿼터는 별도 명칭이다.", { quote: "쿼터", expansions: [] }), false);
+  assert.equal(hasDefinitionAnchor("쿼터백은 선수다.", { quote: "쿼터", expansions: [] }), false);
+});
+check("R6 reviewed prefix expands both declared and actual subject, not suffix guesses", () => {
+  const glossary = [{ term: "콜드게임", aliases: ["콜드 게임"] }, { term: "아시아쿼터", aliases: [] }];
+  const referent = resolveDefinitionReferent("콜드가 뭐야?", glossary)!;
+  assert.deepEqual(referent.expansions, ["콜드게임", "콜드 게임"]);
+  assert.deepEqual(resolveDefinitionReferent("쿼터가 뭐야?", glossary)!.expansions, []);
+  const evidence = [{ ...OFFICIAL, content: "콜드게임은 주심이 종료를 선언한 경기다." }];
+  for (const subject of ["콜드", "콜드게임", "콜드 게임"]) {
+    const row = { subject, status: "GROUNDED", definitionPlan: "source_definition", answer: `${subject}은 주심이 종료를 선언한 경기예요.`, calendarClaims: [] };
+    assert.equal(validateRagResponse(JSON.stringify(row), { officialQuestion: "콜드가 뭐야?", definitionReferent: referent,
+      numericEvidence: true, evidence, generalFallback: { question: "콜드가 뭐야?" } }).kind, "grounded");
+  }
+  assert.equal(acceptsDefinitionSubject({ subject: "콜드게임", answer: "몰수게임은 다른 경기예요." }, "콜드가 뭐야?", referent), false);
+  const request = buildRagLlmRequest("콜드가 뭐야?", [OFFICIAL, ...evidence], RAG_OFFICIAL_SYSTEM_PROMPT, { definitionReferent: referent });
+  const data = request.contents[0].parts[0].text;
+  assert.ok(data.includes("[자료2]"), "filtering does not renumber calendar/source evidence");
+  assert.ok(data.includes(evidence[0].content));
+  assert.ok(!data.includes(OFFICIAL.content));
+});
+check("R6 descriptive relation need not fabricate a named-term first clause", () => {
+  const question = "인필드 아웃은 뭐야";
+  const row = { status: "GROUNDED", subject: "인필드 아웃", definitionPlan: "source_relation",
+    answer: "인필드 아웃에 대해서는 내야에서 아웃이 되는 상황과 규칙의 조건을 구분해 설명할 수 있어요.", calendarClaims: [] };
+  assert.equal(acceptsDefinitionSubject(row, question), true);
+  assert.equal(acceptsDefinitionSubject({ ...row, definitionPlan: "source_definition" }, question), true, "plan label never decides referent acceptance");
+  assert.equal(acceptsDefinitionSubject({ ...row, answer: "아웃필드는 외야예요." }, question), false, "source_relation cannot waive actual topic binding");
+  assert.equal(acceptsDefinitionSubject({ ...row, subject: "아웃필드" }, question), false);
+  const request = buildRagLlmRequest(question, [OFFICIAL], RAG_OFFICIAL_SYSTEM_PROMPT);
+  assert.ok(request.contents[0].parts[0].text.includes(OFFICIAL.content));
+  assert.equal((request.generationConfig.responseSchema as { propertyOrdering: string[] }).propertyOrdering[0], "definitionPlan");
 });
 check("R5 empty-meaning binding rejects first-sentence compound definitions, not later examples", () => {
   const subject = resolveIndependentSubject("워닝", undefined, undefined, [{ term: "워닝 트랙", aliases: ["워닝트랙"] }])!;
@@ -470,6 +525,32 @@ checkAsync("R4 missing blind subject still binds canonical spaced component in p
     },
   });
   const result = await answerQuestion("u", "워닝", deps);
+  assert.equal(result.source, "unsure");
+});
+
+checkAsync("R6 pipeline carries reviewed prefix evidence contract through generation and validation", async () => {
+  const { deps, calls } = makeDeps({
+    loadGlossary: async () => [{ term: "콜드게임", aliases: ["콜드 게임"], answer: "주심이 종료한 경기입니다." }],
+    searchOfficialRag: async () => [{ ...OFFICIAL, content: "콜드게임은 주심이 종료를 선언한 경기다." }],
+    callOfficialRagLlm: async (_q, _e, extras) => {
+      calls.push("callOfficialRagLlm");
+      assert.deepEqual(extras?.definitionReferent, { quote: "콜드", expansions: ["콜드게임", "콜드 게임"] });
+      return { text: JSON.stringify({ status: "GROUNDED", subject: "콜드게임", definitionPlan: "source_definition",
+        answer: "콜드게임은 주심이 종료를 선언한 경기예요.", calendarClaims: [] }), inputTokens: 1, outputTokens: 1 };
+    },
+  });
+  const result = await answerQuestion("u", "콜드가 뭐야?", deps);
+  assert.equal(result.source, "rag");
+  assert.equal(calls.filter(call => call === "callOfficialRagLlm").length, 1);
+  assert.ok(!calls.includes("callLlm"));
+});
+checkAsync("R6 provider forcing requested subject cannot serve neighbor definition as GROUNDED", async () => {
+  const { deps } = makeDeps({
+    searchOfficialRag: async () => [{ ...OFFICIAL, content: "워닝트랙은 펜스 앞 구간이다." }],
+    callOfficialRagLlm: async () => ({ text: JSON.stringify({ status: "GROUNDED", subject: "위닝",
+      definitionPlan: "source_definition", answer: "위닝은 펜스 앞 구간이에요.", calendarClaims: [] }), inputTokens: 1, outputTokens: 1 }),
+  });
+  const result = await answerQuestion("u", "위닝은 뭐야?", deps);
   assert.equal(result.source, "unsure");
 });
 

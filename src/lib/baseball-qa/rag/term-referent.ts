@@ -92,14 +92,60 @@ export function acceptsIndependentSubject(
   return true;
 }
 
-/** New schema-bearing definition answers must preserve the asked subject.
- * Legacy stored responses without subject retain their previous acceptance.
- * This is referent identity, not proof that the following definition is true.
+/** Reviewed names that may expand a prefix, never suffix/substring guesses.
+ * A name is an allowed referent, not proof that retrieved prose defines it.
  */
-export function acceptsDefinitionSubject(row: Record<string, unknown>, question: string): boolean {
-  const subject = definitionQuestionSubject(question);
-  if (!subject || row.subject === undefined) return true;
-  if (row.subject !== subject || typeof row.answer !== "string") return false;
+export interface DefinitionReferent {
+  quote: string;
+  expansions: readonly string[];
+}
+
+export function resolveDefinitionReferent(
+  question: string, glossary: ReadonlyArray<{ term: string; aliases: readonly string[] }>,
+): DefinitionReferent | undefined {
+  const quote = definitionQuestionSubject(question);
+  if (!quote) return undefined;
+  const key = normalizeKey(quote);
+  const expansions = glossary.filter(entry => !/\s/u.test(entry.term.trim())
+    && normalizeKey(entry.term) !== key && normalizeKey(entry.term).startsWith(key))
+    .flatMap(entry => [entry.term, ...entry.aliases]);
+  return { quote, expansions: [...new Set(expansions)] };
+}
+
+/** A single-word definition needs a word-start source anchor. Containing a
+ * suffix (e.g. quota inside a longer compound) is not a definition of the suffix.
+ * Korean particles may follow the surface; arbitrary compound continuations
+ * must instead be supplied as reviewed full-name expansions.
+ * This is lexical relevance, NOT semantic entailment.
+ */
+export function hasDefinitionAnchor(content: string, referent: DefinitionReferent): boolean {
+  const surfaces = [referent.quote, ...referent.expansions];
+  return surfaces.some(surface => {
+    const literal = surface.normalize("NFKC").trim().split(/\s+/u)
+      .map(word => word.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")).join("\\s*");
+    return new RegExp(`(?:^|[^\\p{L}\\p{N}])${literal}(?=$|[^\\p{L}\\p{N}]|(?:은|는|이|가|을|를|의|와|과|도|만|부터|까지|에게|에서|에|로|으로|란|이라|라고)(?:는|도|만)?(?:$|[^\\p{L}\\p{N}]))`, "iu")
+      .test(content.normalize("NFKC"));
+  });
+}
+
+/** No forced subject enum: read the generated referent, then check it. A
+ * reviewed prefix expansion may be the actual first subject. Relationship
+ * explanations may open with the requested topic, not just a noun definition.
+ * Model plan/status labels never waive this first-clause check.
+ * Historical rows without subject keep their prior acceptance contract.
+ */
+export function acceptsDefinitionSubject(
+  row: Record<string, unknown>, question: string,
+  referent: DefinitionReferent | undefined = resolveDefinitionReferent(question, []),
+  evidence?: readonly string[],
+): boolean {
+  if (!referent || row.subject === undefined) return true;
+  if (row.status === "GROUNDED" && !/\s/u.test(referent.quote)
+    && evidence && !evidence.some(content => hasDefinitionAnchor(content, referent))) return false;
+  const surfaces = [referent.quote, ...referent.expansions];
+  if (typeof row.subject !== "string" || !surfaces.some(value => normalizeKey(value) === normalizeKey(row.subject as string))
+    || typeof row.answer !== "string") return false;
   const answer = row.answer.trim();
-  return answer.startsWith(subject) && /^\s*(?:은|는|이란|란|이라는|라는|:)/u.test(answer.slice(subject.length));
+  return surfaces.some(subject => answer.startsWith(subject)
+    && /^\s*(?:\([^()\n]{1,60}\)\s*)?(?:은|는|이란|란|이라는|라는|에\s*(?:대해|관해)|의\s*경우|:)/u.test(answer.slice(subject.length)));
 }

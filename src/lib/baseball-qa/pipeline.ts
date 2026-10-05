@@ -1,4 +1,4 @@
-import { resolveIndependentSubject, readIndependentSubject, type IndependentSubject } from "./rag/term-referent";
+import { resolveIndependentSubject, readIndependentSubject, resolveDefinitionReferent, type DefinitionReferent, type IndependentSubject } from "./rag/term-referent";
 import { prepareOfficialEvidence } from "./rag/official-sibling-evidence";
 import { collectConversationTeamCandidates } from "./conversation-team-candidates";
 import { renderRagHold } from "./rag/hold-answer";
@@ -1398,7 +1398,7 @@ export interface QaDeps {
   /** Optional read-only diagnostic sink; production has no sink or extra I/O. */
   observeOfficialEvidence?: (bundle: ReturnType<typeof prepareOfficialEvidence>) => void;
   /** 공식 간행물 근거 전용 재서술 호출. tier1이므로 근거에 적힌 숫자를 쓸 수 있다. */
-  callOfficialRagLlm?: (question: string, evidence: RagEvidence[], extras?: { independentSubject?: IndependentSubject; context?: ContextTurn; definition?: StatDefinitionFrame; ruleRequest?: RequiredRuleRequest; referenceTimeMs?: number; recordbookRequest?: boolean; allowRecordbookGeneral?: boolean }) => Promise<LlmResult>;
+  callOfficialRagLlm?: (question: string, evidence: RagEvidence[], extras?: { definitionReferent?: DefinitionReferent; independentSubject?: IndependentSubject; context?: ContextTurn; definition?: StatDefinitionFrame; ruleRequest?: RequiredRuleRequest; referenceTimeMs?: number; recordbookRequest?: boolean; allowRecordbookGeneral?: boolean }) => Promise<LlmResult>;
   /** 수요 기반 ingestion 우선순위용 — 질문이 지목한 source를 기록한다. 실패는 무시한다. */
   recordRagDemand?: (sourceKeys: string[]) => Promise<void>;
   /**
@@ -5158,6 +5158,7 @@ async function answerOfficialDocumentQuestion(
   context?: ContextTurn | null,
   recordbookRequest = false,
   independentSubject?: IndependentSubject,
+  definitionReferent?: DefinitionReferent,
 ): Promise<QaResult | null> {
   const explicitRecordbookRequest = recordbookRequest;
   let evidence: RagEvidence[];
@@ -5205,7 +5206,7 @@ async function answerOfficialDocumentQuestion(
   if (definition) definition = definitionWithEvidence(definition, true);
 
   const officialExtras = { recordbookRequest, context: definition?.context ?? context ?? undefined, definition: definition ?? undefined, referenceTimeMs };
-  const subjectExtras = { ...officialExtras, independentSubject: recordbookRequest ? undefined : independentSubject };
+  const subjectExtras = { ...officialExtras, definitionReferent: recordbookRequest ? undefined : definitionReferent, independentSubject: recordbookRequest ? undefined : independentSubject };
   const officialBundle = prepareOfficialEvidence(evidence, candidates, subjectExtras);
   // Post-generation guards and observations include the independently bound sibling.
   evidence = officialBundle.guardEvidence;
@@ -5263,6 +5264,7 @@ async function answerOfficialDocumentQuestion(
     calendarContract: { referenceTimeMs },
     officialQuestion: question,
     independentSubject: recordbookRequest ? undefined : independentSubject,
+    definitionReferent: recordbookRequest ? undefined : definitionReferent,
     numericEvidence: true, evidence,
     ruleRequest: requiredRule ?? undefined,
     // Only compound definitions may echo user quantities, under the same
@@ -7067,7 +7069,7 @@ async function answerQuestionObserved(userId: string, rawQuestion: string, deps:
     deps.searchOfficialRag &&
     deps.callOfficialRagLlm
   ) {
-    const official = await answerOfficialDocumentQuestion(userId, question, questionNorm, remaining, deps, statDefinition, context, false, independentSubject);
+    const official = await answerOfficialDocumentQuestion(userId, question, questionNorm, remaining, deps, statDefinition, context, false, independentSubject, resolveDefinitionReferent(question, glossary));
     if (official) return official;
   }
 
