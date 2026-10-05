@@ -850,13 +850,18 @@ export const START_SEND_CHUNK_SIZE = 100;
 export async function runStartSendChunks<T>(params: {
   items: readonly T[];
   chunkSize: number;
+  /** 발송 직전 chunk만 선점. 충돌 항목은 제외하며 null이면 이후 chunk도 중단한다. */
+  prepareChunk?: (items: readonly T[]) => Promise<readonly T[] | null>;
   /** 항목 1건 발송 — 실패는 내부에서 집계(throw 금지 계약, 실배선은 자체 catch). */
   sendOne: (item: T) => Promise<void>;
   /** 직전 chunk 성공분 내구 저장 — 다음 chunk 발송 시작 전에 반드시 완료. */
   persistChunk: () => Promise<void>;
 }): Promise<void> {
   for (let i = 0; i < params.items.length; i += params.chunkSize) {
-    await Promise.all(params.items.slice(i, i + params.chunkSize).map(params.sendOne));
+    const candidates = params.items.slice(i, i + params.chunkSize);
+    const chunk = params.prepareChunk ? await params.prepareChunk(candidates) : candidates;
+    if (chunk === null) return;
+    await Promise.all(chunk.map(params.sendOne));
     await params.persistChunk();
   }
 }
