@@ -1146,6 +1146,8 @@ export function buildRagLlmRequest(
       ...(independent ? { subject: { type: "STRING", enum: [independent.quote] } } : {}),
       definitionEvidence: {
         type: "ARRAY",
+        minItems: modelEvidence.length,
+        maxItems: modelEvidence.length,
         items: {
           type: "OBJECT",
           propertyOrdering: ["evidence", "role", "quote"],
@@ -1242,9 +1244,17 @@ export function buildRagLlmRequest(
       interpretation: /\s/u.test(referent.quote) ? "definition_or_descriptive_relation" : "word_meaning" }),
     "<정의 요청 범위 끝>");
   sections.push(`질문: ${question}`);
+  const definitionInstruction = requestedSubject ? [
+    "이번 정의 요청에서는 앞선 일반 분량 지침보다 다음 출력 계약을 우선한다.",
+    `definitionEvidence는 실제 제시된 자료 ${modelEvidence.length}건을 모두 평가한다. 원래 자료번호는 [${modelEvidence.map(row => evidence.indexOf(row) + 1).join(", ")}]이다. 자료가 있으면 답을 찾지 못해도 배열을 생략하지 않는다.`,
+    independent
+      ? "이번 요청에는 검색 자료가 없다. 자료 부재는 독립 단어의 뜻을 모른다는 뜻이 아니다. 단어 자체의 알려진 일반 뜻을 한 문장으로 답하고 general_meaning/GENERAL로 구분한다. 의미를 실제로 모를 때만 unknown/INSUFFICIENT다. 복합어의 뜻이나 사용 예, 야구에서의 사용 여부는 덧붙이지 않는다."
+      : "자료의 제목과 질문 표현이 일치하지 않아도 본문에 요청한 관계나 행위의 설명이 있으면 relation으로 평가한다. 명칭이 없다는 이유만으로 서술형 관계를 unrelated로 처리하지 않는다. 관련 단어의 등장만 있고 관계 설명이 없으면 지원 근거가 아니다.",
+    "GENERAL이면 알려진 핵심 뜻 한 문장만 쓴다. 예시·하위 용법·숫자·종목에서의 사용 여부를 추가하지 않는다. 상대적 조건은 비교 관계 그대로 보존한다. 정의의 구성원 범위를 기억으로 임의 제외하거나, 자료 속 하위 개념의 정의를 상위 개념 전체의 정의로 바꾸지 않는다. 정확한 범위를 모르면 기권한다.",
+  ].join("\n") : "";
   return {
     systemInstruction: { parts: [{ text: recordbook ? `${RECORDBOOK_PROMPT}\n${extras.allowRecordbookGeneral ? RECORDBOOK_GENERAL_PROMPT : "non_record/GENERAL은 이 요청에서 허용하지 않는다."}` : extras.definition ? `${systemPrompt}\n${STAT_DEFINITION_PROMPT}`
-      : extras.ruleRequest?.kind === "fa_general" ? `${systemPrompt}\n${FA_CURRENT_CRITERIA_PROMPT}` : systemPrompt }] },
+      : extras.ruleRequest?.kind === "fa_general" ? `${systemPrompt}\n${FA_CURRENT_CRITERIA_PROMPT}` : [systemPrompt, definitionInstruction].filter(Boolean).join("\n") }] },
     contents: [
       {
         role: "user",
@@ -1969,6 +1979,9 @@ export function validateRagResponse(
   )) return { kind: "insufficient", reason: "model_insufficient" };
 
   if (options.officialQuestion && row.definitionPlan !== undefined) {
+    // A planned response must bind the actual packaged generation input.
+    // Guard evidence can contain extra rows and is not a substitute.
+    if (!options.definitionInputEvidence) return { kind: "insufficient", reason: "model_insufficient" };
     const referent = options.definitionReferent ?? resolveDefinitionReferent(options.officialQuestion, []);
     const visible = (options.definitionInputEvidence ?? options.evidence ?? []).map((value, index) => ({ evidence: index + 1, content: officialModelEvidenceContent(value) }))
       .filter(value => !options.independentSubject && (!referent || /\s/u.test(referent.quote) || hasDefinitionAnchor(value.content, referent)));

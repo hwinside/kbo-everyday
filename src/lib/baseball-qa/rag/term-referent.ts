@@ -150,8 +150,9 @@ export function acceptsDefinitionEvidence(
     if (!source || typeof item.quote !== "string") return false;
     seen.add(item.evidence);
     if (item.role === "definition" || item.role === "relation") {
-      // Citation is copied from the actual generation input, not raw retrieval.
-      if (!item.quote.trim() || !source.content.includes(item.quote)) return false;
+      // Compare the actual generation input. Layout whitespace may change
+      // during citation, but never erase word boundaries or alter punctuation.
+      if (!item.quote.trim() || !source.content.replace(/\s+/gu, " ").trim().includes(item.quote.replace(/\s+/gu, " ").trim())) return false;
       if (referent && !/\s/u.test(referent.quote) && !hasDefinitionAnchor(item.quote, referent)) return false;
       support.add(item.role);
     } else if (item.role !== "mention" && item.role !== "unrelated") return false;
