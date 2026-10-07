@@ -43,3 +43,65 @@ test('inflight attempt has no fabricated result', async () => {
   assert.deepEqual(events.map(e => e.phase), ['attempted']);
   finish(); await pending;
 });
+
+import { createStartAttemptBatch } from '../src/lib/notifications/live-activity-start-observation';
+import { runStartSendChunks } from '../src/lib/notifications/live-activity-channel-policy';
+import { randomUUID } from 'node:crypto';
+
+test('2000 users including every sandbox retry fit request log limits, correlated before send', async () => {
+  const lines: string[] = [];
+  const observe = createStartAttemptBatch(line => lines.push(line));
+  let sends = 0;
+  await runStartSendChunks({
+    items: Array.from({ length: 2000 }, () => randomUUID()), chunkSize: 100, claimChunkSize: 200,
+    prepareChunk: async items => items, persistChunk: async () => {},
+    sendOne: async userId => {
+      for (const env of ['production', 'sandbox'] as const) {
+        const result = await observe({ gameId: '20261007OBLG0', userId,
+          pushToken: 'private-' + userId, env, channelId: 'a'.repeat(64) }, async () => {
+          const before = lines.map(line => JSON.parse(line.slice(line.indexOf('{'))));
+          assert.ok(before.some(batch => batch.phase === 'attempted' &&
+            batch.rows.some((row: unknown[]) => row[0] === userId && batch.contexts[Number(row[2])][1] === env)));
+          sends++;
+          return { ok: env === 'sandbox', status: env === 'sandbox' ? 200 : 400,
+            reason: env === 'sandbox' ? undefined : 'BadDeviceToken',
+            invalidToken: env === 'production', apnsId: randomUUID() };
+        });
+        if (result.ok) break;
+      }
+    },
+  });
+  assert.equal(sends, 4000);
+  assert.equal(lines.length, 80);
+  const bytes = Buffer.byteLength(lines.join('\n'));
+  assert.ok(bytes < 900_000, String(bytes)); // leave room for existing request logs
+  assert.ok(!lines.join('').includes('private-'));
+  for (let i = 0; i < lines.length; i += 2) {
+    const parse = (line: string) => JSON.parse(line.slice(line.indexOf('{')));
+    const attempts = parse(lines[i]); const results = parse(lines[i + 1]);
+    assert.equal(attempts.batchId, results.batchId);
+    assert.equal(attempts.rows.length, 100);
+    assert.deepEqual(results.rows.map((row: unknown[]) => row[0]).sort((a: number,b: number) => a-b),
+      Array.from({length: 100}, (_, index) => index));
+  }
+  console.log('2000 users / 4000 attempts:', lines.length, 'lines,', bytes, 'bytes');
+});
+
+test('batch cutoff is unknown; throws propagate; failed logger does not block sends', async () => {
+  const lines: string[] = [];
+  const observe = createStartAttemptBatch(line => lines.push(line));
+  let finish!: () => void;
+  const pending = observe(context, () => new Promise(resolve => {
+    finish = () => resolve({ ok: true, status: 200, invalidToken: false });
+  }));
+  await new Promise(resolve => setImmediate(resolve));
+  assert.equal(lines.length, 1);
+  assert.ok(lines[0].includes('attempted'));
+  finish(); await pending;
+  const error = new Error('secret-token');
+  await assert.rejects(observe(context, async () => { throw error; }), value => value === error);
+  assert.ok(lines[3].includes('response_unknown'));
+  assert.ok(!lines.join('').includes('secret-token'));
+  const broken = createStartAttemptBatch(() => { throw error; });
+  assert.equal((await broken(context, async () => ({ ok: true, status: 200, invalidToken: false }))).ok, true);
+});

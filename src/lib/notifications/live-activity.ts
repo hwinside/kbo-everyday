@@ -1,4 +1,4 @@
-import { observeStartAttempt } from "./live-activity-start-observation";
+import { createStartAttemptBatch } from "./live-activity-start-observation";
 import { createHash } from "node:crypto";
 import { isKboGameCancelled } from "@/lib/crawler/kbo-status";
 import { supabaseAdmin as supabase } from "@/lib/supabase/admin";
@@ -773,6 +773,7 @@ async function startForTeamSide(params: {
       }),
     );
   };
+  const observeStartAttempt = createStartAttemptBatch();
   await runStartSendChunks({
     items: sendable,
     chunkSize: START_SEND_CHUNK_SIZE,

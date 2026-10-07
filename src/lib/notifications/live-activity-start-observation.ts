@@ -55,3 +55,58 @@ export async function observeStartAttempt(
   });
   return result;
 }
+
+/** One synchronous send-chunk wave, then (if needed) its fallback wave.
+ * Publish attempts BEFORE releasing any send. Publish results before resolving
+ * callers, so sandbox retries form a separate bounded wave, not per-device logs.
+ * A cutoff leaves attempts without results: unknown, never permission to retry.
+ */
+export function createStartAttemptBatch(
+  emit: (line: string) => void = line => console.info(line),
+) {
+  type Job = { context: Context; send: () => Promise<ApnsResult>;
+    resolve: (result: ApnsResult) => void; reject: (error: unknown) => void };
+  let pending: Job[] = [];
+  const publish = (value: unknown) => {
+    try { emit('[live-activity] start-batch ' + JSON.stringify(value)); } catch { /* best effort */ }
+  };
+  const drain = async () => {
+    const jobs = pending;
+    pending = [];
+    const batchId = randomUUID();
+    const attempts: Record<string, unknown>[] = [];
+    const results: Record<string, unknown>[] = [];
+    let release!: () => void;
+    const gate = new Promise<void>(resolve => { release = resolve; });
+    const sends = jobs.map(job => observeStartAttempt(job.context,
+      async () => { await gate; return job.send(); },
+      record => { (record.phase === 'attempted' ? attempts : results).push(record); }));
+    const contexts: unknown[][] = [];
+    const rows = attempts.map(record => {
+      const context = [record.gameId, record.env, record.channelId];
+      let index = contexts.findIndex(value => JSON.stringify(value) === JSON.stringify(context));
+      if (index < 0) { index = contexts.length; contexts.push(context); }
+      return [record.userId, record.deviceKey, index];
+    });
+    // v1: attempts row index is the result correlation key within batchId.
+    publish({ v: 1, batchId, phase: 'attempted', at: new Date().toISOString(),
+      contextColumns: ['gameId', 'env', 'channelId'], contexts,
+      columns: ['userId', 'deviceKey', 'contextIndex'], rows });
+    release();
+    const settled = await Promise.allSettled(sends);
+    publish({ v: 1, batchId, phase: 'results', at: new Date().toISOString(),
+      columns: ['attemptIndex', 'phase', 'status', 'invalidToken', 'reason', 'apnsId', 'elapsedMs'],
+      rows: results.map(record => [attempts.findIndex(a => a.attemptId === record.attemptId),
+        record.phase, record.status ?? null, record.invalidToken ?? null,
+        record.reason, record.apnsId ?? null, record.elapsedMs]) });
+    settled.forEach((result, index) => {
+      if (result.status === 'fulfilled') jobs[index].resolve(result.value);
+      else jobs[index].reject(result.reason);
+    });
+  };
+  return (context: Context, send: () => Promise<ApnsResult>): Promise<ApnsResult> =>
+    new Promise((resolve, reject) => {
+      pending.push({ context, send, resolve, reject });
+      if (pending.length === 1) queueMicrotask(() => { void drain(); });
+    });
+}
