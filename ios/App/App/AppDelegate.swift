@@ -175,6 +175,24 @@ class AppDelegate: UIResponder, UIApplicationDelegate {
     }
 
     func application(_ application: UIApplication, didReceiveRemoteNotification userInfo: [AnyHashable: Any], fetchCompletionHandler completionHandler: @escaping (UIBackgroundFetchResult) -> Void) {
+        // UIScene background launches may have no bridge/plugin observer. Own completion
+        // here, including when an installed plugin only forwards the notification.
+        // Share a locked one-shot callback with observers so late/duplicate callbacks
+        // cannot complete the same fetch twice. Never hold the lock across client code.
+        let completionLock = NSLock()
+        var didComplete = false
+        let completeOnce: (UIBackgroundFetchResult) -> Void = { result in
+            completionLock.lock()
+            guard !didComplete else {
+                completionLock.unlock()
+                return
+            }
+            didComplete = true
+            completionLock.unlock()
+            completionHandler(result)
+        }
+        defer { completeOnce(.noData) }
+
         // Layer 2 — 무음(content-available)/일반 원격 알림으로 앱이 백그라운드에서 깨어난
         // 순간, 살아있는 Live Activity를 재-enumerate해 update 토큰을 등록한다(register-device).
         // push-to-start로 카드만 뜨고 앱이 안 열린 유저의 토큰 미등록 갭을 "앱을 열지 않고"
@@ -182,7 +200,7 @@ class AppDelegate: UIResponder, UIApplicationDelegate {
         // 멱등(observedActivityIds 중복가드) — 매 푸시마다 호출해도 이중 등록 없음.
         // ⚠️ silent wake 컨텍스트 — rescan은 토큰 재등록만 하며 local Activity.request()는
         // 0건이다(삼순 R2 blocker③ — 마이그레이션은 didBecomeActive 전용).
-        // completionHandler는 건드리지 않는다(Capacitor/Firebase 메시징 플러그인이 호출).
+        // 완료 책임은 위 one-shot 가드가 소유한다(브리지 없는 launch도 포함).
         if #available(iOS 16.1, *) {
             LiveActivityController.shared.rescanActiveActivities()
             LiveActivityController.shared.resyncPushToStartTokenOnForeground()
@@ -226,13 +244,13 @@ class AppDelegate: UIResponder, UIApplicationDelegate {
                     lastPlay: userInfo["w_lastplay"] as? String ?? "",
                     eventMs: Double(userInfo["w_ev"] as? String ?? "") ?? 0
                 )
-                completionHandler(applied ? .newData : .noData)
+                completeOnce(applied ? .newData : .noData)
             } else {
-                completionHandler(.noData)
+                completeOnce(.noData)
             }
             return
         }
-        NotificationCenter.default.post(name: Notification.Name.init("didReceiveRemoteNotification"), object: completionHandler, userInfo: userInfo)
+        NotificationCenter.default.post(name: Notification.Name.init("didReceiveRemoteNotification"), object: completeOnce, userInfo: userInfo)
     }
 
 }
