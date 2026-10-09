@@ -95,3 +95,26 @@ export function originalSpellingScope(question: string): string {
   }
   return question;
 }
+
+/** Literal subject for an explicit meaning question. Unlike the fuzzy lookup
+ * key, strip one question ending and at most one grammatical particle, so a
+ * noun ending in a particle-shaped syllable is not truncated repeatedly.
+ * Requests to list records, evaluate or explain why are outside this contract.
+ */
+export function definitionQuestionSubject(question: string): string | undefined {
+  const key = normalizeKey(question);
+  const suffix = QUESTION_SUFFIXES.filter(value => /^(?:무엇|무슨|뭐|뭔)/u.test(value))
+    .sort((a, b) => b.length - a.length).find(value => key.endsWith(value));
+  if (!suffix) return undefined;
+  let target = key.slice(0, -suffix.length);
+  const particle = [...TRAILING_PARTICLES].sort((a, b) => b.length - a.length)
+    .find(value => target.length > value.length && target.endsWith(value));
+  if (particle) target = target.slice(0, -particle.length);
+  for (let end = 1; end <= question.length; end++) {
+    const prefix = question.slice(0, end).trim();
+    if (normalizeKey(prefix) === target) {
+      return /^[\p{L}]+(?:\s+[\p{L}]+)*$/u.test(prefix) && prefix.length <= 40 ? prefix : undefined;
+    }
+  }
+  return undefined;
+}

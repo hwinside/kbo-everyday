@@ -5,12 +5,13 @@
  * Every input row remains in output, including errors/refusals. Manual grading required.
  */
 import fs from "node:fs";
+import { createHash } from "node:crypto";
 import path from "node:path";
 import { pathToFileURL } from "node:url";
 import { answerQuestion, type QaDeps, type QaResult } from "../../src/lib/baseball-qa/pipeline";
 import type { AppFactSnapshot } from "../../src/lib/baseball-qa/app-fact-conversation";
 import type { ConversationGame } from "../../src/lib/baseball-qa/game-conversation";
-import type { PreviousTurnRow } from "../../src/lib/baseball-qa/context";
+import { selectContextTurn, type PreviousTurnRow } from "../../src/lib/baseball-qa/context";
 
 type Row = { id: string; kst: string; user_id: string; q: string; a: string; mp: string };
 type Snapshot = { games: ConversationGame[] | null; favoriteTeams?: Record<string, string>; appFacts?: AppFactSnapshot; source?: string; capturedAt?: string };
@@ -33,7 +34,8 @@ async function main() {
     const serverPath = variant === "base"
       ? path.resolve(arg("base-root")!, "src/lib/baseball-qa/server.ts")
       : path.resolve(import.meta.dirname, "../../src/lib/baseball-qa/server.ts");
-    const { makeDeps } = await import(pathToFileURL(serverPath).href);
+    const { makeDeps, buildProductionRagRequest } = await import(pathToFileURL(serverPath).href);
+    const { RAG_OFFICIAL_SYSTEM_PROMPT } = await import(pathToFileURL(path.join(path.dirname(serverPath), "rag/retrieve.ts")).href);
     const production: QaDeps = makeDeps(0); // No real user identity, write ports never copied.
     const previous = new Map<string, { row: Row; result: QaResult }>();
     for (const row of rows) {
@@ -53,7 +55,11 @@ async function main() {
       const deps: QaDeps = {
         loadGlossary: production.loadGlossary, loadPlayers: production.loadPlayers,
         callLlm: production.callLlm, mapGlossaryDefinition: production.mapGlossaryDefinition,
-        normalizeQuestionLlm: production.normalizeQuestionLlm,
+        normalizeQuestionLlm: async (...args) => {
+          const result = await production.normalizeQuestionLlm!(...args);
+          officialTrace.push({ stage: "pre_retrieval_normalize", question: args[0], result });
+          return result;
+        },
         searchRag: production.searchRag, callRagLlm: production.callRagLlm,
         callTeamRagLlm: production.callTeamRagLlm, enablePlayerRag: production.enablePlayerRag,
         enableTeamRag: production.enableTeamRag, searchNewsRag: production.searchNewsRag,
@@ -65,7 +71,14 @@ async function main() {
         } : undefined,
         callOfficialRagLlm: production.callOfficialRagLlm ? async (question, evidence, extras) => {
           const result = await production.callOfficialRagLlm!(question, evidence, extras);
-          officialTrace.push({ stage: "generate", question, evidence, extras, result });
+          // Reconstruct with this revision's production builder; this is not a
+          // captured fetch body. Reviewer byte-identity checks remain separate.
+          const request = buildProductionRagRequest(question, evidence, RAG_OFFICIAL_SYSTEM_PROMPT, extras);
+          const generationContract = { reconstructed: true,
+            requestSha256: createHash("sha256").update(JSON.stringify(request)).digest("hex"),
+            schema: request.generationConfig.responseSchema,
+            userData: request.contents[0].parts[0].text };
+          officialTrace.push({ stage: "generate", question, evidence, extras, generationContract, result });
           return result;
         } : undefined,
         getCache: async () => null, setCache: async () => {}, log: async (entry) => { pipelineLog.push(entry); },
@@ -92,7 +105,7 @@ async function main() {
         const result = await run("qa-game-conversation-replay", row.q, deps);
         previous.set(row.user_id, { row, result });
         output.push({ variant, id: row.id, question: row.q, originalAnswer: row.a, originalSource: row.mp,
-          result, selector, officialTrace, pipelineLog, elapsedMs: Date.now() - start, grade: null });
+          result, selector, contextInput: context, contextSelected: selectContextTurn(context), officialTrace, pipelineLog, elapsedMs: Date.now() - start, grade: null });
       } catch (error) {
         previous.delete(row.user_id); // Failure is a context barrier, never silently skip backwards.
         output.push({ variant, id: row.id, question: row.q, error: error instanceof Error ? error.name : "Error", elapsedMs: Date.now() - start, grade: null });

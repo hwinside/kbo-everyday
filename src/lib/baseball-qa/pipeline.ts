@@ -1,3 +1,4 @@
+import { resolveIndependentSubject, readIndependentSubject, resolveDefinitionReferent, type DefinitionReferent, type IndependentSubject } from "./rag/term-referent";
 import { prepareOfficialEvidence } from "./rag/official-sibling-evidence";
 import { collectConversationTeamCandidates } from "./conversation-team-candidates";
 import { renderRagHold } from "./rag/hold-answer";
@@ -1241,7 +1242,8 @@ export interface QaDeps {
    * residual(generic LLM/unsure)로 떨어진다. 열린 표기 변이는 룰로 닫히지 않으므로(M90 계약)
    * 교정은 LLM 에 위임하되, 발동·수용은 answerQuestion 쪽 폐쇄 조건이 감싼다
    * (발동 = residual 만 · 수용 = 길이/숫자보존/실변경/재라우팅 non-blocked).
-   * 표기 교정만 반환한다 — 의미 변경·단어 대체·숫자 변경은 프롬프트 금지 + 코드 가드 이중이다.
+   * 교정 후보는 표기만 바꾼다 — 의미 변경·단어 대체·숫자 변경은 프롬프트 금지 + 코드 가드 이중이다.
+   * 독립 일반어 해석은 별도 선택 필드로 전달하며 교정 후보/사전 별칭으로 쓰지 않는다.
    * 미주입이면 이 단계 자체가 비활성(기존 동작). text=null 은 "교정할 것 없음"이다.
    *
    * ⚠️ durable 단일-LLM 계약 밖의 호출이다(mapGlossaryDefinition 과 같은 축) — 결과를 저장하지
@@ -1251,7 +1253,7 @@ export interface QaDeps {
   normalizeQuestionLlm?: (
     question: string,
     glossary?: GlossaryEntry[],
-  ) => Promise<{ text: string | null; originalSpelling?: OriginalSpellingAssessment; inputTokens: number | null; outputTokens: number | null }>;
+  ) => Promise<{ text: string | null; originalSpelling?: OriginalSpellingAssessment; independentSubject?: IndependentSubject; inputTokens: number | null; outputTokens: number | null }>;
   /** 유저가 교정 카드에서 선택하고 서버 후보 membership 검증까지 끝낸 exact 후보. */
   pickedNormalizedQuestion?: string | null;
   /**
@@ -1396,7 +1398,7 @@ export interface QaDeps {
   /** Optional read-only diagnostic sink; production has no sink or extra I/O. */
   observeOfficialEvidence?: (bundle: ReturnType<typeof prepareOfficialEvidence>) => void;
   /** 공식 간행물 근거 전용 재서술 호출. tier1이므로 근거에 적힌 숫자를 쓸 수 있다. */
-  callOfficialRagLlm?: (question: string, evidence: RagEvidence[], extras?: { context?: ContextTurn; definition?: StatDefinitionFrame; ruleRequest?: RequiredRuleRequest; referenceTimeMs?: number; recordbookRequest?: boolean; allowRecordbookGeneral?: boolean }) => Promise<LlmResult>;
+  callOfficialRagLlm?: (question: string, evidence: RagEvidence[], extras?: { definitionReferent?: DefinitionReferent; independentSubject?: IndependentSubject; context?: ContextTurn; definition?: StatDefinitionFrame; ruleRequest?: RequiredRuleRequest; referenceTimeMs?: number; recordbookRequest?: boolean; allowRecordbookGeneral?: boolean }) => Promise<LlmResult>;
   /** 수요 기반 ingestion 우선순위용 — 질문이 지목한 source를 기록한다. 실패는 무시한다. */
   recordRagDemand?: (sourceKeys: string[]) => Promise<void>;
   /**
@@ -4336,6 +4338,7 @@ export function validateLlmResponse(raw: string, question = "", previous?: Conte
 /** 사전에서 정규화 exact 매칭 (term/alias 각각 key·question 두 정규화 레벨로 인덱싱) */
 /** LLM 재서술 호출에 함께 넘기는 부가 맥락 — 직전 턴 + 현재 로스터 블록 (축 A·D). */
 export interface RagLlmExtras {
+  independentSubject?: IndependentSubject;
   recordbookRequest?: boolean;
   allowRecordbookGeneral?: boolean;
   /** Server-owned official RAG reference clock; injectable for replay. */
@@ -5154,6 +5157,8 @@ async function answerOfficialDocumentQuestion(
   definition?: StatDefinitionIntent | null,
   context?: ContextTurn | null,
   recordbookRequest = false,
+  independentSubject?: IndependentSubject,
+  definitionReferent?: DefinitionReferent,
 ): Promise<QaResult | null> {
   const explicitRecordbookRequest = recordbookRequest;
   let evidence: RagEvidence[];
@@ -5201,7 +5206,8 @@ async function answerOfficialDocumentQuestion(
   if (definition) definition = definitionWithEvidence(definition, true);
 
   const officialExtras = { recordbookRequest, context: definition?.context ?? context ?? undefined, definition: definition ?? undefined, referenceTimeMs };
-  const officialBundle = prepareOfficialEvidence(evidence, candidates, officialExtras);
+  const subjectExtras = { ...officialExtras, definitionReferent: recordbookRequest ? undefined : definitionReferent, independentSubject: recordbookRequest ? undefined : independentSubject };
+  const officialBundle = prepareOfficialEvidence(evidence, candidates, subjectExtras);
   // Post-generation guards and observations include the independently bound sibling.
   evidence = officialBundle.guardEvidence;
   deps.observeOfficialEvidence?.(officialBundle);
@@ -5241,7 +5247,7 @@ async function answerOfficialDocumentQuestion(
       if (!won) return { status: 202, answer: "", source: "pending", remaining };
     }
     try {
-      llm = await deps.callOfficialRagLlm!(question, officialBundle.modelEvidence, { ...officialExtras,
+      llm = await deps.callOfficialRagLlm!(question, officialBundle.modelEvidence, { ...subjectExtras,
         allowRecordbookGeneral: recordbookRequest && !explicitRecordbookRequest,
         ...(requiredRule ? { ruleRequest: { kind: requiredRule.kind, season: requiredRule.season, competition: requiredRule.competition, faFocus: requiredRule.faFocus, postseasonStage: requiredRule.postseasonStage, ...(currentRuleFact ? { fact: currentRuleFact } : {}) } } : {}),
       });
@@ -5257,6 +5263,9 @@ async function answerOfficialDocumentQuestion(
     allowRecordbookGeneral: recordbookRequest && !explicitRecordbookRequest,
     calendarContract: { referenceTimeMs },
     officialQuestion: question,
+    independentSubject: recordbookRequest ? undefined : independentSubject,
+    definitionReferent: recordbookRequest ? undefined : definitionReferent,
+    definitionInputEvidence: officialBundle.modelEvidence,
     numericEvidence: true, evidence,
     ruleRequest: requiredRule ?? undefined,
     // Only compound definitions may echo user quantities, under the same
@@ -6035,6 +6044,7 @@ export async function answerQuestion(userId: string, rawQuestion: string, deps: 
 async function answerQuestionObserved(userId: string, rawQuestion: string, deps: QaDeps, setContextSelected: (selected: boolean) => void): Promise<QaResult> {
   let question = rawQuestion.trim();
   let questionNorm = normalizeQuestion(question);
+  let independentSubject: IndependentSubject | undefined;
 
   // KST 일자 버킷 원자 예약. DB 오류도 fail-closed하여 LLM에 진입하지 않는다.
   let reservation: { allowed: boolean; remaining: number };
@@ -6127,9 +6137,11 @@ async function answerQuestionObserved(userId: string, rawQuestion: string, deps:
       // This skips correction only: context/entity/safety guards and durable
       // settlement below still run. Tier B candidate acceptance is unchanged.
       && !liveScoreGuideForQuestion(question) && !isTermOriginQuestion(question)) {
-    let norm: { text: string | null; originalSpelling?: OriginalSpellingAssessment; inputTokens: number | null; outputTokens: number | null } | null = null;
+    let norm: { text: string | null; originalSpelling?: OriginalSpellingAssessment; independentSubject?: IndependentSubject; inputTokens: number | null; outputTokens: number | null } | null = null;
     try {
       norm = await deps.normalizeQuestionLlm(question, glossary);
+      independentSubject = readIndependentSubject(question, norm.independentSubject
+        ? { kind: "ordinary", ...norm.independentSubject } : undefined);
     } catch {
       norm = null; // 정규화 장애는 원문 진행 — 새 경로가 기존 답변을 죽이면 안 된다.
     }
@@ -6221,6 +6233,7 @@ async function answerQuestionObserved(userId: string, rawQuestion: string, deps:
       draftContext = null;
     }
   }
+  independentSubject = resolveIndependentSubject(question, independentSubject, context?.question, glossary);
   setContextSelected(context !== null);
   // 축 D — 질문·직전 턴이 지목한 선수의 현재 소속(로스터 SSOT)을 모든 LLM 경로에 준다.
   // Safety/service gates keep precedence over the definition routing exception.
@@ -7057,7 +7070,7 @@ async function answerQuestionObserved(userId: string, rawQuestion: string, deps:
     deps.searchOfficialRag &&
     deps.callOfficialRagLlm
   ) {
-    const official = await answerOfficialDocumentQuestion(userId, question, questionNorm, remaining, deps, statDefinition, context);
+    const official = await answerOfficialDocumentQuestion(userId, question, questionNorm, remaining, deps, statDefinition, context, false, independentSubject, resolveDefinitionReferent(question, glossary));
     if (official) return official;
   }
 

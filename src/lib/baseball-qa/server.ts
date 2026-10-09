@@ -1,6 +1,7 @@
 import { loadAppLineups } from "./app-lineup";
 import { buildOfficialContextRequest } from "./rag/official-context-request";
 import { normalizeKey, originalSpellingScope } from "./normalize";
+import { readIndependentSubject, type IndependentSubject } from "./rag/term-referent";
 import type { OriginalSpellingAssessment } from "./correction-term-identity";
 import { renderTeamCorrection } from "./rag/correction";
 import { gameConversationRequest, type GameConversationInput, type GameConversationResult } from "./game-conversation";
@@ -276,8 +277,8 @@ export async function mapGlossaryDefinition(
 
 /** Candidate-blind veto: repair suggestions must never be evidence that the source is invalid.
  * A failed veto call abstains locally; it must not throw into dictionary fail-open repair. */
-async function assessOriginalSpelling(quote: string): Promise<{
-  status: "valid" | "typo" | "unknown"; inputTokens: number; outputTokens: number;
+async function assessOriginalSpelling(quote: string, question: string): Promise<{
+  status: "valid" | "typo" | "unknown"; independentSubject?: IndependentSubject; inputTokens: number; outputTokens: number;
 }> {
   let inputTokens = 0;
   let outputTokens = 0;
@@ -291,10 +292,12 @@ async function assessOriginalSpelling(quote: string): Promise<{
           "원문의 단어 전체가 실제 일반어·야구 용어·고유명으로 독립된 뜻을 가지면 valid다. 다른 용어를 뜻하도록 고치는 것과, 같은 용어의 잘못된 표기를 바로잡는 것을 구분한다.",
           "같은 전문 용어를 가리키더라도 외래어 음역·된소리·모음·자음의 오기나 음절 누락으로 표준 표기와 다른 경우 typo다. 흔히 보이는 표기이거나 뜻을 알아볼 수 있다는 이유만으로 valid로 보지 않는다. 다만 독립된 개념의 명칭·약칭·관용 표현을 다른 전문 용어로 대체해서는 안 된다. 일부 음절이 일반어인 것은 전체 단어가 유효하다는 근거가 아니다.",
           "정의 질문인지, 답할 수 있는지는 판정 대상이 아니다. 정상 서술어·반응·생략 후속은 valid다. 실제 쓰이는 말인지 확신이 없으면 unknown이다.",
-          'JSON 하나만 출력: {"status":"valid|typo|unknown"}',
+          "철자 status와 별개로 question이 quote라는 단어 자체의 뜻을 묻는지 읽는다. 독립된 일반어·외래어의 뜻을 확실히 알면 subject.kind=ordinary, quote를 그대로 인용하고 meaning에 짧은 사전식 뜻만 쓴다. 검색 자료나 교정 후보는 제공되지 않는다. 누락된 성분을 붙여 다른 합성어를 만들어 뜻을 추측하지 않는다.",
+          "KBO에서 통용되는 전문 명칭·약칭의 설명이면 subject.kind=baseball이며 일반어의 뜻으로 덮어쓰지 않는다. 사실·순위·관계·평가 질문, 전체 표현의 뜻을 모르는 조어, 문맥이 필요한 경우는 none이다. 합성어의 일부가 익숙하다는 이유로 전체를 안다고 판정하지 않는다. meaning은 일반어 뜻을 확실히 아는 ordinary일 때만 쓰며 설명문·예시·추측 없이 짧게 쓴다. 이 의미 판정은 철자 status를 변경하지 않는다.",
+          'JSON 하나만 출력: {"status":"valid|typo|unknown","subject":{"kind":"ordinary|baseball|none","quote":"","meaning":""}}',
         ].join("\n") }] },
-        contents: [{ role: "user", parts: [{ text: JSON.stringify({ quote }) }] }],
-        generationConfig: { temperature: 0, maxOutputTokens: 64, responseMimeType: "application/json" },
+        contents: [{ role: "user", parts: [{ text: JSON.stringify({ quote, question }) }] }],
+        generationConfig: { temperature: 0, maxOutputTokens: 192, responseMimeType: "application/json" },
       }),
       signal: AbortSignal.timeout(8000),
     });
@@ -303,8 +306,10 @@ async function assessOriginalSpelling(quote: string): Promise<{
     inputTokens = data.usageMetadata?.promptTokenCount ?? 0;
     outputTokens = data.usageMetadata?.candidatesTokenCount ?? 0;
     const text = data.candidates?.[0]?.content?.parts?.find((part: { text?: string }) => part.text)?.text ?? "";
-    const status = JSON.parse(text)?.status;
-    return { status: ["valid", "typo", "unknown"].includes(status) ? status : "unknown", inputTokens, outputTokens };
+    const parsed = JSON.parse(text);
+    const status = parsed?.status;
+    const independentSubject = status === "valid" ? readIndependentSubject(question, parsed?.subject) : undefined;
+    return { independentSubject, status: ["valid", "typo", "unknown"].includes(status) ? status : "unknown", inputTokens, outputTokens };
   } catch {
     return { status: "unknown", inputTokens, outputTokens };
   }
@@ -321,7 +326,7 @@ async function assessOriginalSpelling(quote: string): Promise<{
 export async function normalizeQuestionLlm(
   question: string,
   glossary?: GlossaryEntry[],
-): Promise<{ text: string | null; originalSpelling?: OriginalSpellingAssessment; inputTokens: number | null; outputTokens: number | null }> {
+): Promise<{ text: string | null; originalSpelling?: OriginalSpellingAssessment; independentSubject?: IndependentSubject; inputTokens: number | null; outputTokens: number | null }> {
   if (!GEMINI_API_KEY) throw new Error("GEMINI_API_KEY missing");
   // Reuse the pipeline's loaded SSOT. Standalone probes use the same loader;
   // unavailable evidence must not turn optional normalization into a hard error.
@@ -368,7 +373,7 @@ export async function normalizeQuestionLlm(
       },
     }),
     signal: AbortSignal.timeout(8000),
-  }), assessOriginalSpelling(spellingScope)]);
+  }), assessOriginalSpelling(spellingScope, question)]);
   if (!res.ok) throw new Error(`Gemini API failed: ${res.status}`);
   const data = await res.json();
   const inputTokens = (data.usageMetadata?.promptTokenCount ?? 0) + independent.inputTokens;
@@ -380,7 +385,7 @@ export async function normalizeQuestionLlm(
     parsed = JSON.parse(text);
   } catch {
     // malformed 는 교정 없음 — 원문 진행 (#1142 malformed fail-close 계약과 같은 축).
-    return { text: null, inputTokens, outputTokens };
+    return { text: null, independentSubject: independent.independentSubject, inputTokens, outputTokens };
   }
   const normalized = (parsed as { normalized?: unknown })?.normalized;
   const assessment = (parsed as { originalSpelling?: OriginalSpellingAssessment })?.originalSpelling;
@@ -398,12 +403,13 @@ export async function normalizeQuestionLlm(
       originalSpelling = { status: quoteInScope ? independent.status : "unknown", quote: "" };
       // Do not leave a lexical candidate available to downstream fallback routes.
       const surfaceOnly = typeof normalized === "string" && normalizeKey(normalized) === normalizeKey(question);
-      return { text: surfaceOnly ? normalized.trim() : null, originalSpelling, inputTokens, outputTokens };
+      return { text: surfaceOnly ? normalized.trim() : null, originalSpelling, independentSubject: independent.independentSubject, inputTokens, outputTokens };
     }
   }
   return {
     text: typeof normalized === "string" && normalized.trim().length > 0 ? normalized.trim() : null,
     originalSpelling,
+    independentSubject: independent.independentSubject,
     inputTokens,
     outputTokens,
   };
