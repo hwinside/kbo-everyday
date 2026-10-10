@@ -1,3 +1,5 @@
+import { randomUUID } from "node:crypto";
+import { observeSafely, wakeReceipts, type WakeTarget } from "./live-activity-wake-observability";
 import { getMessaging } from "firebase-admin/messaging";
 import { initializeApp, getApps, cert } from "firebase-admin/app";
 import { supabaseAdmin as supabase } from "@/lib/supabase/admin";
@@ -140,6 +142,8 @@ export interface SendResult {
 }
 
 interface FcmSendOptions {
+  /** Diagnostic only; never changes delivery or retries. */
+  wakeTargets?: WakeTarget[];
   minAppBuild?: number;
   /** 이 epoch ms 이후에는 prefs/token 조회나 새 FCM chunk를 시작하지 않는다. */
   deadlineAtMs?: number;
@@ -226,6 +230,7 @@ async function sendFcmToUsersInner(
 
   // 2. 디바이스 토큰 (동일하게 분할 조회)
   const tokens: string[] = [];
+  const wakeDevices: { user_id: string; fcm_token: string }[] = [];
   for (let i = 0; i < targets.length; i += IN_CHUNK) {
     const slice = targets.slice(i, i + IN_CHUNK);
     const rows = await fetchAllByKeyset(
@@ -234,7 +239,7 @@ async function sendFcmToUsersInner(
         if (remainingMs != null && remainingMs <= 0) throw new Error("FCM device token targets: deadline_exceeded");
         let tokenQuery = supabase
           .from("device_push_tokens")
-          .select("id, fcm_token")
+          .select("id, fcm_token, user_id")
           .in("user_id", slice)
           .order("id", { ascending: true })
           .limit(limit);
@@ -247,11 +252,25 @@ async function sendFcmToUsersInner(
       (row) => row.id,
       { label: "FCM device token targets" },
     );
-    for (const row of rows) tokens.push(row.fcm_token);
+    for (const row of rows) {
+      tokens.push(row.fcm_token);
+      if (opts?.wakeTargets) wakeDevices.push({ user_id: row.user_id, fcm_token: row.fcm_token });
+    }
   }
   if (tokens.length === 0) return { tokens: 0, sent: 0, failed: 0, cleaned: 0, skipped, ok: true };
 
+  const attemptedAt = new Date().toISOString();
   const delivery = await sendFcmToTokens(tokens, payload, { deadlineAtMs: opts?.deadlineAtMs });
+  if (opts?.wakeTargets) await observeSafely(async () => {
+    const rows = wakeReceipts(opts.wakeTargets!, wakeDevices, delivery.outcomes ?? [], randomUUID(), attemptedAt);
+    // One bounded persistence budget across all batches. Missing rows remain unknown.
+    const signal = AbortSignal.timeout(1000);
+    for (let i = 0; i < rows.length; i += 200) {
+      const { error } = await supabase.from("live_activity_wake_receipts")
+        .insert(rows.slice(i, i + 200)).abortSignal(signal);
+      if (error) throw new Error("wake observation failed");
+    }
+  });
   return { ...delivery, skipped };
 }
 
