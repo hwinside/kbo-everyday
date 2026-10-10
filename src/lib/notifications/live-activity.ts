@@ -1254,6 +1254,7 @@ export async function pushLiveActivitySilentWakes(
     { title: "", body: "", dataOnly: true, apnsBackground: true, data: { kind: "la_wake" } },
     undefined,
     "ios",
+    { wakeTargets: gapRows.filter((row) => claimedUsers.has(row.user_id)).map(({ user_id, game_id }) => ({ user_id, game_id })) },
   );
   // ③ wake 계측 — 시도한 (game,user) pair에 첫 시도 시각만 기록(wake_attempted_at is null 조건).
   // 이후 그 pair가 update 토큰/채널 ACK로 전환되면 어드민 API가 '구제 성공'으로 집계해
