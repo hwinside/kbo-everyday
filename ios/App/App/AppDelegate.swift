@@ -191,7 +191,6 @@ class AppDelegate: UIResponder, UIApplicationDelegate {
             completionLock.unlock()
             completionHandler(result)
         }
-        defer { completeOnce(.noData) }
 
         // Layer 2 — 무음(content-available)/일반 원격 알림으로 앱이 백그라운드에서 깨어난
         // 순간, 살아있는 Live Activity를 재-enumerate해 update 토큰을 등록한다(register-device).
@@ -249,6 +248,12 @@ class AppDelegate: UIResponder, UIApplicationDelegate {
                 completeOnce(.noData)
             }
             return
+        }
+        // Keep the silent-wake budget available for asynchronous LA recovery/ACK work.
+        // Firebase currently forwards this notification without invoking completion.
+        // Complete within the OS budget even with no bridge; late callbacks remain one-shot.
+        DispatchQueue.main.asyncAfter(deadline: .now() + 20) {
+            completeOnce(.newData)
         }
         NotificationCenter.default.post(name: Notification.Name.init("didReceiveRemoteNotification"), object: completeOnce, userInfo: userInfo)
     }
