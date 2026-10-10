@@ -2,15 +2,6 @@
   "originHash" : "7de974da15c98c80a5e54112d35315f8328532b644c2a3ac186aa4cd5a690a1c",
   "pins" : [
     {
-      "identity" : "ion-ios-geolocation",
-      "kind" : "remoteSourceControl",
-      "location" : "https://github.com/ionic-team/ion-ios-geolocation.git",
-      "state" : {
-        "revision" : "db363927d3a954e3ea24d2e72b6e9814769a84be",
-        "version" : "2.1.1"
-      }
-    },
-    {
       "identity" : "abseil-cpp-binary",
       "kind" : "remoteSourceControl",
       "location" : "https://github.com/google/abseil-cpp-binary.git",
