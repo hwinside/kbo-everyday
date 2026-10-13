@@ -152,8 +152,8 @@ function formatApiDate(date: string): string {
 function mapApiGame(g: ApiGameData): HomeGame {
   return {
     id: g.gameId,
-          srId: g.srId,
-          gameLabel: g.gameLabel,
+    srId: g.srId,
+    gameLabel: g.gameLabel,
     homeTeamId: g.homeTeamId,
     awayTeamId: g.awayTeamId,
     time: g.time,

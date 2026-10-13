@@ -34,3 +34,10 @@ test("conditional scheduled rounds are not promised as guaranteed games", () => 
   assert.match(postseasonGameLabel("7", "KS5", "scheduled"), /필요시/);
   assert.doesNotMatch(postseasonGameLabel("7", "KS5", "final"), /필요시/);
 });
+
+test("provisional end date never marks regular season final", () => {
+  const window = { start: "20260328", end: "20261012", finalized: false };
+  const afterEnd = new Date("2026-10-13T00:00:00Z");
+  assert.equal(isRegularSeasonFinal(afterEnd, { "2026": window }), false);
+  assert.equal(isRegularSeasonFinal(afterEnd, { "2026": { ...window, finalized: true } }), true);
+});
