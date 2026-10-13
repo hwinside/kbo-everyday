@@ -1,0 +1,80 @@
+.root { margin-bottom: 16px; color: var(--text-primary); }
+.root button, .root a { -webkit-tap-highlight-color: transparent; }
+.root button:focus-visible, .root a:focus-visible { outline: 2px solid var(--accent); outline-offset: 3px; }
+.heading { display: flex; gap: 9px; align-items: center; margin-bottom: 12px; }
+.heading h2 { font-size: 19px; font-weight: 800; letter-spacing: -.7px; }
+.trophy, .champion { color: var(--accent-gold); }
+.eyebrow { font-size: 10px; letter-spacing: 1.5px; color: var(--text-secondary); font-weight: 600; }
+.textLink { margin-left: auto; display: flex; align-items: center; min-height: 44px; gap: 3px; font-size: 11px; color: var(--text-secondary); }
+.match { background: var(--bg-secondary); border: 1px solid var(--border); border-radius: 18px; overflow: hidden; }
+.matchTop { display: flex; gap: 8px; align-items: center; justify-content: space-between; padding: 13px 15px 0; font-size: 12px; }
+.matchTop b::before { content: ''; display: inline-block; width: 5px; height: 5px; margin: 0 6px 2px 0; border-radius: 50%; background: var(--accent); }
+.badge { font-size: 10px; color: var(--accent); background: color-mix(in srgb, var(--accent) 10%, transparent); padding: 4px 7px; border-radius: 5px; white-space: nowrap; }
+.matchVisual { display: grid; grid-template-columns: minmax(0, 1fr) 88px minmax(0, 1fr); align-items: start; gap: 2px; padding: 14px 10px 12px; background: radial-gradient(ellipse at 10% 38%, #35456620, transparent 48%), radial-gradient(ellipse at 90% 38%, #c60c3015, transparent 48%); }
+.team { display: flex; flex-direction: column; align-items: center; min-width: 0; text-align: center; }
+.crest { width: 62px; height: 62px; border-radius: 50%; background: white; display: inline-flex; align-items: center; justify-content: center; flex-shrink: 0; box-shadow: 0 4px 22px #0001; }
+.crest img { width: 90%; height: 90%; object-fit: contain; }
+.crest.small { width: 32px; height: 32px; box-shadow: none; }
+.crest.unknown { background: var(--bg-tertiary); border: 1px dashed var(--text-tertiary); color: var(--text-tertiary); }
+.team > strong { font-size: 15px; margin-top: 7px; }
+.team small { font-size: 10px; color: var(--text-secondary); font-weight: 400; }
+.condition { font-size: 10px; color: var(--text-secondary); margin-top: 6px; word-break: keep-all; }
+.matchCenter { grid-column: 2; grid-row: 1; text-align: center; align-self: center; padding-bottom: 7px; }
+.matchCenter > span { font-size: 11px; }
+.matchCenter > b { display: block; font-size: 24px; font-weight: 800; letter-spacing: -1px; margin: 4px 0; }
+.matchCenter .score { color: var(--accent); }
+.matchCenter small { display: block; font-size: 10px; color: var(--text-secondary); word-break: keep-all; }
+.gameAction { display: flex; align-items: center; justify-content: space-between; min-height: 44px; margin: 0 15px 11px; padding: 10px 12px; background: var(--accent); color: white; border-radius: 10px; font-size: 12px; font-weight: 700; }
+.games { list-style: none; padding: 0; margin: 0; }
+.gameRow { display: flex; align-items: center; gap: 8px; border-top: 1px solid var(--border); padding: 10px 15px; min-height: 44px; font-size: 10px; color: var(--text-secondary); }
+.gameRow > span:first-child { min-width: 0; flex: 1; }
+.gameRow b { color: var(--text-primary); font-size: 11px; }
+.gameRow small { display: block; font-size: 10px; margin-top: 2px; }
+.gameRow > span:nth-child(2) { text-align: right; }
+.empty { padding: 0 15px 15px; font-size: 12px; color: var(--text-secondary); }
+.routeCard { background: var(--bg-secondary); border: 1px solid var(--border); border-radius: 16px; padding: 12px 10px 10px; margin-top: 10px; }
+.routeTitle { display: flex; gap: 6px; justify-content: space-between; font-size: 11px; margin-bottom: 9px; }
+.routeTitle span { color: var(--text-secondary); font-size: 9px; }
+.route { display: grid; grid-template-columns: repeat(4, minmax(0, 1fr)); position: relative; }
+.route::before { content: ''; height: 1px; background: var(--text-tertiary); position: absolute; left: 12%; right: 12%; top: 18px; opacity: .5; }
+.stop { display: flex; flex-direction: column; align-items: center; min-width: 0; position: relative; min-height: 70px; }
+.node { height: 36px; min-width: 36px; border: 3px solid var(--bg-secondary); border-radius: 50%; background: var(--bg-secondary); display: flex; align-items: center; justify-content: center; font-size: 10px; font-weight: 800; }
+.node .crest { width: 28px; height: 28px; }
+.current .node { border: 1px solid var(--accent); color: var(--accent); box-shadow: 0 0 0 3px var(--bg-secondary); padding: 0 4px; }
+.stop > b { font-size: 10px; margin-top: 4px; }
+.current > b { color: var(--accent); }
+.stop small { font-size: 9px; color: var(--text-secondary); margin-top: 2px; word-break: keep-all; }
+.dialog { position: fixed; inset: auto 0 0; margin: 0 auto; width: min(100%, 480px); max-width: 100%; max-height: 90dvh; padding: 0; border: 1px solid var(--border); border-bottom: 0; border-radius: 25px 25px 0 0; background: var(--bg-secondary); color: var(--text-primary); overscroll-behavior: contain; }
+.dialog::backdrop { background: #0009; backdrop-filter: blur(5px); }
+.sheet { padding: 10px 20px max(28px, env(safe-area-inset-bottom)); }
+.sheet::before { content: ''; display: block; width: 34px; height: 4px; border-radius: 3px; background: var(--text-tertiary); margin: 0 auto 20px; }
+.sheetHeading { display: flex; align-items: center; justify-content: space-between; gap: 10px; }
+.sheetHeading h2 { font-size: 21px; font-weight: 800; letter-spacing: -.7px; margin-top: 4px; }
+.close { width: 44px; height: 44px; display: grid; place-items: center; border-radius: 50%; background: var(--bg-tertiary); flex-shrink: 0; }
+.description { color: var(--text-secondary); font-size: 11px; margin: 7px 0 24px; }
+.bracket { position: relative; padding-left: 25px; }
+.bracket::before { content: ''; position: absolute; left: 7px; top: 24px; bottom: 49px; width: 1px; background: var(--text-tertiary); opacity: .5; }
+.roundBox { position: relative; margin-bottom: 26px; border: 1px solid var(--border); border-radius: 13px; background: var(--bg-tertiary); padding: 12px; scroll-margin-top: 12px; }
+.roundBox::before { content: ''; position: absolute; left: -23px; top: 20px; width: 9px; height: 9px; border: 2px solid var(--text-tertiary); background: var(--bg-secondary); border-radius: 50%; }
+.activeRound { border-color: color-mix(in srgb, var(--accent) 40%, transparent); background: color-mix(in srgb, var(--accent) 6%, var(--bg-secondary)); }
+.activeRound::before { background: var(--accent); border-color: var(--accent); box-shadow: 0 0 0 4px color-mix(in srgb, var(--accent) 10%, transparent); }
+.roundName { display: flex; gap: 6px; justify-content: space-between; align-items: center; }
+.roundName h3 { font-size: 12px; font-weight: 700; }
+.roundName small { font-size: 9px; color: var(--text-secondary); text-align: right; }
+.pair { display: grid; grid-template-columns: 1fr 1fr; gap: 18px; margin-top: 13px; }
+.pairTeam { position: relative; display: flex; align-items: center; gap: 7px; min-width: 0; }
+.pairTeam b { font-size: 12px; word-break: keep-all; }
+.pairTeam small { display: block; font-size: 9px; color: var(--text-secondary); margin-top: 2px; }
+.versus { position: absolute; right: -16px; font-size: 9px; color: var(--text-tertiary); }
+.roundNote { font-size: 10px; color: var(--text-secondary); margin-top: 10px; padding-top: 10px; border-top: 1px solid var(--border); word-break: keep-all; }
+.winner { color: var(--accent); font-size: 12px; font-weight: 700; margin-top: 10px; }
+.roundBox .games { margin-top: 10px; }
+.roundBox .gameRow { padding: 8px 0; }
+.progress { position: absolute; bottom: -21px; left: 3px; font-size: 9px; color: var(--text-secondary); }
+.champion { display: flex; gap: 10px; align-items: center; margin-left: 25px; }
+.champion b { font-size: 12px; }
+.champion small { display: block; font-size: 10px; color: var(--text-secondary); margin-top: 3px; }
+.note { border-top: 1px solid var(--border); margin-top: 20px; padding-top: 13px; font-size: 10px; color: var(--text-secondary); line-height: 1.7; }
+@media (max-width: 359px) { .matchVisual { grid-template-columns: minmax(0, 1fr) 74px minmax(0, 1fr); padding-inline: 6px; } .crest { width: 54px; height: 54px; } .sheet { padding-inline: 14px; } .pair { gap: 14px; } .pairTeam { gap: 4px; } }
+
+.allGames { display: flex; align-items: center; justify-content: center; gap: 4px; width: 100%; min-height: 44px; font-size: 11px; color: var(--text-secondary); border-top: 1px solid var(--border); }
