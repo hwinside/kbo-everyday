@@ -139,8 +139,19 @@ struct GameWidgetProvider: TimelineProvider {
     }
 
     func getSnapshot(in context: Context, completion: @escaping (GameWidgetEntry) -> Void) {
-        let snap = context.isPreview ? sampleSnapshot : loadSnapshot()
-        completion(GameWidgetEntry(date: Date(), snapshot: snap))
+        let now = Date()
+        var snap = context.isPreview ? sampleSnapshot : loadSnapshot()
+        if !context.isPreview, let current = snap,
+           ["final", "cancelled", "scheduled"].contains(current.resolvedStatus),
+           let expiry = Self.rollover6amKST(gameId: current.gameId), now >= expiry {
+            if let next = current.next?.asSnapshot(),
+               let nextExpiry = Self.rollover6amKST(gameId: next.gameId), now < nextExpiry {
+                snap = next
+            } else {
+                snap = nil
+            }
+        }
+        completion(GameWidgetEntry(date: now, snapshot: snap))
     }
 
     func getTimeline(in context: Context, completion: @escaping (Timeline<GameWidgetEntry>) -> Void) {
