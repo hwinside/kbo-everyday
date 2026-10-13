@@ -201,7 +201,7 @@ export default function TeamSchedulePage() {
                   <span className="text-[10px] text-text-tertiary leading-none">
                     {day}
                   </span>
-                  {game && postseasonGameLabel(game.srId, game.gameLabel) && <span className="text-[9px] text-accent leading-tight">{postseasonGameLabel(game.srId, game.gameLabel)}</span>}
+                  {game && postseasonGameLabel(game.srId, game.gameLabel, game.status) && <span className="text-[9px] text-accent leading-tight">{postseasonGameLabel(game.srId, game.gameLabel, game.status)}</span>}
                   {opponentTeam && (
                     <div className="my-0.5">
                       <TeamLogo team={opponentTeam} size={32} />

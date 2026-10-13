@@ -17,12 +17,14 @@ export function seriesLabel(srId: unknown): string {
 }
 
 /** Prefer canonical stage identity; display a game number only when the source supplies one. */
-export function postseasonGameLabel(srId: unknown, gameLabel?: string): string {
+export function postseasonGameLabel(srId: unknown, gameLabel?: string, status?: string): string {
   const stage = seriesLabel(srId);
   if (!stage) return "";
   const n = Number(gameLabel?.match(/(\d+)\s*$/)?.[1]);
   const max = String(srId) === "4" ? 2 : String(srId) === "7" ? 7 : 5;
-  return Number.isInteger(n) && n > 0 && n <= max ? `${stage} ${n}차전` : stage;
+  if (!Number.isInteger(n) || n <= 0 || n > max) return stage;
+  const minimum = String(srId) === "4" ? 1 : String(srId) === "7" ? 4 : 3;
+  return `${stage} ${n}차전${status === "scheduled" && n > minimum ? " · 필요시" : ""}`;
 }
 
 /** Team calendar totals are regular-season only; individual PS results stay visible. */
