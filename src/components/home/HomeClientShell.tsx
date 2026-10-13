@@ -26,7 +26,7 @@ import { isPhotoArticle } from "@/lib/news-relevance";
 import type { HomeSectionKey } from "@/lib/store/home-sections-pref";
 import type { HomeCommunityFeedMode } from "@/lib/supabase/useHomePopularFeed";
 import { widgetResultPitchers } from "@/lib/widget-result-pitchers";
-import { setWidgetFavPlayers, setWidgetMyTeam, updateGameWidget } from "@/lib/capacitor/game-notification";
+import { clearGameWidget, setWidgetFavPlayers, setWidgetMyTeam, updateGameWidget } from "@/lib/capacitor/game-notification";
 import { writeHomeWidgetSnapshot, type HomeWidgetGame } from "@/lib/native-live-activity";
 import { latestRelayLine } from "@/lib/notifications/relay-line";
 import HeaderAvatar from "@/components/home/HeaderAvatar";
@@ -442,9 +442,11 @@ export default function HomeClientShell({ initialGames, initialLiveGames, initia
       findGame: (games) => findWidgetGame(games, teamId),
       onResult: (candidate, date) => {
         setNextWidgetGame(candidate ? { ...candidate, dateISO: date } : null);
+        // Only a successful empty lookup may clear stale native data; not transport failure.
+        if (!candidate && !isOvernight) void clearGameWidget();
       },
     });
-  }, [myTeamId, todayGames]);
+  }, [myTeamId, todayGames, isOvernight]);
 
   // 최애선수 목록 → 네이티브 prefs 동기화(선수 카드 위젯 config 선택 목록)
   useEffect(() => {

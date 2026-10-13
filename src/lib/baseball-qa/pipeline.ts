@@ -1201,6 +1201,7 @@ export function answerPlayerRoleForTarget(
 }
 
 export interface QaDeps {
+  loadPostseason?: (season: number) => Promise<import("@/lib/postseason/snapshot").PostseasonSnapshot | null>;
   loadGameConversation?: (date: string) => Promise<Pick<GameConversationInput, "games" | "favoriteTeam" | "appFacts">>;
   loadGameLineups?: (requests: import("./app-lineup").AppLineupRequest[]) => Promise<NonNullable<GameConversationInput["lineups"]>>;
   callGameConversation?: (input: GameConversationInput) => Promise<GameConversationResult>;
@@ -6918,17 +6919,29 @@ async function answerQuestionObserved(userId: string, rawQuestion: string, deps:
               profile: mentionedTeamCanonicals(snapshot.favoriteTeam ?? "") },
           };
           const model = await deps.callGameConversation!(input);
+          let postseasonRequested = false;
           const lineupRequests: import("./app-lineup").AppLineupRequest[] = [];
           const served = renderGameConversation(model.text, input, { isBare: isBareTeamName,
+            onPostseason: () => { postseasonRequested = true; },
             onLineupGames: (games, date) => lineupRequests.push(...games.map((game) => ({ game, date }))),
           });
-          return { model, served, input, lineupRequests };
+          return { model, served, input, lineupRequests, postseasonRequested };
         })(),
         new Promise<null>((resolve) => { timer = setTimeout(() => resolve(null), 4500); }),
       ]);
       if (result) {
         const { model, input, lineupRequests } = result;
         let served = result.served;
+        if (served && result.postseasonRequested && deps.loadPostseason && input.appFacts) {
+          let postseasonTimer: ReturnType<typeof setTimeout> | undefined;
+          try {
+            const postseason = await Promise.race([
+              deps.loadPostseason(Number(input.date.slice(0,4))).catch(() => null),
+              new Promise<null>(resolve => { postseasonTimer = setTimeout(() => resolve(null), 2800); }),
+            ]);
+            if (postseason) served = renderGameConversation(model.text, { ...input, nowMs: deps.now?.() ?? Date.now(), appFacts: { ...input.appFacts, postseason } }, { isBare: isBareTeamName }) ?? served;
+          } finally { if (postseasonTimer) clearTimeout(postseasonTimer); }
+        }
         if (served && lineupRequests.length && deps.loadGameLineups) {
           // Lazy: validated intent + dated target selection precede I/O. A slow
           // lineup never discards the already-rendered, grounded fallback.

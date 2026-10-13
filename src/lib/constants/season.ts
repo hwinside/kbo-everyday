@@ -24,3 +24,11 @@ export function isRegularSeasonFinal(now = new Date()): boolean {
   const window = REGULAR_SEASON_WINDOWS[date.slice(0, 4)];
   return !!window?.finalized && date > window.end;
 }
+
+/** 2026 season picks close with the confirmed regular season; unknown seasons stay closed. */
+export function seasonPredictionsOpen(season: number, now = new Date()): boolean {
+  const window = REGULAR_SEASON_WINDOWS[String(season)];
+  if (!window) return false;
+  const date = now.toLocaleDateString("sv-SE", { timeZone: "Asia/Seoul" }).replaceAll("-", "");
+  return date >= window.start && date <= window.end;
+}

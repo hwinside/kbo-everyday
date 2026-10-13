@@ -241,7 +241,7 @@ function isSaneGame(g: KboGame): boolean {
 export async function fetchNaverGames(
   date: string,
   srId: string = DEFAULT_ALL_SR_ID,
-  opts?: { timeoutMs?: number; signal?: AbortSignal },
+  opts?: { timeoutMs?: number; signal?: AbortSignal; toDate?: string },
 ): Promise<KboGame[]> {
   if (!NAVER_SERVICEABLE_SR_IDS.has(srId)) {
     // 시범/포스트/올스타 '전용' srId — Naver 로는 series 보존 불가 → 오염 방지 위해 fail-close.
@@ -253,9 +253,12 @@ export async function fetchNaverGames(
     throw new Error(`Naver fallback: srId=0 인데 ${date} 는 정규시즌 window 밖 — 시범/포스트 오염 방지 fail-close`);
   }
   const naverDate = toNaverDate(date);
+  const endDate = opts?.toDate ?? date;
+  const span = Date.parse(toNaverDate(endDate)) - Date.parse(naverDate);
+  if (!Number.isFinite(span) || span < 0 || span > 62 * 86400000 || (endDate !== date && srId !== DEFAULT_ALL_SR_ID)) throw new Error("Unsupported schedule range");
   const url =
     `${NAVER_SCHEDULE_API}?fields=basic,superCategoryId,categoryName,stadium,statusInfo,broadChannel` +
-    `&upperCategoryId=kbaseball&categoryId=kbo&fromDate=${naverDate}&toDate=${naverDate}&size=20`;
+    `&upperCategoryId=kbaseball&categoryId=kbo&fromDate=${naverDate}&toDate=${toNaverDate(endDate)}&size=${endDate === date ? 20 : 500}`;
   const res = await fetch(url, {
     headers: {
       "Referer": "https://sports.news.naver.com/",
@@ -276,7 +279,11 @@ export async function fetchNaverGames(
   if (rawGames.some((g) => !isRawNaverGameSane(g))) {
     throw new Error("Naver schedule per-game sanity 실패(원본 필수 필드/상태/스코어 결측)");
   }
-  const games = rawGames.map((g) => mapNaverGameToKbo(g, date));
+  if (endDate !== date && rawGames.some(g => {
+    const actual = g.gameDateTime!.slice(0,10).replaceAll("-", "");
+    return !/^\d{8}$/.test(actual) || actual < date || actual > endDate || g.gameId!.slice(4,8) !== actual.slice(4);
+  })) throw new Error("Naver schedule range/date identity mismatch");
+  const games = rawGames.map((g) => mapNaverGameToKbo(g, endDate === date ? date : g.gameDateTime!.slice(0, 10).replaceAll("-", "")));
   // 매핑 gameId 유일성(회차 보존 실패로 DH 가 합쳐지면 상세/캐시/알림 키 충돌) — fail-close.
   if (new Set(games.map((g) => g.gameId)).size !== games.length) {
     throw new Error("Naver schedule gameId 중복(회차 보존 실패)");
