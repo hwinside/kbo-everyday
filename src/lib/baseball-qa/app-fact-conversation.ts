@@ -117,7 +117,7 @@ export function renderAppFacts(value: Record<string, unknown>, input: GameConver
       && !excluded.includes(g.awayName) && !excluded.includes(g.homeName)
       && (!stadium || g.stadium === stadium) && !excludedStadiums.includes(g.stadium));
     if (!games.length) return hold("요청하신 조건의 등록된 포스트시즌 경기가 없습니다. 일정 미등록을 탈락이나 시즌 종료로 해석하지 않습니다.");
-    return { source: "kbo_structured", answer: "공식 소스에 등록된 포스트시즌 경기입니다. 이후 대진은 미확정일 수 있고, 조건부 차전은 시리즈 조기 종료 시 열리지 않을 수 있습니다.\n" + games.map(g => {
+    return { source: "kbo_structured", answer: "네이버 스포츠에 등록된 포스트시즌 경기입니다. 이후 대진은 미확정일 수 있고, 조건부 차전은 시리즈 조기 종료 시 열리지 않을 수 있습니다.\n" + games.map(g => {
       const day = g.gameId.slice(0,8);
       const status = g.status === "final" ? `${g.awayScore}:${g.homeScore} 종료` : g.status === "cancelled" ? "취소·변경 확인 필요" : g.status === "live" ? `${g.awayScore}:${g.homeScore} 진행 중` : `${g.time} 예정`;
       return `· ${day.slice(4,6)}/${day.slice(6,8)} ${postseasonGameLabel(g.srId,g.gameLabel)} ${g.awayName} vs ${g.homeName} · ${g.stadium} · ${status}`;
