@@ -3,6 +3,7 @@
 import { useEffect, useRef, useState } from "react";
 import { Copy, X } from "lucide-react";
 import {
+  AUTH_ERROR_CLEAR_EVENT,
   AUTH_ERROR_DIAG_CODES,
   AUTH_ERROR_EVENT,
   AUTH_ERROR_MESSAGES,
@@ -16,7 +17,7 @@ import {
 function isUserFacingAuthErrorCode(
   value: string | null,
 ): value is UserFacingAuthErrorCode {
-  return value !== null && value in AUTH_ERROR_MESSAGES;
+  return value !== null && Object.hasOwn(AUTH_ERROR_MESSAGES, value);
 }
 
 export default function AuthErrorNotice() {
@@ -44,14 +45,15 @@ export default function AuthErrorNotice() {
   useEffect(() => {
     const url = new URL(window.location.href);
     const queryError = getUserFacingAuthErrorFromUrl(url);
-    const storedError = sessionStorage.getItem(AUTH_ERROR_STORAGE_KEY);
+    let storedError: string | null = null;
+    try { storedError = sessionStorage.getItem(AUTH_ERROR_STORAGE_KEY); } catch { /* storage unavailable */ }
     const initialError =
       queryError ??
       (isUserFacingAuthErrorCode(storedError) ? storedError : null);
 
     if (initialError) {
       queueMicrotask(() => setErrorCode(initialError));
-      sessionStorage.removeItem(AUTH_ERROR_STORAGE_KEY);
+      try { sessionStorage.removeItem(AUTH_ERROR_STORAGE_KEY); } catch { /* live delivery still works */ }
     }
 
     // Next.js App Router re-syncs the canonical URL during hydration and clobbers
@@ -76,12 +78,15 @@ export default function AuthErrorNotice() {
       const code = (event as CustomEvent<string>).detail;
       if (isUserFacingAuthErrorCode(code)) {
         setErrorCode(code);
-        sessionStorage.removeItem(AUTH_ERROR_STORAGE_KEY);
+        try { sessionStorage.removeItem(AUTH_ERROR_STORAGE_KEY); } catch { /* live delivery still works */ }
       }
     };
 
+    const clearError = () => setErrorCode(null);
+    window.addEventListener(AUTH_ERROR_CLEAR_EVENT, clearError);
     window.addEventListener(AUTH_ERROR_EVENT, handleAuthError);
     return () => {
+      window.removeEventListener(AUTH_ERROR_CLEAR_EVENT, clearError);
       window.removeEventListener(AUTH_ERROR_EVENT, handleAuthError);
       if (stripRaf !== null) window.cancelAnimationFrame(stripRaf);
     };
@@ -110,6 +115,9 @@ export default function AuthErrorNotice() {
           <X size={18} />
         </button>
       </div>
+      {errorCode === "oauth_pending" && (
+        <button type="button" onClick={() => window.location.reload()} className="mt-2 rounded-lg border border-border px-2.5 py-1.5 text-xs text-text-secondary">새로고침</button>
+      )}
       {diagCode && (
         <div className="mt-2 flex items-center gap-2">
           <button

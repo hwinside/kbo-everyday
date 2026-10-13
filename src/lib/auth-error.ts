@@ -1,3 +1,4 @@
+export const AUTH_ERROR_CLEAR_EVENT = "keubo:auth-error-clear";
 export const AUTH_ERROR_EVENT = "keubo:auth-error";
 export const AUTH_ERROR_STORAGE_KEY = "kbo-auth-error";
 export const KAKAO_EMAIL_UNVERIFIED_CODE = "kakao_email_unverified";
@@ -36,7 +37,8 @@ export type NaverLoginErrorCode =
 
 export type UserFacingAuthErrorCode =
   | typeof KAKAO_EMAIL_UNVERIFIED_CODE
-  | NaverLoginErrorCode;
+  | NaverLoginErrorCode
+  | "oauth_start" | "oauth_exchange" | "oauth_pending" | "oauth_provider";
 
 /**
  * OAuth callback 오류 표식 파라미터 — 서버 오류 callback(`/?auth_error=…`)과 provider 오류가 쓰는 키 전체.
@@ -57,6 +59,10 @@ const NAVER_LOGIN_GENERIC_MESSAGE =
 export const AUTH_ERROR_MESSAGES: Record<UserFacingAuthErrorCode, string> = {
   [KAKAO_EMAIL_UNVERIFIED_CODE]:
     "카카오 계정의 이메일 인증이 확인되지 않아 가입을 진행하지 않았어요. 카카오 계정에서 이메일을 인증한 뒤 다시 시도해 주세요.",
+  oauth_start: "로그인을 시작하지 못했어요. 잠시 후 로그인 버튼을 다시 눌러 주세요.",
+  oauth_exchange: "로그인을 완료하지 못했어요. 로그인 버튼을 눌러 다시 시작해 주세요.",
+  oauth_pending: "로그인 확인이 지연되고 있어요. 잠시 기다려 주세요. 계속 멈춰 있으면 새로고침 후 다시 로그인해 주세요.",
+  oauth_provider: "인증을 완료하지 못했어요. 로그인 버튼을 눌러 다시 시작해 주세요.",
   state_mismatch:
     "로그인 확인 과정이 이어지지 않았어요. 다시 시도해도 반복되면 아래 진단코드와 함께 문의해 주세요.",
   no_code: NAVER_LOGIN_GENERIC_MESSAGE,
@@ -77,6 +83,10 @@ export const AUTH_ERROR_MESSAGES: Record<UserFacingAuthErrorCode, string> = {
  * 카카오 축은 메시지 자체가 자가해결 안내라 진단코드를 붙이지 않는다.
  */
 export const AUTH_ERROR_DIAG_CODES: Partial<Record<UserFacingAuthErrorCode, string>> = {
+  oauth_start: "OA-START",
+  oauth_exchange: "OA-EXCHANGE",
+  oauth_pending: "OA-PENDING",
+  oauth_provider: "OA-PROVIDER",
   state_mismatch: "NV-STATE",
   no_code: "NV-NOCODE",
   token_error: "NV-TOKEN",
@@ -107,12 +117,15 @@ export function buildLoginSupportMailto(diagCode: string): string {
  * 제거했으면 true — 호출측이 history.replaceState를 수행한다(순수 함수 유지).
  */
 export function stripAuthErrorNoticeParams(url: URL): boolean {
-  const had =
-    url.searchParams.has("auth_error") ||
-    url.searchParams.has(NAVER_LOGIN_ERROR_PARAM);
-  url.searchParams.delete("auth_error");
-  url.searchParams.delete(NAVER_LOGIN_ERROR_PARAM);
-  return had;
+  let removed = false;
+  const hash = new URLSearchParams(url.hash.slice(1));
+  let hashChanged = false;
+  for (const key of AUTH_ERROR_PARAM_KEYS) {
+    if (url.searchParams.has(key)) { url.searchParams.delete(key); removed = true; }
+    if (hash.has(key)) { hash.delete(key); hashChanged = true; removed = true; }
+  }
+  if (hashChanged) url.hash = hash.toString();
+  return removed;
 }
 
 export function getUserFacingAuthError(
@@ -140,7 +153,8 @@ export function getUserFacingAuthError(
 
   return providerError.includes(KAKAO_EMAIL_UNVERIFIED_MARKER)
     ? KAKAO_EMAIL_UNVERIFIED_CODE
-    : null;
+    : (providerError || params.get("auth_error")) && params.get("error") !== "access_denied"
+      ? "oauth_provider" : null;
 }
 
 export function getUserFacingAuthErrorFromUrl(
@@ -152,4 +166,16 @@ export function getUserFacingAuthErrorFromUrl(
       new URLSearchParams(url.hash.startsWith("#") ? url.hash.slice(1) : url.hash),
     )
   );
+}
+
+/** Storage can be disabled in WebViews; live error delivery must still work. */
+export function publishAuthError(code: UserFacingAuthErrorCode): void {
+  if (typeof window === "undefined") return;
+  try { sessionStorage.setItem(AUTH_ERROR_STORAGE_KEY, code); } catch { /* optional replay */ }
+  window.dispatchEvent(new CustomEvent(AUTH_ERROR_EVENT, { detail: code }));
+}
+export function clearAuthError(): void {
+  if (typeof window === "undefined") return;
+  try { sessionStorage.removeItem(AUTH_ERROR_STORAGE_KEY); } catch { /* optional replay */ }
+  window.dispatchEvent(new Event(AUTH_ERROR_CLEAR_EVENT));
 }
