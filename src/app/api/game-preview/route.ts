@@ -1,3 +1,4 @@
+import { resolveGameSeries } from "@/lib/crawler/resolve-game-series";
 import { NextRequest, NextResponse } from "next/server";
 import { supabaseAdmin as supabase } from "@/lib/supabase/admin";
 import playersRoster from "@/lib/constants/players-roster.json";
@@ -262,7 +263,8 @@ function parseLineupRows(raw: unknown): LineupPlayer[] {
 
 async function fetchTodayLineup(gameId: string, teamId: number, isAway: boolean): Promise<TodayLineup | null> {
   const seasonId = gameId.slice(0, 4);
-  const reqBody = `leId=1&srId=0&seasonId=${seasonId}&gameId=${gameId}`;
+  const srId = await resolveGameSeries(gameId, { srId: undefined });
+  const reqBody = `leId=1&srId=${srId}&seasonId=${seasonId}&gameId=${gameId}`;
   try {
     const sessionCookie = await fetchKboSessionCookie(
       AbortSignal.timeout(8000),
@@ -307,7 +309,8 @@ async function fetchPrevGameLineup(gameId: string, teamId: number): Promise<Line
     if (!teamGame) continue;
     const isAway = teamGame.awayTeamId === teamId;
     const seasonId = teamGame.gameId.slice(0, 4);
-    const reqBody = `leId=1&srId=0&seasonId=${seasonId}&gameId=${teamGame.gameId}`;
+    const srId = await resolveGameSeries(teamGame.gameId, { srId: teamGame.srId });
+    const reqBody = `leId=1&srId=${srId}&seasonId=${seasonId}&gameId=${teamGame.gameId}`;
     try {
       const sessionCookie = await fetchKboSessionCookie(
         AbortSignal.timeout(8000),

@@ -3,7 +3,7 @@ import { parseKboGameListPayload } from "@/lib/notifications/widget-fast-loop";
 import { fetchNaverGames } from "@/lib/crawler/naver-games";
 import type { KboGame } from "@/lib/crawler/kbo-api";
 import { fetchKboGamesOnly } from "@/lib/crawler/kbo-api";
-import { naverGameId } from "@/lib/crawler/naver-record";
+import { resolveNaverGameId } from "@/lib/crawler/naver-game-id";
 
 const KBO_MAIN = "https://www.koreabaseball.com/ws/Main.asmx";
 const KBO_BROWSER_UA =
@@ -92,6 +92,7 @@ type NaverLiveEvidence = {
 type NaverLiveEvidenceFetcher = (
   gameId: string,
   signal: AbortSignal,
+  srId?: string,
 ) => Promise<NaverLiveEvidence>;
 
 /**
@@ -256,9 +257,11 @@ type NaverRelayLineupSide = {
 export async function fetchNaverLiveEvidence(
   gameId: string,
   signal: AbortSignal,
+  srId?: string,
 ): Promise<NaverLiveEvidence> {
+  const naverId = await resolveNaverGameId(gameId, { srId, signal });
   const response = await fetch(
-    `https://api-gw.sports.naver.com/schedule/games/${naverGameId(gameId)}/relay?inning=1`,
+    `https://api-gw.sports.naver.com/schedule/games/${naverId}/relay?inning=1`,
     {
       headers: { "User-Agent": "Mozilla/5.0 (compatible; KboEveryday/1.0)" },
       cache: "no-store",
@@ -343,6 +346,7 @@ export function naverGameToRaw(game: KboGame): KboRawGame {
         : "1";
   return {
     G_ID: game.gameId,
+    SR_ID: game.srId,
     G_DT: game.date,
     G_TM: game.time,
     S_NM: game.stadium,
@@ -433,7 +437,7 @@ async function enrichNaverLiveGames(
       // ⓓ relay 보호 예산 — evidence 조회는 절대 deadline 이 아니라 per-game 상한 안에서만.
       // relay 열화 시 빠르게 실패 확정하고 남은 예산으로 frames 폴백을 태운다.
       const evidence = await runSourceBeforeDeadline(
-        (signal) => fetchNaverEvidenceImpl(game.gameId, signal),
+        (signal) => fetchNaverEvidenceImpl(game.gameId, signal, game.srId),
         Math.min(absoluteDeadlineAtMs, Date.now() + RELAY_EVIDENCE_BUDGET_MS),
       );
       if (needsFirstPitchCheck && !evidence.hasRealPlay) {

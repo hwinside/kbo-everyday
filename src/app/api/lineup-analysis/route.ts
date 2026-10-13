@@ -1,3 +1,4 @@
+import { resolveGameSeries } from "@/lib/crawler/resolve-game-series";
 import { NextRequest, NextResponse } from "next/server";
 import { supabaseAdmin as supabase } from "@/lib/supabase/admin";
 import { fetchGames, type KboGame } from "@/lib/crawler/kbo-api";
@@ -152,7 +153,8 @@ async function fetchPrevGameLineup(
 
     const isAway = teamGame.awayTeamId === teamId;
     const seasonId = teamGame.gameId.slice(0, 4);
-    const body = `leId=1&srId=0&seasonId=${seasonId}&gameId=${teamGame.gameId}`;
+    const srId = await resolveGameSeries(teamGame.gameId, { srId: teamGame.srId });
+    const body = `leId=1&srId=${srId}&seasonId=${seasonId}&gameId=${teamGame.gameId}`;
 
     try {
       const sessionCookie = await fetchKboSessionCookie(

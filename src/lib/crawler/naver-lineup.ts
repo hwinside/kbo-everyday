@@ -10,7 +10,7 @@
 // 스냅샷은 side 별 "선발투수 정확히 1 + 타자 정확히 9" 검증을 통과한 **완전 라인업**일 때만
 // 존재한다(confirmed=true). 부분 응답·조회 실패는 null — 확정알림 오발송 방지 fail-close.
 
-import { naverGameId } from "@/lib/crawler/naver-game-id";
+import { resolveNaverGameId } from "@/lib/crawler/naver-game-id";
 
 const NAVER_API = "https://api-gw.sports.naver.com/schedule/games";
 
@@ -151,9 +151,9 @@ export async function fetchNaverLineup(
   opts?: { signal?: AbortSignal; timeoutMs?: number; requireGameIdentity?: boolean },
 ): Promise<NaverLineupSnapshot | null> {
   try {
-    const nId = naverGameId(kboGameId);
     const signal =
       opts?.signal ?? (opts?.timeoutMs != null ? AbortSignal.timeout(opts.timeoutMs) : undefined);
+    const nId = await resolveNaverGameId(kboGameId, { signal });
     const res = await fetch(`${NAVER_API}/${nId}/preview`, {
       headers: { "User-Agent": "Mozilla/5.0 (compatible; KboEveryday/1.0)" },
       next: { revalidate: 60 },
@@ -180,9 +180,9 @@ export async function fetchNaverPreviewStarters(
   opts?: { signal?: AbortSignal; timeoutMs?: number },
 ): Promise<NaverPreviewStarters | null> {
   try {
-    const nId = naverGameId(kboGameId);
     const signal =
       opts?.signal ?? (opts?.timeoutMs != null ? AbortSignal.timeout(opts.timeoutMs) : undefined);
+    const nId = await resolveNaverGameId(kboGameId, { signal });
     const res = await fetch(`${NAVER_API}/${nId}/preview`, {
       headers: { "User-Agent": "Mozilla/5.0 (compatible; KboEveryday/1.0)" },
       next: { revalidate: 60 },

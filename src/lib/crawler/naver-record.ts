@@ -5,7 +5,7 @@
 // canonical-not-settled(409) 로 생성을 거부한다(2026-07-28 종료경기 AI요약 전면 중단).
 // game-detail 은 이 경우 이미 Naver record API 의 scoreBoard 로 fallback 한다 — 그 소스를 공용화한다.
 
-import { naverGameId } from "./naver-game-id";
+import { resolveNaverGameId } from "./naver-game-id";
 export { naverGameId } from "./naver-game-id";
 import { resolvePlayer } from "@/lib/utils/resolve-player";
 import { BS_POS_MAP } from "@/lib/crawler/kbo-api";
@@ -54,11 +54,13 @@ export function parseNaverScoreBoardLinescore(
 export async function fetchNaverLinescore(
   kboGameId: string,
 ): Promise<{ away: GameLinescoreSide; home: GameLinescoreSide } | null> {
+  const signal = AbortSignal.timeout(5000);
   try {
-    const nId = naverGameId(kboGameId);
+    const nId = await resolveNaverGameId(kboGameId, { signal });
     const res = await fetch(`${NAVER_API}/${nId}/record`, {
       headers: { "User-Agent": "Mozilla/5.0 (compatible; KboEveryday/1.0)" },
       next: { revalidate: 30 },
+      signal,
     });
     if (!res.ok) return null;
     const json = await res.json();
@@ -254,8 +256,8 @@ export async function fetchNaverBoxScore(
   opts?: { timeoutMs?: number; signal?: AbortSignal },
 ): Promise<BoxScoreResult | null> {
   try {
-    const nId = naverGameId(kboGameId);
     const signal = opts?.signal ?? AbortSignal.timeout(opts?.timeoutMs ?? NAVER_BOXSCORE_TIMEOUT_MS);
+    const nId = await resolveNaverGameId(kboGameId, { signal });
     const res = await fetch(`${NAVER_API}/${nId}/record`, {
       headers: { "User-Agent": "Mozilla/5.0 (compatible; KboEveryday/1.0)" },
       next: { revalidate: 30 },

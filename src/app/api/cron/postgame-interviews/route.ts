@@ -1,3 +1,4 @@
+import { resolveGameSeries } from "@/lib/crawler/resolve-game-series";
 import { NextRequest, NextResponse } from "next/server";
 import { fetchBoxScore, fetchGames, type KboGame } from "@/lib/crawler/kbo-api";
 import { supabaseAdmin } from "@/lib/supabase/admin";
@@ -78,7 +79,8 @@ function gameEndIso(gameDate: string, rawEndTime: string): string | null {
 
 async function fetchGameEndIso(game: KboGame): Promise<string | null> {
   try {
-    const body = `leId=1&srId=0&seasonId=${game.gameId.slice(0, 4)}&gameId=${game.gameId}`;
+    const srId = await resolveGameSeries(game.gameId, { srId: game.srId });
+    const body = `leId=1&srId=${srId}&seasonId=${game.gameId.slice(0, 4)}&gameId=${game.gameId}`;
     const response = await fetch(KBO_SCOREBOARD_URL, {
       method: "POST",
       headers: KBO_HEADERS,

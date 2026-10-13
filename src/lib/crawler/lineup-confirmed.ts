@@ -1,3 +1,4 @@
+import { resolveGameSeries } from "./resolve-game-series";
 /**
  * KBO 라인업 확정 신호(LINEUP_CK) 조회 — 라인업 확정 알림 트리거.
  * game-detail 의 GetLineUpAnalysis 응답 data[0][0].LINEUP_CK 를 그대로 읽는다.
@@ -34,7 +35,7 @@ export function parseLineupCk(data: unknown): boolean | null {
 
 export async function fetchLineupConfirmed(
   gameId: string,
-  opts?: { seasonId?: string; timeoutMs?: number },
+  opts?: { seasonId?: string; timeoutMs?: number; srId?: string },
 ): Promise<boolean | null> {
   const sid = opts?.seasonId || gameId.slice(0, 4);
   // timeoutMs 는 srId 0/1 재시도 + Naver 폴백을 포함한 **전체 절대 예산**이다(삼순 #952 4차 blocker1).
@@ -79,7 +80,13 @@ export async function fetchLineupConfirmed(
   // 소모해, 실제 GetLineUpAnalysis의 명시적 false를 한 번도 읽지 못한 채 Naver complete를
   // true로 승격할 수 있다. 브라우저 UA 무쿠키 요청을 먼저 보내 false/true를 우선 확정하고,
   // 204/empty일 때만 세션을 재취득해 재시도한다.
-  const initial = await requestLineupCk("0", null);
+  let series: string;
+  try {
+    series = await resolveGameSeries(gameId, { srId: opts?.srId, signal: AbortSignal.timeout(kboBudgetMs ?? 5000) });
+  } catch {
+    return null; // Unknown series is not an authoritative unconfirmed signal.
+  }
+  const initial = await requestLineupCk(series, null);
   if (initial.ck !== null) return initial.ck;
 
   let sessionCookie: string | null = null;
@@ -98,7 +105,7 @@ export async function fetchLineupConfirmed(
     }
   }
 
-  for (const srId of ["0", "1"]) {
+  for (const srId of [series]) {
     const attempt = await requestLineupCk(srId, sessionCookie);
     if (attempt.ck !== null) return attempt.ck;
     // sub-budget abort 직후 타이머 경계에서 다음 srId가 진입하지 않도록 결정적으로 중단한다.

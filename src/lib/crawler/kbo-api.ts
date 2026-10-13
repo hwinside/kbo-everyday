@@ -1,3 +1,4 @@
+import { rememberGameSeries, resolveGameSeries } from "./resolve-game-series";
 /* ===== KBO 공식 API 크롤러 ===== */
 
 import { resolvePlayer } from "@/lib/utils/resolve-player";
@@ -48,6 +49,9 @@ export function resolveTeamId(code: string, name: string): number {
 }
 
 export interface KboGame {
+  /** Source series identity: 0 regular, 1 exhibition, 3/4/5/7 postseason, 9 all-star. */
+  srId?: string;
+  gameLabel?: string;
   gameId: string;
   date: string;
   time: string;
@@ -109,6 +113,8 @@ function parseGameStatus(stateCode: string, cancelCode: string): KboGame["status
 }
 
 interface KboGameRaw {
+  SR_ID?: string | number;
+  GAME_SC_NM?: string;
   G_ID: string;
   G_DT: string;
   G_TM: string;
@@ -178,6 +184,8 @@ export function parseGame(raw: KboGameRaw): KboGame {
   const liveDetailOk = hasValidLiveDetail(raw, status);
   return {
     gameId: raw.G_ID,
+    srId: rememberGameSeries(raw.G_ID, raw.SR_ID),
+    gameLabel: raw.GAME_SC_NM,
     date: raw.G_DT,
     time: raw.G_TM,
     stadium: raw.S_NM,
@@ -789,14 +797,16 @@ export async function fetchBoxScore(
     return await fetchNaverBoxScore(gameId, { timeoutMs: naverBudget() });
   };
   try {
-    const sid = seasonId || new Date().getFullYear().toString();
-    const body = `leId=1&srId=0&seasonId=${sid}&gameId=${gameId}`;
+    const sid = seasonId || gameId.slice(0, 4);
+    const signal = AbortSignal.timeout(kboBudget);
+    const srId = await resolveGameSeries(gameId, { signal });
+    const body = `leId=1&srId=${srId}&seasonId=${sid}&gameId=${gameId}`;
     const res = await fetch(`${KBO_SCHEDULE_BASE}/GetBoxScore`, {
       method: "POST",
       headers: SCHEDULE_HEADERS,
       body,
       // KBO sub-budget 으로 response+body stall 을 함께 bound (같은 signal 이 res.json() 도 중단).
-      signal: AbortSignal.timeout(Math.min(kboBudget, naverBudget() || kboBudget)),
+      signal,
     });
 
     if (!res.ok) {
@@ -813,7 +823,7 @@ export async function fetchBoxScore(
 
     const data = await res.json();
     const parsed = parseBoxScore(data);
-    if (!parsed) {
+    if (!parsed || (parsed.awayBatters.length === 0 && parsed.homeBatters.length === 0)) {
       // KBO 응답 파싱 실패(스키마 열화) → Naver failover. 관제는 응답 경로를 블록하지 않게 fire-and-forget.
       void trackFallback("kbo-boxscore", "schema-error", {
         errorMessage: "parseBoxScore returned null",
@@ -846,12 +856,14 @@ export async function fetchBoxScore(
 export async function fetchGameLinescore(gameId: string, seasonId?: string): Promise<GameLinescore | null> {
   try {
     const sid = seasonId || gameId.slice(0, 4);
-    const body = `leId=1&srId=0&seasonId=${sid}&gameId=${gameId}`;
+    const signal = AbortSignal.timeout(10000);
+    const srId = await resolveGameSeries(gameId, { signal });
+    const body = `leId=1&srId=${srId}&seasonId=${sid}&gameId=${gameId}`;
     const res = await fetch(`${KBO_SCHEDULE_BASE}/GetScoreBoard`, {
       method: "POST",
       headers: SCHEDULE_HEADERS,
       body,
-      signal: AbortSignal.timeout(10000),
+      signal,
       cache: "no-store",
     });
     if (!res.ok) return null;

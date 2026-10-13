@@ -1,3 +1,5 @@
+import { seriesIdFromNaverId } from "./game-series";
+import { rememberGameSeries } from "./resolve-game-series";
 // Naver schedule/games 기반 경기목록 fallback — fetchGames(KBO GetKboGameList)가
 // 실패(throw/timeout/스키마 열화)할 때 동일한 KboGame[] 형태로 일정+라이브 스코어를
 // 대체 공급한다.
@@ -72,6 +74,8 @@ export function isRegularSeasonSrIdOutsideWindow(srId: string, date: string): bo
 
 interface NaverScheduleGame {
   gameId?: string;
+  roundCode?: string;
+  seriesGameNo?: number;
   gameDateTime?: string;
   stadium?: string;
   homeTeamCode?: string;
@@ -161,6 +165,8 @@ export function mapNaverGameToKbo(g: NaverScheduleGame, date: string, now: Date 
   const broadcastChannels = decodeBroadcast(g.broadChannel);
   return {
     gameId: `${date}${awayCode}${homeCode}${seq}`,
+    srId: rememberGameSeries(`${date}${awayCode}${homeCode}${seq}`, seriesIdFromNaverId(g.gameId ?? "") ?? (isWithinRegularSeasonWindow(date) ? "0" : undefined)),
+    gameLabel: g.seriesGameNo ? `${g.roundCode ?? ""} ${g.seriesGameNo}` : undefined,
     date,
     time: g.gameDateTime ? g.gameDateTime.slice(11, 16) : "",
     stadium: g.stadium ?? "",
