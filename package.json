@@ -579,7 +579,8 @@
     "qa:la-ack-recovery": "tsx scripts/qa/la-ack-recovery-smoke.ts",
     "qa:la-device-recovery": "tsx scripts/qa/la-device-recovery-smoke.ts && tsx scripts/qa/la-device-recovery-route-smoke.ts",
     "qa:la-recovery-card-policy": "bash scripts/qa/la-recovery-card-policy-smoke.sh",
-    "qa:postseason-operations": "NEXT_PUBLIC_SUPABASE_URL=https://example.supabase.co NEXT_PUBLIC_SUPABASE_ANON_KEY=test-only SUPABASE_SERVICE_ROLE_KEY=test-only node --import tsx --test tests/postseason-operations.test.ts"
+    "qa:postseason-operations": "NEXT_PUBLIC_SUPABASE_URL=https://example.supabase.co NEXT_PUBLIC_SUPABASE_ANON_KEY=test-only SUPABASE_SERVICE_ROLE_KEY=test-only node --import tsx --test tests/postseason-operations.test.ts",
+    "qa:postseason-series": "NEXT_PUBLIC_SUPABASE_URL=https://example.supabase.co NEXT_PUBLIC_SUPABASE_ANON_KEY=test-only SUPABASE_SERVICE_ROLE_KEY=test-only node --import tsx --test tests/postseason-series.test.ts"
   },
   "dependencies": {
     "@capacitor-firebase/messaging": "^8.3.0",

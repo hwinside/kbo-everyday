@@ -1,3 +1,4 @@
+import { isAllStarGameId } from "@/lib/constants/teams";
 import { resolveNaverGameId } from "@/lib/crawler/naver-game-id";
 import { normalizeSeriesId } from "@/lib/crawler/game-series";
 import {
@@ -17,7 +18,7 @@ import {
   parseNaverBoxScore,
   parseNaverScoreBoardLinescore,
 } from "@/lib/crawler/naver-record";
-import { fetchNaverGames } from "@/lib/crawler/naver-games";
+import { fetchNaverGames, isWithinRegularSeasonWindow } from "@/lib/crawler/naver-games";
 import {
   fetchKboSessionCookie,
   withKboSessionCookie,
@@ -733,11 +734,11 @@ export async function getGameDetailRouteResult(params: {
       if (srId === undefined) throw new Error("Series identity unavailable");
       return srId;
     };
-    const series = await untilDeadline(
+    const series = overrideSrId ?? (isAllStarGameId(gameId) ? "9" : isWithinRegularSeasonWindow(dateStr) ? "0" : await untilDeadline(
       Promise.any([kboListPromise.then(seriesFrom), naverListPromise.then(seriesFrom)])
         .catch(() => overrideSrId),
       deadlineSignal, overrideSrId,
-    );
+    ));
     // No 0/1 probing: a false LINEUP_CK from the wrong series is not authoritative.
     const kboBatch = series !== undefined
       ? await untilDeadline(fetchWithSrId(series), deadlineSignal, timeoutBatch)

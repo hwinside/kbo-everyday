@@ -112,7 +112,7 @@ async function getStarterStats(name: string, teamId: number): Promise<string | n
         if (!isAway && !isHome) continue;
         const starter = isAway ? g.awayStarterName : g.homeStarterName;
         if (starter !== name) continue;
-        const bs = await fetchBoxScore(g.gameId).catch(() => null);
+        const bs = await fetchBoxScore(g.gameId, undefined, { srId: g.srId }).catch(() => null);
         if (!bs) continue;
         const pitchers = isAway ? bs.awayPitchers : bs.homePitchers;
         const sp = pitchers[0];
@@ -332,7 +332,7 @@ async function fetchPrevGameLineup(gameId: string, teamId: number): Promise<Line
       // KBO 열화 → 아래 Naver 폴백으로 진행
     }
     // KBO GetLineUpAnalysis 열화 → 공용 Naver 어댑터 폴백(삼순 PR#988 P0-2 ④). 실패 시 다음 lookback continue.
-    const snap = await fetchNaverLineup(teamGame.gameId, { timeoutMs: 8000 });
+    const snap = await fetchNaverLineup(teamGame.gameId, { timeoutMs: 8000, srId: teamGame.srId });
     if (snap) {
       const side = isAway ? snap.away : snap.home;
       return side.batters.map(b => ({ order: b.order, position: b.position, name: b.name }));
@@ -446,7 +446,7 @@ async function getStarterVsOpponent(
 
     for (const g of matchups) {
       if (games >= MAX_GAMES) break;
-      const bs = await fetchBoxScore(g.gameId).catch(() => null);
+      const bs = await fetchBoxScore(g.gameId, undefined, { srId: g.srId }).catch(() => null);
       if (!bs) continue;
       const isAway = g.awayTeamId === starterTeamId;
       const pitchers = isAway ? bs.awayPitchers : bs.homePitchers;
@@ -626,7 +626,7 @@ async function getRecentForm(gameId: string, teamId: number): Promise<HotColdPla
 
   // BoxScore 병렬 조회
   const boxScores = await Promise.all(
-    recentGames.map(g => fetchBoxScore(g.gameId).catch(() => null))
+    recentGames.map(g => fetchBoxScore(g.gameId, undefined, { srId: g.srId }).catch(() => null))
   );
 
   // 타자 성적 집계

@@ -1,5 +1,3 @@
-import { rememberGameSeries } from "../../src/lib/crawler/resolve-game-series";
-// Transport-only fault injection: source identity is fixed; postseason source mapping has its own regression.
 /**
  * fetchLiveGamesNaverPrimary(Live Activity 카드·위젯 라이브 소스) 결함주입 회귀.
  *
@@ -47,7 +45,6 @@ type KboGamesImpl = Parameters<FetchLiveGamesNaverPrimary>[5];
 type FramesImpl = Parameters<FetchLiveGamesNaverPrimary>[6];
 
 const GID = "20260826NCLG0";
-rememberGameSeries(GID, "0");
 
 function naverGame(over: Partial<KboGame> = {}): KboGame {
   return {
