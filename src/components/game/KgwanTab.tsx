@@ -24,8 +24,10 @@ import type { GameRelayResponse } from "@/app/api/game-relay/route";
 import { resolveCurrentAtBat, resolveCurrentAtBatCardPitcher } from "@/lib/game/current-at-bat";
 import { useKgwanAutoFocus } from "@/hooks/useKgwanAutoFocus";
 import { cancelReasonDetail } from "@/lib/utils/cancel-reason";
+import { gameChatLeadHours, gameChatOpensAt } from "@/lib/game-chat-opening";
 
 interface KgwanTabProps {
+  srId?: string;
   /** 당겨서 새로고침 epoch — 증가 시 종료 요약(FinalView)이 GET 재조회(오류 카드 stuck 해소). */
   refreshEpoch?: number;
   gameId: string;
@@ -65,8 +67,6 @@ interface PreviewData {
   keyMatchup: string;
 }
 
-const GAME_CHAT_OPEN_LEAD_MS = 2 * 60 * 60 * 1000;
-
 function getGameStartAtKst(gameId: string, gameDate?: string | null, gameStartTime?: string | null): Date | null {
   const datePart = gameDate?.match(/^\d{4}-\d{2}-\d{2}$/)?.[0]
     ?? gameId.match(/^(\d{4})(\d{2})(\d{2})/)?.slice(1, 4).join("-");
@@ -78,7 +78,9 @@ function getGameStartAtKst(gameId: string, gameDate?: string | null, gameStartTi
 }
 
 function formatKstTime(date: Date): string {
-  return date.toLocaleTimeString("ko-KR", {
+  return date.toLocaleString("ko-KR", {
+    month: "numeric",
+    day: "numeric",
     timeZone: "Asia/Seoul",
     hour: "numeric",
     minute: "2-digit",
@@ -244,7 +246,8 @@ function AIPreviewCard({ gameId, awayTeamId, homeTeamId, starterNames }: {
 }
 
 /* ===== Scheduled: AI Preview ===== */
-function ScheduledView({ gameId, awayTeamId, homeTeamId, gameDate, gameStartTime, starterNames, lineupConfirmed }: {
+function ScheduledView({ srId, gameId, awayTeamId, homeTeamId, gameDate, gameStartTime, starterNames, lineupConfirmed }: {
+  srId?: string;
   gameId: string;
   awayTeamId: number;
   homeTeamId: number;
@@ -257,7 +260,7 @@ function ScheduledView({ gameId, awayTeamId, homeTeamId, gameDate, gameStartTime
   const homeTeam = getTeamById(homeTeamId)!;
   const [nowMs, setNowMs] = useState(() => Date.now());
   const gameStartAt = useMemo(() => getGameStartAtKst(gameId, gameDate, gameStartTime), [gameId, gameDate, gameStartTime]);
-  const chatOpensAt = gameStartAt ? new Date(gameStartAt.getTime() - GAME_CHAT_OPEN_LEAD_MS) : null;
+  const chatOpensAt = gameChatOpensAt(gameStartAt, srId);
   // 올스타전은 2시간 게이트 없이 즉시 오픈 — 이벤트 특성상 미리 모여 떠들 수 있게 (하린아빠 2026-07-11).
   const isChatOpen = isAllStarGame(awayTeamId, homeTeamId) || (chatOpensAt ? nowMs >= chatOpensAt.getTime() : false);
 
@@ -297,12 +300,12 @@ function ScheduledView({ gameId, awayTeamId, homeTeamId, gameDate, gameStartTime
       {/* 직관 라이브 — 전체 채팅 바로 위 */}
       <VenueStorySection gameId={gameId} />
 
-      {/* Pre-game chat opens 2 hours before first pitch */}
+      {/* Postseason chat opens 24 hours before first pitch; regular season keeps 2 hours */}
       {isChatOpen ? (
         <GameChatSlot gameId={gameId} homeTeamId={homeTeamId} awayTeamId={awayTeamId} />
       ) : (
         <div className="glass-card p-4 text-center space-y-1.5">
-          <p className="text-sm font-semibold text-text-primary">크관 채팅은 경기 시작 2시간 전부터 열려요</p>
+          <p className="text-sm font-semibold text-text-primary">크관 채팅은 경기 시작 {gameChatLeadHours(srId)}시간 전부터 열려요</p>
           {chatOpensAt ? (
             <p className="text-xs text-text-tertiary">오픈 예정: {formatKstTime(chatOpensAt)}</p>
           ) : (
@@ -1026,6 +1029,7 @@ function AllStarKgwanNotice() {
 
 /* ===== Main KgwanTab ===== */
 export default function KgwanTab({
+  srId,
   gameId,
   homeTeamId,
   awayTeamId,
@@ -1056,7 +1060,7 @@ export default function KgwanTab({
     return (
       <>
         {allStarNotice}
-        <ScheduledView gameId={gameId} awayTeamId={awayTeamId} homeTeamId={homeTeamId} gameDate={gameDate} gameStartTime={gameStartTime} starterNames={starterNames} lineupConfirmed={lineupConfirmed} />
+        <ScheduledView srId={srId} gameId={gameId} awayTeamId={awayTeamId} homeTeamId={homeTeamId} gameDate={gameDate} gameStartTime={gameStartTime} starterNames={starterNames} lineupConfirmed={lineupConfirmed} />
       </>
     );
   }
