@@ -682,6 +682,7 @@ export default function GameDetailPage() {
               {activeTab === "kgwan" && (
                 <motion.div key="kgwan" initial={{ opacity: 0 }} animate={{ opacity: 1 }} exit={{ opacity: 0 }} className="h-full">
                   <KgwanTab
+                    srId={gameDetail?.srId}
                     gameId={gameId}
                     homeTeamId={game.homeTeamId}
                     awayTeamId={game.awayTeamId}
