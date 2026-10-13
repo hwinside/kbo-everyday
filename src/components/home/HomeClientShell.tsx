@@ -1,4 +1,5 @@
 "use client";
+import PostseasonLadder from "./PostseasonLadder";
 
 import { useState, useEffect, useCallback, useMemo, useRef } from "react";
 import { useRouter } from "next/navigation";
@@ -772,6 +773,8 @@ export default function HomeClientShell({ initialGames, initialLiveGames, initia
         const allStarLive = allLiveData.find((g) => g.gameId === allStarGame.id);
         return <AllStarGameCard game={allStarGame} live={allStarLive} />;
       })()}
+
+      <PostseasonLadder />
 
       {/* 팀 카드 (필수, 토글 없음) — 경기카드(MyTeamHero)를 안에 종속 임베드(④=B) */}
       {myTeam && (

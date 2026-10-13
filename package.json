@@ -581,7 +581,8 @@
     "qa:la-recovery-card-policy": "bash scripts/qa/la-recovery-card-policy-smoke.sh",
     "qa:postseason-operations": "NEXT_PUBLIC_SUPABASE_URL=https://example.supabase.co NEXT_PUBLIC_SUPABASE_ANON_KEY=test-only SUPABASE_SERVICE_ROLE_KEY=test-only node --import tsx --test tests/postseason-operations.test.ts",
     "qa:postseason-series": "NEXT_PUBLIC_SUPABASE_URL=https://example.supabase.co NEXT_PUBLIC_SUPABASE_ANON_KEY=test-only SUPABASE_SERVICE_ROLE_KEY=test-only node --import tsx --test tests/postseason-series.test.ts",
-    "qa:postseason-labels": "node --import tsx --test tests/postseason-labels.test.ts"
+    "qa:postseason-labels": "node --import tsx --test tests/postseason-labels.test.ts",
+    "qa:postseason-ladder": "node --import tsx --test tests/postseason-ladder.test.ts"
   },
   "dependencies": {
     "@capacitor-firebase/messaging": "^8.3.0",
