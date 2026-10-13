@@ -583,7 +583,8 @@
     "qa:postseason-series": "NEXT_PUBLIC_SUPABASE_URL=https://example.supabase.co NEXT_PUBLIC_SUPABASE_ANON_KEY=test-only SUPABASE_SERVICE_ROLE_KEY=test-only node --import tsx --test tests/postseason-series.test.ts",
     "qa:postseason-labels": "node --import tsx --test tests/postseason-labels.test.ts",
     "qa:postseason-finalize": "NEXT_PUBLIC_SUPABASE_URL=https://example.supabase.co NEXT_PUBLIC_SUPABASE_ANON_KEY=test-only SUPABASE_SERVICE_ROLE_KEY=test-only node --import tsx --test tests/postseason-finalize.test.ts",
-    "qa:season-predictions-close:pglite": "node --import tsx scripts/qa/season-predictions-close-pglite.ts"
+    "qa:season-predictions-close:pglite": "node --import tsx scripts/qa/season-predictions-close-pglite.ts",
+    "qa:postseason-ladder": "node --import tsx --test tests/postseason-ladder.test.ts"
   },
   "dependencies": {
     "@capacitor-firebase/messaging": "^8.3.0",
