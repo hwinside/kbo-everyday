@@ -1,3 +1,4 @@
+import { isOutsideConfirmedRegularSeason } from "@/lib/crawler/naver-games";
 import { NextRequest, NextResponse } from "next/server";
 import { supabaseAdmin } from "@/lib/supabase/admin";
 import { startJob, finishJob } from "@/lib/admin/job-logger";
@@ -39,7 +40,13 @@ export async function GET(req: NextRequest) {
   const logId = await startJob("game-logs-ingest");
 
   try {
-    const dates = [getKSTToday(), getKSTYesterday()].map((d) => d.replace(/-/g, ""));
+    const requestedDates = [getKSTToday(), getKSTYesterday()].map((d) => d.replace(/-/g, ""));
+    const skippedDates = requestedDates.filter(isOutsideConfirmedRegularSeason);
+    const dates = requestedDates.filter(d => !isOutsideConfirmedRegularSeason(d));
+    if (dates.length === 0) {
+      await finishJob(logId, "success", `skip: outside confirmed regular season (${skippedDates.join(",")})`);
+      return NextResponse.json({ ok: true, skipped: "outside confirmed regular season", skippedDates });
+    }
 
     // 날짜별 정규시즌 경기 → final만
     const { finals, failedDates } = await collectFinalGamesByDate(
@@ -85,6 +92,7 @@ export async function GET(req: NextRequest) {
     return NextResponse.json({
       ok,
       failedDates,
+      skippedDates,
       timestamp: new Date().toISOString(),
       dates,
       finals: finals.length,
