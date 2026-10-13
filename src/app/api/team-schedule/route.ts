@@ -52,6 +52,8 @@ export async function GET(req: NextRequest) {
         day,
         date: g.date,
         gameId: g.gameId,
+        srId: g.srId,
+        gameLabel: g.gameLabel,
         opponent: oppTeam
           ? { id: oppTeam.id, slug: oppTeam.slug, shortName: oppTeam.shortName, name: oppTeam.name }
           : { id: oppId, slug: "", shortName: "", name: "" },

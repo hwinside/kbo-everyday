@@ -1,4 +1,4 @@
-import { isWithinRegularSeasonWindow } from "@/lib/constants/season";
+import { REGULAR_SEASON_WINDOWS, isWithinRegularSeasonWindow } from "@/lib/constants/season";
 import { seriesIdFromNaverId } from "./game-series";
 import { rememberGameSeries } from "./resolve-game-series";
 // Naver schedule/games 기반 경기목록 fallback — fetchGames(KBO GetKboGameList)가
@@ -47,6 +47,11 @@ const NAVER_SERVICEABLE_SR_IDS = new Set<string>([DEFAULT_ALL_SR_ID, REGULAR_SEA
  * (src/app/api/roster-moves/route.ts 의 SEASON_START 상수와 동일한 연 1회 운영).
  */
 export { REGULAR_SEASON_WINDOWS, isWithinRegularSeasonWindow, type RegularSeasonWindow } from "@/lib/constants/season";
+
+export function isOutsideConfirmedRegularSeason(date: string): boolean {
+  const w = REGULAR_SEASON_WINDOWS[date.slice(0, 4)];
+  return !!w && (date < w.start || (w.finalized && date > w.end));
+}
 
 /**
  * srId=0(정규시즌 전용) 요청인데 검증된 정규시즌 window 밖인가. Naver는 series를 구분하지
