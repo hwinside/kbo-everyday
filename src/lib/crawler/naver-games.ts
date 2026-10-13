@@ -1,3 +1,4 @@
+import { isWithinRegularSeasonWindow } from "@/lib/constants/season";
 import { seriesIdFromNaverId } from "./game-series";
 import { rememberGameSeries } from "./resolve-game-series";
 // Naver schedule/games 기반 경기목록 fallback — fetchGames(KBO GetKboGameList)가
@@ -45,24 +46,7 @@ const NAVER_SERVICEABLE_SR_IDS = new Set<string>([DEFAULT_ALL_SR_ID, REGULAR_SEA
  * 미등록 연도는 fail-close(정규 일정 미확정 상태에서 추측 서빙 금지). 시즌이 바뀌면 갱신
  * (src/app/api/roster-moves/route.ts 의 SEASON_START 상수와 동일한 연 1회 운영).
  */
-export interface RegularSeasonWindow {
-  start: string;
-  /** 현재 공식 일정으로 확인된 마지막 날짜. finalized=true일 때만 실제 시즌 종료일이다. */
-  end: string;
-  /** KBO가 우천 순연분까지 포함한 실제 종료일을 확정했는가. */
-  finalized: boolean;
-}
-
-export const REGULAR_SEASON_WINDOWS: Readonly<Record<string, RegularSeasonWindow>> = {
-  // KBO 9/30 발표의 마지막 편성일. 10/13 이후는 계속 fail-close.
-  "2026": { start: "20260328", end: "20261012", finalized: false },
-};
-
-/** date(YYYYMMDD)가 검증된 정규시즌 window 안인가. 미등록 연도는 false(fail-close). */
-export function isWithinRegularSeasonWindow(date: string): boolean {
-  const w = REGULAR_SEASON_WINDOWS[date.slice(0, 4)];
-  return !!w && date >= w.start && date <= w.end;
-}
+export { REGULAR_SEASON_WINDOWS, isWithinRegularSeasonWindow, type RegularSeasonWindow } from "@/lib/constants/season";
 
 /**
  * srId=0(정규시즌 전용) 요청인데 검증된 정규시즌 window 밖인가. Naver는 series를 구분하지

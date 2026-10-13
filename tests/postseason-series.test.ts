@@ -104,3 +104,17 @@ test("cold regular-season ID resolves without a schedule request", async () => {
     assert.equal(calls, 0);
   } finally { globalThis.fetch = original; }
 });
+
+test("cold regular resolver needs neither transport nor database configuration", async () => {
+  const { execFileSync } = await import("node:child_process");
+  const env = { ...process.env };
+  for (const key of Object.keys(env)) if (key.includes("SUPABASE")) delete env[key];
+  const output = execFileSync(process.execPath, ["--import", "tsx", "-e", `
+    globalThis.fetch = () => { throw new Error("unexpected network"); };
+    import("./src/lib/crawler/resolve-game-series.ts").then(async m => {
+      if (await m.resolveGameSeries("20261005HHSS0") !== "0") process.exit(1);
+      console.log("regular-no-dependencies");
+    });
+  `], { env, encoding: "utf8" });
+  assert.match(output, /regular-no-dependencies/);
+});
