@@ -428,6 +428,18 @@ export default function HomeClientShell({ initialGames, initialLiveGames, initia
         if (!res.ok) throw new Error(`Next game lookup: ${res.status}`);
         const data = await res.json();
         const date = data.date as string | undefined;
+        if (!data.game && !isOvernight) {
+          // Initial todayGames may still be loading. Confirm today's absence too,
+          // so a future-empty result cannot clear a current live/final widget.
+          const todayDate = formatKSTDateOffset(0);
+          const todayResponse = await fetch(`/api/games?date=${formatApiDate(todayDate)}`, { signal });
+          if (!todayResponse.ok) throw new Error("Today's schedule not verified");
+          const todayData = await todayResponse.json();
+          if (!Array.isArray(todayData.games)) throw new Error("Invalid today's schedule");
+          const todayGame = (todayData.games as ApiGameData[]).map(mapApiGame)
+            .find(g => g.homeTeamId === teamId || g.awayTeamId === teamId);
+          if (todayGame) return { game: todayGame, date: todayDate };
+        }
         return {
           game: data.game ? mapApiGame(data.game as ApiGameData) : null,
           date: date ? `${date.slice(0, 4)}-${date.slice(4, 6)}-${date.slice(6, 8)}` : undefined,
