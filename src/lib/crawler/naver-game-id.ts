@@ -1,8 +1,16 @@
 import { isAllStarGameId } from "@/lib/constants/teams";
+import { normalizeSeriesId, isPostseason } from "./game-series";
+import { knownGameSeries, resolveGameSeries } from "./resolve-game-series";
 
-/** KBO gameId → Naver gameId (연도 접미). 올스타는 앞 4자리를 9999 로 서비스. */
-export function naverGameId(kboGameId: string): string {
+/** Pure converter; callers with only a game ID must use resolveNaverGameId. */
+export function naverGameId(kboGameId: string, srId?: string | number): string {
   const year = kboGameId.slice(0, 4);
-  const base = isAllStarGameId(kboGameId) ? `9999${kboGameId.slice(4)}` : kboGameId;
-  return `${base}${year}`;
+  const series = normalizeSeriesId(srId) ?? knownGameSeries(kboGameId);
+  const prefix = isAllStarGameId(kboGameId) || series === "9" ? "9999"
+    : isPostseason(series) ? series!.repeat(4) : year;
+  return `${prefix}${kboGameId.slice(4)}${year}`;
+}
+export async function resolveNaverGameId(kboGameId: string, opts?: { srId?: unknown; signal?: AbortSignal }): Promise<string> {
+  if (isAllStarGameId(kboGameId)) return naverGameId(kboGameId, "9");
+  return naverGameId(kboGameId, await resolveGameSeries(kboGameId, opts));
 }

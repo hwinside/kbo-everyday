@@ -1,3 +1,6 @@
+import { isAllStarGameId } from "@/lib/constants/teams";
+import { resolveNaverGameId } from "@/lib/crawler/naver-game-id";
+import { normalizeSeriesId } from "@/lib/crawler/game-series";
 import {
   fetchKboGamesOnly,
   isKboGameCancelled,
@@ -12,11 +15,10 @@ import { resolvePlayer } from "@/lib/utils/resolve-player";
 import { fetchNaverRelayBatterCounts } from "@/lib/naver-relay-counts";
 import { hasPureSubPositions, mergeNaverSubPositions } from "@/lib/utils/sub-position-merge";
 import {
-  naverGameId,
   parseNaverBoxScore,
   parseNaverScoreBoardLinescore,
 } from "@/lib/crawler/naver-record";
-import { fetchNaverGames } from "@/lib/crawler/naver-games";
+import { fetchNaverGames, isWithinRegularSeasonWindow } from "@/lib/crawler/naver-games";
 import {
   fetchKboSessionCookie,
   withKboSessionCookie,
@@ -485,7 +487,7 @@ export async function fetchNaverRecord(
   linescore: GameDetailResponse["linescore"];
 } | null> {
   try {
-    const nId = naverGameId(kboGameId);
+    const nId = await resolveNaverGameId(kboGameId, { signal: opts?.signal });
     // record API는 hit만 채우고 h2/h3는 항상 null, hr도 라이브 중 0으로 들어와서
     // 2루타/3루타가 단타로 뭉개진다. relay textRelayData에서 결과 텍스트를
     // 카운트해서 batter별 h2b/h3b/hr를 보강.
@@ -649,7 +651,7 @@ export async function getGameDetailRouteResult(params: {
     throw new Error("invalid gameId format");
   }
 
-  const seasonId = params.seasonId || new Date().getFullYear().toString();
+  const seasonId = params.seasonId || gameId.slice(0, 4);
   const deadlineSignal = AbortSignal.timeout(USER_FACING_GAME_DETAIL_DEADLINE_MS);
   const dateStr = gameId.slice(0, 8);
   const kboSessionPromise = fetchKboSessionCookie(deadlineSignal);
@@ -686,8 +688,8 @@ export async function getGameDetailRouteResult(params: {
 
   // KBO Schedule API (GetScoreBoard/GetBoxScore/GetLineUpAnalysis) only accepts
   // a single integer srId — NOT comma-separated like GetKboGameList.
-  // Try srId=0 (regular) first; if ScoreBoard returns empty, retry with srId=1 (preseason).
-  const overrideSrId = params.overrideSrId;
+  // Resolve the exact series from the game lists; never probe a different series.
+  const overrideSrId = normalizeSeriesId(params.overrideSrId);
 
   async function fetchWithSrId(srId: string) {
     const body = `leId=1&srId=${srId}&seasonId=${seasonId}&gameId=${gameId}`;
@@ -727,27 +729,21 @@ export async function getGameDetailRouteResult(params: {
       data: [null, null, null],
       reasons: ["timeout" as DegradationReason],
     };
-    let kboBatch = overrideSrId
-      ? await untilDeadline(fetchWithSrId(overrideSrId), deadlineSignal, timeoutBatch)
-      : await untilDeadline(fetchWithSrId("0"), deadlineSignal, timeoutBatch);
-    let [scoreBoardRes, lineupRes, boxScoreRes] = kboBatch.data;
-
-    // If no override and srId=0 returned empty ScoreBoard, retry with srId=1 (preseason)
-    if (!overrideSrId && !deadlineSignal.aborted) {
-      const sb = parseScoreBoard(scoreBoardRes ?? []);
-      if (!sb.meta) {
-        const retryBatch = await untilDeadline(
-          fetchWithSrId("1"),
-          deadlineSignal,
-          timeoutBatch,
-        );
-        kboBatch = {
-          data: retryBatch.data,
-          reasons: [...kboBatch.reasons, ...retryBatch.reasons],
-        };
-        [scoreBoardRes, lineupRes, boxScoreRes] = kboBatch.data;
-      }
-    }
+    const seriesFrom = (list: ObservedGames) => {
+      const srId = normalizeSeriesId(list.value?.find(g => g.gameId === gameId)?.srId);
+      if (srId === undefined) throw new Error("Series identity unavailable");
+      return srId;
+    };
+    const series = overrideSrId ?? (isAllStarGameId(gameId) ? "9" : isWithinRegularSeasonWindow(dateStr) ? "0" : await untilDeadline(
+      Promise.any([kboListPromise.then(seriesFrom), naverListPromise.then(seriesFrom)])
+        .catch(() => overrideSrId),
+      deadlineSignal, overrideSrId,
+    ));
+    // No 0/1 probing: a false LINEUP_CK from the wrong series is not authoritative.
+    const kboBatch = series !== undefined
+      ? await untilDeadline(fetchWithSrId(series), deadlineSignal, timeoutBatch)
+      : { data: [null, null, null], reasons: ["schema-error" as DegradationReason] };
+    const [scoreBoardRes, lineupRes, boxScoreRes] = kboBatch.data;
 
     const parsedScoreBoard = parseScoreBoard(scoreBoardRes ?? []);
     let meta = parsedScoreBoard.meta;

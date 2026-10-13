@@ -47,6 +47,8 @@ export function mergeKboEnrichment(naverBase: KboGame[], kboGames: KboGame[]): K
     const bothCancelled = base.status === "cancelled" && k.status === "cancelled";
     return {
       ...base,
+      srId: k.srId ?? base.srId,
+      gameLabel: k.gameLabel || base.gameLabel,
       strikes: sameLiveMoment ? k.strikes : base.strikes,
       balls: sameLiveMoment ? k.balls : base.balls,
       outs: sameLiveMoment ? k.outs : base.outs,
