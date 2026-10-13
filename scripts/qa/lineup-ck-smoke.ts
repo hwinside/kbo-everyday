@@ -1,3 +1,7 @@
+import { rememberGameSeries } from "../../src/lib/crawler/resolve-game-series";
+// Transport-only fault injection: source identity is fixed; postseason source mapping has its own regression.
+
+for (const id of ["20260729LGWO0", "20260730HTSS0", "20260731HHKT0"]) rememberGameSeries(id, "0");
 /**
  * KBO LINEUP_CK 파서 순수 회귀 (라인업 확정 트리거)
  * + Naver preview 확정 폴백 회귀(삼순 PR#988 P0-2 ② — 완전 라인업→true / 부분→null fail-close).

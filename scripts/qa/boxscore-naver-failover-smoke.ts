@@ -1,3 +1,5 @@
+import { rememberGameSeries } from "../../src/lib/crawler/resolve-game-series";
+// Transport-only fault injection: source identity is fixed; postseason source mapping has its own regression.
 /**
  * QA: fetchBoxScore 의 KBO→Naver failover 를 검증.
  *
@@ -44,6 +46,7 @@ const FIXTURE: Fixture = JSON.parse(
   readFileSync(new URL("./fixtures/boxscore-failover-2026-07-29.json", import.meta.url), "utf-8"),
 );
 const GAME_IDS = Object.keys(FIXTURE);
+for (const id of GAME_IDS) rememberGameSeries(id, "0");
 
 // ── stub fetch (signal 인지 — bounded 종료 fault injection 용) ──
 const origFetch = globalThis.fetch;
