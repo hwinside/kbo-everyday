@@ -27,3 +27,10 @@ test("final label changes on KST day boundary after confirmed final day", () => 
   assert.equal(isRegularSeasonFinal(new Date("2026-10-12T15:00:00Z")), true);
   assert.equal(isRegularSeasonFinal(new Date("2027-10-13T00:00:00Z")), false);
 });
+
+test("conditional scheduled rounds are not promised as guaranteed games", () => {
+  assert.match(postseasonGameLabel("4", "WC2", "scheduled"), /필요시/);
+  assert.doesNotMatch(postseasonGameLabel("7", "KS4", "scheduled"), /필요시/);
+  assert.match(postseasonGameLabel("7", "KS5", "scheduled"), /필요시/);
+  assert.doesNotMatch(postseasonGameLabel("7", "KS5", "final"), /필요시/);
+});

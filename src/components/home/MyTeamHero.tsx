@@ -131,7 +131,7 @@ export default function MyTeamHero({ myTeam, myTeamGame, embedded = false }: { m
                   <span className="text-2xl font-black tabular-nums text-text-primary">{myTeamGame.homeScore}</span>
                 </div>
               )}
-              {postseasonGameLabel(myTeamGame.srId, myTeamGame.gameLabel) && <span className="text-xs font-bold text-text-primary">{postseasonGameLabel(myTeamGame.srId, myTeamGame.gameLabel)}</span>}
+              {postseasonGameLabel(myTeamGame.srId, myTeamGame.gameLabel, myTeamGame.status) && <span className="text-xs font-bold text-text-primary">{postseasonGameLabel(myTeamGame.srId, myTeamGame.gameLabel, myTeamGame.status)}</span>}
               <span className={`text-xs font-semibold px-2 py-0.5 rounded-full ${
                 myTeamGame.status === "live" ? "bg-red-500/20 text-red-400 animate-pulse" :
                 myTeamGame.status === "cancelled" ? "bg-text-tertiary/20 text-text-tertiary" :
