@@ -47,8 +47,10 @@ for (const [id, srId, label] of [["20251006NCSS0","4","WC"],["20251009SSSK0","3"
 }
 test("missing, stale and foreign-year brackets cannot fabricate matchups", () => {
   assert.equal(renderAppFacts(plan,base)?.source, "history_hold");
+  const games = [{ gameId: "20251026HHLG0", srId: "7", gameLabel: "KS1", awayName: "한화", homeName: "LG", stadium: "잠실", time: "18:30", status: "scheduled" } as KboGame];
+  assert.equal(renderAppFacts(plan,{...base,appFacts:{...base.appFacts!,postseason:{season:2025,fetchedAt:now,games}}})?.source,"kbo_structured");
   for (const [season,fetchedAt] of [[2024,now],[2025,now-120001],[2025,now+1]]) {
-    assert.equal(renderAppFacts(plan,{...base,appFacts:{...base.appFacts!,postseason:{season,fetchedAt,games:[]}}})?.source,"history_hold");
+    assert.equal(renderAppFacts(plan,{...base,appFacts:{...base.appFacts!,postseason:{season,fetchedAt,games}}})?.source,"history_hold");
   }
 });
 
