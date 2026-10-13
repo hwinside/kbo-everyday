@@ -119,6 +119,7 @@ function kboList(state: GameState) {
   return {
     game: [{
       G_ID: GAME_ID,
+      SR_ID: "0",
       G_DT: "20260729",
       G_TM: "18:30",
       S_NM: "잠실",
@@ -612,11 +613,11 @@ async function main() {
     [{ apiName: "game-detail-dual-source-outage", reason: "timeout" }],
   );
 
-  const retry = await scenario("srId 0 empty → 1 blackhole", "sr-retry-blackhole", "normal", "final");
-  assert.deepEqual(retry.srIds.filter((v) => v === "0" || v === "1"), ["0", "1"]);
+  const retry = await scenario("known srId 0 empty → Naver; never probe srId 1", "sr-retry-blackhole", "normal", "final");
+  assert.deepEqual(retry.srIds, ["0"], "never probe an unrelated series");
   assert.equal(retry.body.status, "final");
-  assert.equal(retry.body.lineup?.isToday, true, "srId 재시도 실패해도 Naver preview 폴백");
-  assert.deepEqual(retry.degradationEvents, [{ apiName: "kbo-game-detail", reason: "timeout" }]);
+  assert.equal(retry.body.lineup?.isToday, true, "정확한 srId 응답이 비면 Naver preview 폴백");
+  assert.deepEqual(retry.degradationEvents, [{ apiName: "kbo-game-detail", reason: "schema-error" }]);
 
   const httpError = await scenario("KBO HTTP 503 + Naver normal", "http-error", "normal", "final");
   assert.equal(httpError.body.status, "final");

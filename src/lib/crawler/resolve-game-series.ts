@@ -19,7 +19,7 @@ export async function resolveGameSeries(
 ): Promise<GameSeriesId> {
   opts?.signal?.throwIfAborted();
   const known = normalizeSeriesId(opts?.srId) ?? knownGameSeries(gameId);
-  if (known !== undefined) return known;
+  if (known !== undefined) return rememberGameSeries(gameId, known)!;
   const signal = opts?.signal ?? AbortSignal.timeout(2500);
   // Independent schedule lookup: no detailed APIs or ID-conversion recursion.
   const { fetchKboGamesOnly } = await import("./kbo-api");
