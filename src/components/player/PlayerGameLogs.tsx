@@ -109,7 +109,7 @@ export default function PlayerGameLogs({
   if (rows.length === 0) {
     return (
       <div className="px-5 py-4">
-        <GlassCard className="p-4 text-center text-text-tertiary text-sm">2026 시즌 경기별 기록이 없습니다</GlassCard>
+        <GlassCard className="p-4 text-center text-text-tertiary text-sm">2026 정규시즌 경기별 기록이 없습니다</GlassCard>
       </div>
     );
   }
