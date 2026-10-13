@@ -12,6 +12,11 @@ import { useDialogFocus } from "@/lib/a11y/useDialogFocus";
 import { detectInApp } from "@/lib/detect-inapp";
 import InAppBrowserModal from "./InAppBrowserModal";
 
+import { beginOAuthAttempt, observeOAuth } from "@/lib/auth/oauth-diagnostics";
+import { oauthFailure } from "@/lib/auth/oauth-diagnostic-schema";
+import { clearAuthError, publishAuthError } from "@/lib/auth-error";
+import { isOAuthExchangePending, registerDeepLinkListener } from "@/lib/capacitor/auth";
+
 interface LoginSheetProps {
   isOpen: boolean;
   onClose: () => void;
@@ -52,11 +57,29 @@ export default function LoginSheet({ isOpen, onClose }: LoginSheetProps) {
     }
   }, [isOpen, onClose, user]);
 
-  const runProvider = useCallback((provider: Provider) => {
-    if (provider === "apple") return signInWithApple();
-    if (provider === "naver") return signInWithNaver();
-    if (provider === "kakao") return signInWithKakao();
-    return signInWithGoogle();
+  const starting = useRef(false);
+  const runProvider = useCallback(async (provider: Provider) => {
+    if (starting.current) { publishAuthError("oauth_pending"); return; }
+    if (isOAuthExchangePending()) { publishAuthError("oauth_pending"); return; }
+    starting.current = true;
+    clearAuthError();
+    beginOAuthAttempt(provider);
+    // Re-evaluate runtime readiness when the user starts login, not only at boot.
+    registerDeepLinkListener();
+    const pendingTimer = setTimeout(() => { observeOAuth("pending"); publishAuthError("oauth_pending"); }, 15_000);
+    try {
+      const action = { apple: signInWithApple, naver: signInWithNaver, kakao: signInWithKakao, google: signInWithGoogle }[provider];
+      const result = await action();
+      if (result.error) {
+        observeOAuth("failed", oauthFailure(result.error));
+        publishAuthError("oauth_start");
+      } else {
+        observeOAuth("browser-open");
+      }
+    } catch (error) {
+      observeOAuth("failed", oauthFailure(error));
+      publishAuthError("oauth_start");
+    } finally { clearTimeout(pendingTimer); starting.current = false; }
   }, []);
 
   const handleProviderClick = useCallback(

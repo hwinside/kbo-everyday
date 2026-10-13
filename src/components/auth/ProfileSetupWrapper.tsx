@@ -2,6 +2,7 @@
 
 import { useEffect } from "react";
 import { useAuth } from "@/lib/supabase/AuthContext";
+import { observeOAuth } from "@/lib/auth/oauth-diagnostics";
 import ProfileSetupModal from "./ProfileSetupModal";
 
 export default function ProfileSetupWrapper() {
@@ -9,6 +10,10 @@ export default function ProfileSetupWrapper() {
   
   // 로그인 됐는데 프로필 없거나, 프로필은 있지만 필수 필드(닉네임/팀) 미설정이면 모달 표시
   const needsProfile = !loading && user && (!profile || !profile.nickname || !profile.team_id);
+
+  useEffect(() => {
+    if (!loading && user) observeOAuth(needsProfile ? "profile-required" : "profile-ready");
+  }, [loading, user, needsProfile]);
 
   useEffect(() => {
     console.log("[ProfileSetupWrapper]", {

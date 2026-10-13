@@ -4,6 +4,10 @@
   "source_audit": "state/prebuild-gate-audit-20260820.md",
   "gates": [
     {
+      "name": "qa:oauth-recovery",
+      "tier": "ci"
+    },
+    {
       "name": "qa:genius-recordbook-evidence",
       "tier": "ci"
     },
@@ -1133,6 +1137,14 @@
     },
     {
       "name": "qa:postseason-ladder",
+      "tier": "ci"
+    },
+    {
+      "name": "qa:login-error-notice",
+      "tier": "ci"
+    },
+    {
+      "name": "qa:login-error-notice:selftest",
       "tier": "ci"
     }
   ],
