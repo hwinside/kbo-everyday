@@ -54,9 +54,15 @@ export interface RegularSeasonWindow {
 }
 
 export const REGULAR_SEASON_WINDOWS: Readonly<Record<string, RegularSeasonWindow>> = {
-  // KBO 9/30 발표의 마지막 편성일. 10/13 이후는 계속 fail-close.
-  "2026": { start: "20260328", end: "20261012", finalized: false },
+  // 2026-10-13 확인: 10/12 정규 종료, 10/14 WC 등록. 정규 통계 모수 확정.
+  "2026": { start: "20260328", end: "20261012", finalized: true },
 };
+
+/** Only confirmed exclusions may skip ingestion; unknown years still fail visibly. */
+export function isOutsideConfirmedRegularSeason(date: string): boolean {
+  const w = REGULAR_SEASON_WINDOWS[date.slice(0, 4)];
+  return !!w && (date < w.start || (w.finalized && date > w.end));
+}
 
 /** date(YYYYMMDD)가 검증된 정규시즌 window 안인가. 미등록 연도는 false(fail-close). */
 export function isWithinRegularSeasonWindow(date: string): boolean {
