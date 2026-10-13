@@ -16,6 +16,7 @@ import { TEAMS, getTeamById, isAllStarGameId } from "@/lib/constants/teams";
 import { useLiveGame, type LiveGameData } from "@/lib/hooks/useLiveGame";
 import { isNativeRuntime } from "@/lib/capacitor/platform";
 import { startHomeNextGamePoller } from "@/lib/polling/home-next-game-poller";
+import { isVerifiedEmptyNextGameResult } from "@/lib/games/next-game-scan";
 import { getTeamBorderColorById } from "@/lib/utils/team-border-color";
 import { getTeamBgColorById, getTeamColor } from "@/lib/utils/team";
 import { useHomeInit, type HomeGame } from "@/hooks/useHomeInit";
@@ -428,6 +429,9 @@ export default function HomeClientShell({ initialGames, initialLiveGames, initia
         if (!res.ok) throw new Error(`Next game lookup: ${res.status}`);
         const data = await res.json();
         const date = data.date as string | undefined;
+        if (!data.game && !isVerifiedEmptyNextGameResult(data)) {
+          throw new Error("Next-game absence not verified: partial or invalid scan");
+        }
         if (!data.game && !isOvernight) {
           // Initial todayGames may still be loading. Confirm today's absence too,
           // so a future-empty result cannot clear a current live/final widget.

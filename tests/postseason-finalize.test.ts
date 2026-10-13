@@ -4,6 +4,25 @@ import { seasonPredictionsOpen } from "../src/lib/constants/season";
 import { renderAppFacts } from "../src/lib/baseball-qa/app-fact-conversation";
 import type { GameConversationInput } from "../src/lib/baseball-qa/game-conversation";
 import type { KboGame } from "../src/lib/crawler/kbo-api";
+import { isVerifiedEmptyNextGameResult, scanNextGame } from "../src/lib/games/next-game-scan";
+
+test("widget empty evidence rejects partial 200 scans and malformed responses", async () => {
+  const scan = (fail: boolean) => scanNextGame({
+    dates: ["20261014", "20261015"], signal: new AbortController().signal,
+    fetchGames: async (date) => {
+      if (fail && date === "20261014") throw new Error("upstream timeout");
+      return [] as KboGame[];
+    }, matches: () => true,
+  });
+  const partial = await scan(true);
+  assert.equal(partial.game, null);
+  assert.deepEqual(partial.failedDates, ["20261014"]);
+  assert.equal(isVerifiedEmptyNextGameResult(partial), false);
+  assert.equal(isVerifiedEmptyNextGameResult(await scan(false)), true);
+  for (const invalid of [null, {}, { game: null }, { game: null, failedDates: null }, { game: {}, failedDates: [] }]) {
+    assert.equal(isVerifiedEmptyNextGameResult(invalid), false);
+  }
+});
 
 test("picks close on KST regular season end and unknown seasons stay closed", () => {
   assert.equal(seasonPredictionsOpen(2026, new Date("2026-10-12T14:59:59Z")), true);
