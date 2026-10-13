@@ -6,7 +6,7 @@ const vm = require('node:vm');
 const ts = require('typescript');
 function load(file, deps = {}, globals = {}) {
   const exports = {};
-  const code = ts.transpileModule(fs.readFileSync(path.join(__dirname, '..', file), 'utf8'), { compilerOptions: { module: ts.ModuleKind.CommonJS, target: ts.ScriptTarget.ES2022 } }).outputText;
+  const code = ts.transpileModule(fs.readFileSync(path.join(__dirname, '..', file), 'utf8'), { compilerOptions: { module: ts.ModuleKind.CommonJS, target: ts.ScriptTarget.ES2022, jsx: ts.JsxEmit.ReactJSX } }).outputText;
   vm.runInNewContext(code, { exports, require: n => { if (!(n in deps)) throw Error(`Missing test dependency ${n}`); return deps[n]; }, URL, URLSearchParams, setTimeout, clearTimeout, console, ...globals });
   return exports;
 }
@@ -66,7 +66,7 @@ test('returned and thrown SDK failures surface without raw data and release leas
 });
 test('web is not subscribed; unrelated origins never enter SDK; hash sessions also succeed', async () => {
   const web = nativeHarness({ runtime: false }); assert.deepEqual(web.events, [['listener', false]]);
-  const h = nativeHarness(); h.fire('https://evil.example/?code=SYNTHETIC'); await flush(); assert.equal(h.calls(), 0);
+  const h = nativeHarness(); h.fire('https://keubo.fan/games/123'); assert.equal(h.events.filter(e => e[0] === 'callback').length, 0); h.fire('https://evil.example/?code=SYNTHETIC'); await flush(); assert.equal(h.calls(), 0);
   h.fire('fan.keubo.app://auth/callback#access_token=SYNTHETIC&refresh_token=SYNTHETIC'); await flush(); assert.equal(h.calls(), 1); assert.deepEqual(h.notices, ['clear']);
 });
 test('OAuth telemetry strips caller extras at server ingress and stores no identity/URL', async () => {
@@ -105,4 +105,73 @@ test('URL cleanup removes generic provider errors but preserves unrelated query 
   const url = new URL('https://keubo.fan/?tab=home&error_description=SECRET#access_token=TOKEN&error=SECRET');
   assert.equal(errors.stripAuthErrorNoticeParams(url), true);
   assert.equal(url.searchParams.get('tab'), 'home'); assert.equal(new URLSearchParams(url.hash.slice(1)).get('access_token'), 'TOKEN'); assert(!url.href.includes('SECRET'));
+});
+test('real start module uses native callback and external browser with injected-only iOS bridge', async () => {
+  const calls = [];
+  const window = { Capacitor: { isNativePlatform: () => true, getPlatform: () => 'ios' }, location: { assign: () => calls.push('web') } };
+  const platform = load('src/lib/capacitor/platform.ts', { '@capacitor/core': { Capacitor: { isNativePlatform: () => false, getPlatform: () => 'web' } } }, { window });
+  assert.equal(platform.isNative, false); assert.equal(platform.isNativeRuntime(), true);
+  const auth = load('src/lib/supabase/auth.ts', { './client': { supabase: { auth: { signInWithOAuth: async opts => { calls.push(opts.options.redirectTo); return { data: { url: 'https://provider.invalid' }, error: null }; } } } }, '@/lib/capacitor/platform': platform, '@/lib/capacitor/auth': { openOAuthInBrowser: async () => calls.push('browser') } }, { window });
+  await auth.signInWithGoogle();
+  assert.deepEqual(calls, ['fan.keubo.app://auth/callback', 'browser']);
+  calls.length = 0; await auth.signInWithNaver(); assert.deepEqual(calls, ['browser']);
+});
+function sheetHarness(action, pending = false) {
+  const callbacks = [], events = []; let timer;
+  const jsx = (type, props) => ({ type, props });
+  const sheet = load('src/components/auth/LoginSheet.tsx', {
+    'react/jsx-runtime': { jsx, jsxs: jsx }, 'react': { useCallback: fn => { callbacks.push(fn); return fn; }, useEffect: () => {}, useRef: value => ({ current: value }), useState: value => [value, () => {}] },
+    'next/link': { default: 'link' }, 'react-dom': { createPortal: v => v }, 'framer-motion': { motion: { div: 'div' }, AnimatePresence: 'presence' }, 'lucide-react': { X: 'x', Check: 'check' },
+    '@/lib/supabase/auth': { signInWithGoogle: action, signInWithNaver: action, signInWithApple: action, signInWithKakao: action },
+    '@/lib/supabase/AuthContext': { useAuth: () => ({ user: null }) }, '@/lib/a11y/useDialogFocus': { useDialogFocus: () => ({ current: null }) }, '@/lib/detect-inapp': { detectInApp: () => ({ isInApp: false }) }, './InAppBrowserModal': { default: 'inapp' },
+    '@/lib/auth/oauth-diagnostics': { beginOAuthAttempt: provider => events.push(['start', provider]), observeOAuth: (...args) => events.push(args) },
+    '@/lib/auth/oauth-diagnostic-schema': schema,
+    '@/lib/auth-error': { clearAuthError: () => events.push(['clear']), publishAuthError: code => events.push(['notice', code]) },
+    '@/lib/capacitor/auth': { isOAuthExchangePending: () => pending, registerDeepLinkListener: () => events.push(['register']) },
+  }, { setTimeout: fn => { timer = fn; return 1; }, clearTimeout: () => {} });
+  sheet.default({ isOpen: false, onClose: () => {} });
+  return { run: callbacks[0], events, expire: () => timer() };
+}
+test('real LoginSheet callback re-registers before provider and reports returned/thrown start failures', async () => {
+  for (const throws of [false, true]) {
+    let h;
+    h = sheetHarness(async () => {
+      assert(h.events.some(e => e[0] === 'register'));
+      if (throws) throw new TypeError('SECRET');
+      return { error: { code: 'SECRET' } };
+    });
+    await h.run('google');
+    assert(h.events.some(e => e[0] === 'register'));
+    assert(h.events.some(e => e[0] === 'start' && e[1] === 'google'));
+    assert(h.events.some(e => e[0] === 'notice' && e[1] === 'oauth_start'));
+    assert(!JSON.stringify(h.events).includes('SECRET'));
+  }
+});
+test('LoginSheet pending lease prevents a new attempt; slow start reports pending without duplicate launch', async () => {
+  let calls = 0;
+  const blocked = sheetHarness(async () => { calls++; }, true); await blocked.run('google');
+  assert.equal(calls, 0); assert.deepEqual(blocked.events, [['notice','oauth_pending']]);
+  let finish; const deferred = new Promise(r => { finish = r; });
+  const h = sheetHarness(async () => { calls++; return deferred; });
+  const first = h.run('google'); h.expire(); await h.run('google'); assert.equal(calls, 1);
+  assert(h.events.some(e => e[0] === 'notice' && e[1] === 'oauth_pending'));
+  finish({ error: null }); await first;
+});
+test('oauth recovery unit entry is registered in the CI-tier gate runner', () => {
+  const pkg = JSON.parse(fs.readFileSync(path.join(__dirname,'../package.json')));
+  const registry = JSON.parse(fs.readFileSync(path.join(__dirname,'../scripts/qa/gate-tiers.json')));
+  assert.equal(pkg.scripts['qa:oauth-recovery'], 'node --test tests/oauth-recovery.test.cjs');
+  assert(registry.gates.some(g => g.name === 'qa:oauth-recovery' && g.tier === 'ci'));
+});
+test('pending notice renders an actionable in-app reload button', () => {
+  let state = 0, reloaded = false;
+  const jsx = (type, props) => ({ type, props });
+  const errors = load('src/lib/auth-error.ts');
+  const notice = load('src/components/auth/AuthErrorNotice.tsx', {
+    'react/jsx-runtime': { jsx, jsxs: jsx }, 'react': { useEffect: () => {}, useRef: v => ({ current: v }), useState: () => [state++ === 0 ? 'oauth_pending' : false, () => {}] },
+    'lucide-react': { Copy: 'copy', X: 'x' }, '@/lib/auth-error': errors,
+  }, { window: { location: { reload: () => { reloaded = true; } } } });
+  let button;
+  function visit(x) { if (!x || typeof x !== 'object') return; if (Array.isArray(x)) return x.forEach(visit); if (x.type === 'button' && x.props.children === '새로고침') button = x; visit(x.props?.children); }
+  visit(notice.default()); assert(button); button.props.onClick(); assert(reloaded);
 });

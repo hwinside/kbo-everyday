@@ -66,6 +66,12 @@ async function handleOAuthUrlOpen(url: string): Promise<void> {
   let parsed: URL;
   try { parsed = new URL(url); } catch { return; }
   if (!(parsed.protocol === "fan.keubo.app:" || (parsed.protocol === "https:" && ["keubo.fan", "www.keubo.fan"].includes(parsed.hostname)))) return;
+  const code = parsed.searchParams.get("code");
+  const hash = new URLSearchParams(parsed.hash.slice(1));
+  const accessToken = hash.get("access_token");
+  const refreshToken = hash.get("refresh_token");
+  const userFacingError = getUserFacingAuthErrorFromUrl(parsed);
+  if (!code && !(accessToken && refreshToken) && !userFacingError) return;
   observeOAuth("callback");
   if (exchangePending) { observeOAuth("duplicate"); return; }
   exchangePending = true;
@@ -81,17 +87,11 @@ async function handleOAuthUrlOpen(url: string): Promise<void> {
       const closing = isNativeRuntime() && !isIosNativeRuntime() ? OAuthBrowser.close() : Browser.close();
       void closing.catch(() => {});
     } catch { /* already closed or unavailable bridge; still exchange */ }
-    const userFacingError = getUserFacingAuthErrorFromUrl(parsed);
     if (userFacingError) {
       observeOAuth("failed", "provider");
       publishAuthError(userFacingError);
       return;
     }
-    const code = parsed.searchParams.get("code");
-    const hash = new URLSearchParams(parsed.hash.slice(1));
-    const accessToken = hash.get("access_token");
-    const refreshToken = hash.get("refresh_token");
-    if (!code && !(accessToken && refreshToken)) return;
     observeOAuth("exchange-start");
     const result = code
       ? await supabase.auth.exchangeCodeForSession(code)
