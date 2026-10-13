@@ -16,7 +16,8 @@ import { parseAttribution } from "@/lib/gif-collector/attribution";
 import { useAuth } from "@/lib/supabase/AuthContext";
 import { getTeamById, getTeamBgColor } from "@/lib/constants/teams";
 import { getTeamBorderColorById } from "@/lib/utils/team-border-color";
-import GifPicker from "@/components/community/GifPicker";
+import dynamic from "next/dynamic";
+import EmojiSuggestions from "@/components/community/EmojiSuggestions";
 import CommentImageLightbox from "@/components/community/CommentImageLightbox";
 import { isImageComment, prepareCommentImageForUpload } from "@/lib/community/comment-media";
 import LoginSheet from "@/components/auth/LoginSheet";
@@ -28,6 +29,8 @@ import { trackPostClick } from "@/lib/community/view-tracker";
 import { useBlockedIds, blockUserById } from "@/lib/supabase/useBlock";
 import { supabase } from "@/lib/supabase/client";
 import CommunityCommentRow from "@/components/community/CommunityCommentRow";
+
+const GifPicker = dynamic(() => import("@/components/community/GifPicker"), { ssr: false });
 
 interface PostDetailProps {
   postId: number;
@@ -58,6 +61,20 @@ export default function PostDetail({ postId }: PostDetailProps) {
   const [showLogin, setShowLogin] = useState(false);
   const [shareOpen, setShareOpen] = useState(false);
   const fileInputRef = useRef<HTMLInputElement>(null);
+  const commentInputRef = useRef<HTMLInputElement>(null);
+  const composerRef = useRef<HTMLDivElement>(null);
+
+  // Reserve the real composer height, including shortcuts and accessibility scaling.
+  useEffect(() => {
+    const composer = composerRef.current;
+    const container = composer?.parentElement;
+    if (!composer || !container) return;
+    const updateHeight = () => container.style.setProperty("--postdetail-composer-h", `${composer.getBoundingClientRect().height}px`);
+    updateHeight();
+    const observer = new ResizeObserver(updateHeight);
+    observer.observe(composer);
+    return () => observer.disconnect();
+  }, [loading, user]);
 
   // Keyboard handling — delegated to the global `interactive-widget=
   // resizes-content` viewport (layout.tsx), exactly like GameChat. On focus iOS
@@ -829,13 +846,13 @@ export default function PostDetail({ postId }: PostDetailProps) {
           <motion.div
             data-postdetail-gif
             className="fixed left-0 right-0 bg-bg-secondary border-t border-border z-40"
-            style={{ height: 280 }}
             initial={{ y: "100%" }}
             animate={{ y: 0 }}
             exit={{ y: "100%" }}
             transition={{ type: "spring", damping: 28, stiffness: 300 }}
           >
             <GifPicker
+              context="community_gif"
               onSelect={handleGifSelect}
               onClose={() => setShowGifPicker(false)}
             />
@@ -843,9 +860,12 @@ export default function PostDetail({ postId }: PostDetailProps) {
         )}
       </AnimatePresence>
       <div
+        ref={composerRef}
         data-composer="postdetail"
-        className="fixed left-0 right-0 bg-bg-primary border-t border-border px-4 py-3 flex items-center gap-3 z-40"
+        className="fixed left-0 right-0 bg-bg-primary border-t border-border px-4 py-3 z-40"
       >
+        {user && <EmojiSuggestions inputRef={commentInputRef} onChange={setComment} disabled={uploadingImage} />}
+        <div className="flex items-center gap-3">
         {(() => {
           const teamColor = post.team_id ? getTeamById(post.team_id)?.colorPrimary : undefined;
           return (
@@ -882,6 +902,7 @@ export default function PostDetail({ postId }: PostDetailProps) {
               )}
               {user ? (
                 <input
+                  ref={commentInputRef}
                   type="text"
                   value={comment}
                   onChange={e => setComment(e.target.value)}
@@ -907,6 +928,7 @@ export default function PostDetail({ postId }: PostDetailProps) {
             </>
           );
         })()}
+        </div>
       </div>
       <ReportSheet isOpen={showReport} onClose={() => setShowReport(false)} targetType={reportTarget.type} targetId={reportTarget.id} />
       {showLogin && <LoginSheet isOpen={showLogin} onClose={() => setShowLogin(false)} />}

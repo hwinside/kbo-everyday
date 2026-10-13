@@ -14,7 +14,7 @@ function readGuestPreference(): boolean {
 }
 
 export function useGameChatVisibility() {
-  const { user, loading: authLoading } = useAuth();
+  const { user, profile, loading: authLoading, refreshProfile } = useAuth();
   const [state, setState] = useState<GameChatVisibilityState>({ status: "loading", visible: false });
   const [saving, setSaving] = useState(false);
   const requestGeneration = useRef(0);
@@ -31,7 +31,18 @@ export function useGameChatVisibility() {
       return;
     }
 
+    // PR④: game_chat_enabled 는 profiles 컴럼이라 AuthContext profile 에서 파생 —
+    // 부트·늦은 경기방 진입 모두 추가 fetch 0. 신선도는 profile ledger 계약을 따른다
+    // (TTL 10분 + visibility 복귀 재동기화; 종전은 마운트마다 fetch = 타기기 변경 즉시 반영).
+    // 토글(PUT) 성공 시 refreshProfile 로 컨텍스트 재동기화해 stale 재파생 차단.
+    if (profile && profile.id === user.id) {
+      if (generation !== requestGeneration.current) return;
+      setState({ status: "ready", visible: profile.game_chat_enabled !== false });
+      return;
+    }
+
     setState({ status: "loading", visible: false });
+
     try {
       const { data: { session } } = await supabase.auth.getSession();
       if (!session?.access_token) throw new Error("missing session");
@@ -48,7 +59,7 @@ export function useGameChatVisibility() {
         setState({ status: "error", visible: false });
       }
     }
-  }, [authLoading, user]);
+  }, [authLoading, user, profile]);
 
   useEffect(() => {
     void load();
@@ -90,6 +101,8 @@ export function useGameChatVisibility() {
         body: JSON.stringify({ visible }),
       });
       if (!res.ok) throw new Error("preference save failed");
+      // PR④: 컨텍스트 profile 재동기화 — 다음 마운트가 stale game_chat_enabled 를 파생하지 않게
+      void refreshProfile();
     } catch {
       setState({ status: "ready", visible: previous });
     } finally {

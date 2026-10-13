@@ -7,8 +7,6 @@ import { getExistingConversation } from "@/lib/supabase/useDM";
 import {
   BASEBALL_GENIUS_NAME,
   BASEBALL_GENIUS_USER_ID,
-  geniusMotionPosterSrc,
-  geniusMotionSrc,
 } from "@/lib/constants/baseball-genius";
 
 /**
@@ -82,13 +80,14 @@ export default function GeniusEntryButton() {
       <picture className="pointer-events-none">
         <source
           media="(prefers-reduced-motion: reduce)"
-          srcSet={geniusMotionPosterSrc(clip)}
+          srcSet={`/mascot/entry/v1/${clip}-poster.webp`}
           type="image/webp"
           data-testid="genius-entry-reduced-source"
         />
-        {/* eslint-disable-next-line @next/next/no-img-element -- 애니메이션 WebP (next/image 는 최적화 과정에서 애니메이션을 정지시킨다) */}
+        {/* 29px 표시의 3x(87px)까지 커버하는 높이 96px 파생본.
+            채팅의 96px 마스코트는 기존 /mascot/motion/ 원본을 계속 사용한다. */}
         <img
-          src={geniusMotionSrc(clip)}
+          src={`/mascot/entry/v1/${clip}.webp`}
           alt=""
           aria-hidden
           data-clip={clip}

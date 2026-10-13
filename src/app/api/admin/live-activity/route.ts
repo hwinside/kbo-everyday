@@ -199,8 +199,8 @@ export async function GET(req: NextRequest) {
       const e = entry(r.game_id);
       e.started.add(r.user_id);
       // 채널 내장 출생 카드 — *출생 세대가 현재 active 채널과 정확 일치*할 때만 네이티브
-      // ACK 없이도 broadcast 갱신 수신으로 합산(gap 과대계상 교정, 2026-07-23). 출생 채널이
-      // 교체된 행은 gap으로 복귀 — wake 제외 판정(selectWakeGapRows)과 동일 기준(이중 기준 금지).
+      // Accepted channel generation is diagnostic only; countUpdatableUsers requires
+      // native token/ACK evidence and does not count channelBorn as confirmed.
       if (isLiveBornChannel(r, activeKeys)) e.channelBorn.add(r.user_id);
       if (r.wake_attempted_at) e.wakeAttempted.add(r.user_id);
     }

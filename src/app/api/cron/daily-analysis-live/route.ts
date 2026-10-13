@@ -60,8 +60,8 @@ export async function GET(req: NextRequest) {
       fetchGames(todayISO.replace(/-/g, "")),
       fetchGames(yesterdayISO.replace(/-/g, "")),
     ]);
-    todaySlate = toSlate(todayGames);
-    yesterdaySlate = toSlate(yesterdayGames);
+    todaySlate = toSlate(todayGames.filter(g => g.srId === "0"));
+    yesterdaySlate = toSlate(yesterdayGames.filter(g => g.srId === "0"));
   } catch (e) {
     // 경기 조회 실패를 200으로 숨기면 크론이 계속 조용히 동다 실패를 못 드러낸다.
     // 다음 10분 tick이 재시도하되, 5xx로 돌려 운영 관제에 실패가 드러나게 한다.

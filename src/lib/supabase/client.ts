@@ -1,11 +1,21 @@
 "use client";
 
 import { createBrowserClient } from "@supabase/ssr";
+import { authSessionDiagnostics } from "@/lib/auth/session-diagnostics";
+import { createAuthRefreshGuard } from "@/lib/auth/refresh-guard";
 
 const supabaseUrl = process.env.NEXT_PUBLIC_SUPABASE_URL!;
 const supabaseAnonKey = process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY!;
 
-export const supabase = createBrowserClient(supabaseUrl, supabaseAnonKey);
+export const supabase = createBrowserClient(supabaseUrl, supabaseAnonKey, {
+  global: {
+    fetch: createAuthRefreshGuard(
+      supabaseUrl,
+      authSessionDiagnostics.observeFetch(supabaseUrl, (...args) => globalThis.fetch(...args)),
+      "browser",
+    ).fetch,
+  },
+});
 
 /**
  * 네이티브(Capacitor/Android WebView)에서 supabase auth 락이 멈추면

@@ -1,3 +1,4 @@
+import { resolveGameSeries } from "@/lib/crawler/resolve-game-series";
 import { NextRequest, NextResponse } from "next/server";
 import type { LiveGameData } from "@/lib/hooks/useLiveGame";
 import { fetchNaverRecord, type GameDetailResponse } from "@/app/api/game-detail/route";
@@ -134,7 +135,7 @@ export async function GET(req: NextRequest) {
     const rawGame = games.find((g: KboRawGame) => g.G_ID === gameId);
 
     // Use SR_ID from live data (GetBoxScore only accepts single integer srId)
-    const srId = (rawGame as (KboRawGame & { SR_ID?: string }) | undefined)?.SR_ID ?? "0";
+    const srId = await resolveGameSeries(gameId, { srId: rawGame?.SR_ID });
     const boxScoreRes = await fetch(`${KBO_SCHEDULE}/GetBoxScore`, {
       method: "POST",
       headers: HEADERS,

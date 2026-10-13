@@ -255,6 +255,19 @@ export async function POST(request: NextRequest) {
   const body = await request.json();
   const admin = getSupabaseAdmin();
 
+  // 운영팀이 받은 안읽은 쪽지 전체. 클라이언트 ID/페이지 범위는 받지 않는다.
+  if (body.action === "mark_all_read") {
+    // query-guard: bounded -- RPC returns one affected-row count.
+    const { data, error } = await admin.rpc("admin_dm_mark_all_read", {
+      p_system_user_id: systemUserId,
+    });
+    const updatedCount = Number(data);
+    if (error || data === null || !Number.isSafeInteger(updatedCount) || updatedCount < 0) {
+      return NextResponse.json({ error: "mark_all_read_failed" }, { status: 500 });
+    }
+    return NextResponse.json({ ok: true, updatedCount });
+  }
+
   // 개별 유저에게 쪽지 발송
   if (body.action === "send_to_user") {
     const { userId, source } = body as { userId?: string; source?: string };

@@ -1,3 +1,7 @@
+import { getClientIp } from "@/lib/http/client-ip";
+import { createServerSessionDiagnostics } from "@/lib/auth/server-session-diagnostics";
+import { createServerBootTrace } from "@/lib/auth/server-boot-trace";
+import { createAuthRefreshGuard } from "@/lib/auth/refresh-guard";
 import { createServerClient } from "@supabase/ssr";
 import {
   NextResponse,
@@ -110,7 +114,7 @@ export async function proxy(request: NextRequest, event: NextFetchEvent) {
     );
     if (platform) {
       const ip =
-        request.headers.get("x-forwarded-for")?.split(",")[0]?.trim() || "";
+        getClientIp(request, { fallback: "" });
       recordWatchPing(event, ip, platform);
     }
     return NextResponse.next({ request });
@@ -142,28 +146,41 @@ export async function proxy(request: NextRequest, event: NextFetchEvent) {
     supabaseUrl,
   );
 
-  // Public users have no session to refresh.
-  if (!hasAuthCookie) {
-    return NextResponse.next({ request });
-  }
-
   // Only real document navigations refresh the session. RSC/prefetch requests
   // skip it so concurrent prefetches never race the same refresh token (403/429).
   if (!isTopLevelDocumentNavigation(request)) {
     return NextResponse.next({ request });
   }
 
+  const bootTrace = createServerBootTrace(
+    supabaseUrl!, request.cookies.getAll().map(({ name }) => name),
+    request.headers.get("user-agent") || "",
+  );
+  // Public users still make NO auth calls; observe sampled empty arrivals too.
+  if (!hasAuthCookie) {
+    return bootTrace.record(NextResponse.next({ request }), null, event);
+  }
+
   let supabaseResponse = NextResponse.next({ request });
+  const refresh = createAuthRefreshGuard(supabaseUrl!, (...args) => globalThis.fetch(...args), "server");
+  const diagnostics = createServerSessionDiagnostics(
+    supabaseUrl!, request.cookies.getAll().map(({ name }) => name),
+    request.headers.get("user-agent") || "",
+  );
 
   const supabase = createServerClient(
     supabaseUrl!,
     process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY!,
     {
+      global: { fetch: refresh.fetch },
       cookies: {
         getAll() {
           return request.cookies.getAll();
         },
         setAll(cookiesToSet) {
+          // 429/408 are not proof of an invalid session. Keep the request and
+          // response cookies intact; getClaims still returns an auth error.
+          if (refresh.preserveSessionCookies()) return;
           cookiesToSet.forEach(({ name, value }) =>
             request.cookies.set(name, value)
           );
@@ -178,9 +195,10 @@ export async function proxy(request: NextRequest, event: NextFetchEvent) {
 
   // ES256 JWT는 JWKS로 로컬 검증한다. 만료 임박 세션 갱신은 getClaims 경로에서 유지되며,
   // 매 RSC/prefetch 요청마다 갱신을 트리거하던 증폭은 top-level 게이트로 제거한다.
-  await supabase.auth.getClaims();
+  const { error } = await supabase.auth.getClaims();
+  diagnostics.record(supabaseResponse.cookies.getAll(), error, event);
 
-  return supabaseResponse;
+  return bootTrace.record(supabaseResponse, error, event);
 }
 
 /**

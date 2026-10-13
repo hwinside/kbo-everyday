@@ -42,6 +42,11 @@ const GATES = {
 
 const mutations = [
   {
+    name: "M30 단일 정의형 조사 복구 제거",
+    find: '        restored = `${term}${particle} 뭐야?`;',
+    replace: '        void particle;',
+  },
+  {
     name: "M1 발동 라우트 조건 제거",
     find: 'routeQuestion(question, glossary, players, false) === "llm_scope_gate"',
     replace: 'routeQuestion(question, glossary, players, false) !== "__never__"',
@@ -65,17 +70,22 @@ const mutations = [
     replace: '  "career_leaderboard",\n  "ack",\n  "history_hold",\n];',
   },
   {
+    name: "M29 교정 용어 동일성 가드 제거",
+    find: '  if (!preservesCorrectionTermIdentity(question, candidate, glossary)) return "rejected";',
+    replace: '  // mutation: unrelated glossary substitutions are allowed',
+  },
+  {
     // 2026-08-14 hotfix 축: 복원 배선을 죽이면 Production QA FAIL 실데이터(provider 가
     // `보끄가 뭐야` 까지만 교정)가 다시 카드 도달 불가가 된다.
     name: "M22 결정론 사전 복원 배선 제거",
-    find: '      const repaired = repairGlossaryTermTypo(repairBase, glossary);',
+    find: '      const repaired = originalRepair !== null\n        ? [candidate, partialRepair].find(value => value != null && normalizeKey(value) === normalizeKey(originalRepair)) ?? originalRepair\n        : partialRepair;',
     replace: '      const repaired = null;',
   },
   {
     // 유일성 안전선을 죽이면 증명 불가한 후보(보루→보크/도루 동시)가 카드로 나간다.
     name: "M23 복원 유일성 fail-close 제거",
-    find: '  if (repaired.size !== 1) return null;',
-    replace: '  if (repaired.size < 1) return null;',
+    find: '  return repaired.length === 1 ? repaired[0] : null;',
+    replace: '  return repaired.length >= 1 ? repaired[0] : null;',
   },
   {
     // 삼순 2026-08-14 2차: 정의형 축약 guard 를 죽이면 실측 오제안
@@ -94,8 +104,8 @@ const mutations = [
   {
     // 복원 후보도 SSOT 착지 재판정을 통과해야 한다 — 빼면 allowlist 밖 후보가 제안된다.
     name: "M24 복원 후보의 SSOT 재판정 제거",
-    find: '      if (repaired !== null\n          && classifyQuestionCorrectionCandidate(question, repaired, glossary, players) === "suggest") {',
-    replace: '      if (repaired !== null) {',
+    find: '      if (repaired !== null\n          && permitsGlossaryRepair(question, norm?.originalSpelling, repaired)\n          && classifyQuestionCorrectionCandidate(question, repaired, glossary, players) === "suggest") {',
+    replace: '      if (repaired !== null && permitsGlossaryRepair(question, norm?.originalSpelling, repaired)) {',
   },
   {
     // 삼순 ③ 취소 종결: 거절을 무시하면 정규화가 다시 돌아 같은 제안이 무한 반복된다.

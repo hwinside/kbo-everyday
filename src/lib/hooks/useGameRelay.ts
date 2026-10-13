@@ -16,6 +16,13 @@ import {
   type LivePollEnvelope,
 } from "@/lib/game/live-poll-stream";
 import { resolveGameLiveDate } from "@/lib/game-live-date";
+import { supabase } from "@/lib/supabase/client";
+import {
+  parseFrameRow,
+  shouldApplyFrame,
+  shouldApplyPollResponse,
+  shouldSuppressPoll,
+} from "@/lib/game/relay-frames-client";
 
 // delta(증분) 폴링: 매 N번째 폴링마다 한 번은 full로 받아 지난 이닝의 드문 정정을 self-heal 한다.
 const FULL_REFRESH_EVERY = 10;
@@ -109,6 +116,29 @@ export function useGameRelay(
   const previousLiveGameIdRef = useRef<string | undefined>(undefined);
   const liveFrameOwnerSeqRef = useRef(0);
   const detailFrameOwnerSeqRef = useRef(0);
+  // Realtime(B2): 마지막으로 성공한 relay 데이터(poll 또는 Realtime relay frame) 도착
+  // 시각. RELAY_WATCHDOG_MS 안이면 3초 폴링 tick 을 억제하고, 지나면 watchdog poll 이
+  // 자동 재개돼 self-heal 한다 — content-only 라 무변경 구간엔 watchdog 주기당 poll 1회.
+  const lastRelayFreshAtRef = useRef<number | null>(null);
+  // 성공한 relay baseline 을 한 번이라도 받았는가(삼순 3차). baseline 전엔 항상 폴링해
+  // heartbeat 가 초기 fetch 실패를 가려 빈 화면+retry 억제가 되던 문제를 제거한다.
+  const relayBaselineRef = useRef(false);
+  // 적용한 프레임의 전역 단조 id — 재연결 replay 등 과거 프레임 역행 차단.
+  const lastAppliedFrameIdRef = useRef(0);
+  // 최신성 소유권 fence — 삼순 4차 ②: 채널별로 분리한다. 예전엔 공용
+  // relayGenerationRef 를 live/detail RT 도 올려, 그 전에 시작한 성공 watchdog relay
+  // poll 까지 버렸다(채널 간 마스킹). 이젠 relay/live/detail 이 각자의 generation 만
+  // 올리고, 각 poll 응답은 자기 채널의 generation 만 대조해 교차 폐기를 없앱다.
+  const relayGenerationRef = useRef(0);
+  const liveGenerationRef = useRef(0);
+  const detailGenerationRef = useRef(0);
+  // P0-1: onLive/DetailFrame 콜백을 ref 로 안정화한다. 호출부가 매 렌더 inline object 를
+  // 넘겨도 구독 effect 가 재실행(unsubscribe/resubscribe)되지 않게, effect deps 에서
+  // options 를 빼고 이 ref 를 통해 최신 콜백을 읽는다.
+  const onLiveFrameRef = useRef(options?.onLiveFrame);
+  const onDetailFrameRef = useRef(options?.onDetailFrame);
+  onLiveFrameRef.current = options?.onLiveFrame;
+  onDetailFrameRef.current = options?.onDetailFrame;
 
   const fetchRelay = useCallback((
     eventsTailTimeoutMs?: number,
@@ -118,11 +148,29 @@ export function useGameRelay(
     if (typeof document !== "undefined" && document.visibilityState === "hidden") {
       return Promise.resolve(false);
     }
+    // B안: realtime 프레임이 신선하면 이 tick 은 억제(edge request 0). 첫 로드는
+    // 항상 폴링해 빈 화면을 만들지 않고, final 종결 fetch 는 억제 대상이 아니다.
+    if (
+      isLive && !isFinal
+      && shouldSuppressPoll({
+        lastRelayFreshAtMs: lastRelayFreshAtRef.current,
+        nowMs: Date.now(),
+        hasRelayBaseline: relayBaselineRef.current,
+      })
+    ) {
+      return Promise.resolve(false);
+    }
     if (inFlightRef.current) return Promise.resolve(false);
     const requestGameId = gameId;
     // 이 요청의 신분증. inFlight 가드 통과 후에만 증가시켜(중복 폴 조기 반환은 seq 미소모)
     // parse/finally 재확인의 기준으로 쓴다. gameId 전환·후행 요청이 이 값을 다시 올리면 stale 이 된다.
     const mySeq = ++requestSeqRef.current;
+    // P0-3(삼순 4차 ②): 채널별 generation 스냅샷. relay 응답은 relay generation 만,
+    // embedded live/detail 은 각자 generation 만 대조한다 — live RT 가 relay poll 을, 또는
+    // relay RT 가 live poll 을 교차로 버리는 마스킹 제거.
+    const myGeneration = relayGenerationRef.current;
+    const myLiveGeneration = liveGenerationRef.current;
+    const myDetailGeneration = detailGenerationRef.current;
     const controller = new AbortController();
     abortControllersRef.current.add(controller);
     inFlightRef.current = true;
@@ -198,7 +246,11 @@ export function useGameRelay(
         const applyRelay = (json: GameRelayResponse) => {
           // parse 후 재확인: gameId 가 headers 통과와 body 파싱 사이에 전환됐을 수 있다(late-body).
           // seq 일치 + 활성 gameId 일치 + 마운트 상태일 때만 setData(삼순 blocker ②).
-          if (shouldApplyRelayResponse({
+          // P0-3: 이 poll 이 시작한 뒤 Realtime 이 더 최신 relay 를 적용했으면(generation 증가)
+          // 이 응답은 과거값이므로 버린다 — 느린 poll 이 최신 Realtime 값을 덮는 역행 차단.
+          if (
+            shouldApplyPollResponse(myGeneration, relayGenerationRef.current)
+            && shouldApplyRelayResponse({
             mounted: mountedRef.current,
             requestSeq: mySeq,
             currentSeq: requestSeqRef.current,
@@ -215,6 +267,9 @@ export function useGameRelay(
             };
             setData(merged);
             relaySucceeded = true;
+            // B2: 성공한 relay baseline 확립 + watchdog 신선도 갱신(다음 tick 억제 근거).
+            relayBaselineRef.current = true;
+            lastRelayFreshAtRef.current = Date.now();
           }
           settleRelay(relaySucceeded);
           // 통합 stream의 events가 늦어져도 relay poll slot은 frame 도착 즉시 해제한다.
@@ -250,6 +305,8 @@ export function useGameRelay(
           channelRef: MutableRefObject<number>,
           onFrame: ((data: unknown) => void) | undefined,
           envelope: LivePollEnvelope,
+          genSnapshot: number,
+          genRef: MutableRefObject<number>,
         ) => {
           if (
             !onFrame
@@ -261,6 +318,9 @@ export function useGameRelay(
           // (실패 frame 을 커밋하면 games:[] 가 isLive 를 꺼서 multiplex 가
           //  플리커하고 standalone 폴링·리렌더 폭풍이 난다 — Preview 실측.)
           if (!envelope.ok) return;
+          // P0-3(삼순 4차 ②): 채널별 generation fence. 이 poll 이 시작한 뒤 같은 채널의
+          // RT 프레임이 더 최신을 적용했을 때만 버린다 — 다른 채널 RT 는 이 폴을 못 버린다.
+          if (!shouldApplyPollResponse(genSnapshot, genRef.current)) return;
           if (mySeq <= channelRef.current) return;
           channelRef.current = mySeq;
           onFrame(envelope.data);
@@ -284,9 +344,9 @@ export function useGameRelay(
             } else if (envelope.channel === "events") {
               applyEvents(envelope);
             } else if (envelope.channel === "live") {
-              applyFrame(liveFrameOwnerSeqRef, options?.onLiveFrame, envelope);
+              applyFrame(liveFrameOwnerSeqRef, options?.onLiveFrame, envelope, myLiveGeneration, liveGenerationRef);
             } else if (envelope.channel === "detail") {
-              applyFrame(detailFrameOwnerSeqRef, options?.onDetailFrame, envelope);
+              applyFrame(detailFrameOwnerSeqRef, options?.onDetailFrame, envelope, myDetailGeneration, detailGenerationRef);
             }
           });
         } else {
@@ -327,6 +387,12 @@ export function useGameRelay(
     pollCountRef.current = 0;
     liveFrameOwnerSeqRef.current = 0;
     detailFrameOwnerSeqRef.current = 0;
+    lastRelayFreshAtRef.current = null;
+    relayBaselineRef.current = false;
+    lastAppliedFrameIdRef.current = 0;
+    relayGenerationRef.current = 0;
+    liveGenerationRef.current = 0;
+    detailGenerationRef.current = 0;
     finalFetchedRef.current = false;
     setData(null);
     setEvents([]);
@@ -334,6 +400,86 @@ export function useGameRelay(
     // (B 가 live 면 즉시 다시 true, 비-live 면 spinner 가 A 에 갇히지 않게 한다).
     setIsLoading(false);
   }, [gameId]);
+
+  // B안 (2026-08-25): 라이브 중 game_relay_frames INSERT 를 구독해 폴링을 대체한다.
+  // 수집기(cron)가 쓰는 프레임은 폴링 NDJSON 과 동일한 LivePollEnvelope 형상이라
+  // 기존 병합 경로(mergeDeltaInnings·seenEventIds·onLive/DetailFrame)를 그대로 탄다.
+  // 구독 실패·프레임 단절은 별도 처리 불필요 — 신선도가 끓기면 폴링이 재개된다.
+  useEffect(() => {
+    if (!gameId || !isLive) return;
+    const frameGameId = gameId;
+
+    const applyRealtimeRelay = (payloadData: GameRelayResponse) => {
+      if (!mountedRef.current || activeGameIdRef.current !== frameGameId) return;
+      const cache = inningsRef.current;
+      const mergedInnings = mergeDeltaInnings(cache, payloadData.innings, payloadData.partial === true);
+      setData({ ...payloadData, innings: mergedInnings, partial: false });
+    };
+
+    const applyRealtimeEvents = (payloadData: { events?: GameEvent[] }) => {
+      if (!mountedRef.current || activeGameIdRef.current !== frameGameId) return;
+      if (!payloadData.events) return;
+      const newEvents: GameEvent[] = [];
+      for (const event of payloadData.events) {
+        if (seenEventIdsRef.current.has(event.id)) continue;
+        seenEventIdsRef.current.add(event.id);
+        newEvents.push(event);
+      }
+      if (newEvents.length > 0) setEvents((previous) => [...previous, ...newEvents]);
+    };
+
+    const channel = supabase
+      .channel(`relay-frames:${frameGameId}`)
+      .on(
+        "postgres_changes",
+        {
+          event: "INSERT",
+          schema: "public",
+          table: "game_relay_frames",
+          filter: `game_id=eq.${frameGameId}`,
+        },
+        (message) => {
+          const row = parseFrameRow(message.new, frameGameId);
+          if (!row) return;
+          if (!shouldApplyFrame(lastAppliedFrameIdRef.current, row.id)) return;
+          lastAppliedFrameIdRef.current = row.id;
+
+          if (row.kind === "relay-full" || row.kind === "relay-delta") {
+            // 삼순 4차 ①: baseline 은 relay-full 로만 확립한다. baseline 전 delta 는
+            // 빈 cache 에 partial 만 병합해 화면을 가짜로 굳히므로 적용·fence 모두 금지
+            // (다음 full 이 catch-up). full 이 오면 그때 baseline 확립.
+            if (row.kind === "relay-delta" && !relayBaselineRef.current) return;
+            if (row.kind === "relay-full") relayBaselineRef.current = true;
+            // 삼순 4차 ②: watchdog freshness 는 relay 성공에만 갱신한다(타 채널 제외) —
+            // relay 만 죽고 live/events 가 변하면 watchdog 이 계속 가려지는 마스킹 방지.
+            lastRelayFreshAtRef.current = Date.now();
+            // P0-3: Realtime 최신 relay 적용 → generation 증가. 이후 늦게 끝난 poll 응답은 버려진다.
+            relayGenerationRef.current += 1;
+            applyRealtimeRelay(row.payload.data as GameRelayResponse);
+          } else if (row.kind === "events") {
+            applyRealtimeEvents(row.payload.data as { events?: GameEvent[] });
+          } else if (row.kind === "live") {
+            if (mountedRef.current && activeGameIdRef.current === frameGameId) {
+              // 삼순 4차 ②: live 전용 generation 만 올린다 — relay watchdog poll 을 교차로 버리지 않는다.
+              liveGenerationRef.current += 1;
+              onLiveFrameRef.current?.(row.payload.data);
+            }
+          } else if (row.kind === "detail") {
+            if (mountedRef.current && activeGameIdRef.current === frameGameId) {
+              detailGenerationRef.current += 1;
+              onDetailFrameRef.current?.(row.payload.data);
+            }
+          }
+        },
+      )
+      .subscribe();
+
+    return () => {
+      lastRelayFreshAtRef.current = null;
+      void supabase.removeChannel(channel);
+    };
+    // P0-1: 콜백은 ref 로 읽으므로 options 를 deps 에서 제외 — 프레임 N개에도 구독 1회.
+  }, [gameId, isLive]);
 
   useEffect(() => {
     mountedRef.current = true;

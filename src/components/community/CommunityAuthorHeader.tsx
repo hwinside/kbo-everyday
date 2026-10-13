@@ -44,14 +44,14 @@ export default function CommunityAuthorHeader({
   return (
     <div data-community-author-header className={`flex min-w-0 items-start gap-2.5 ${className}`}>
       {profileHref ? (
-        <Link href={profileHref} onClick={stopCardNavigation} aria-label={`${displayName} 프로필 보기`} className="shrink-0 active:opacity-70">
+        <Link prefetch={false} href={profileHref} onClick={stopCardNavigation} aria-label={`${displayName} 프로필 보기`} className="shrink-0 active:opacity-70">
           {avatar}
         </Link>
       ) : avatar}
       <div className="min-w-0 flex-1">
         <div className="min-w-0 whitespace-nowrap">
           {profileHref ? (
-            <Link href={profileHref} onClick={stopCardNavigation} className="block w-full whitespace-nowrap text-[15px] font-semibold text-text-primary active:opacity-70">
+            <Link prefetch={false} href={profileHref} onClick={stopCardNavigation} className="block w-full whitespace-nowrap text-[15px] font-semibold text-text-primary active:opacity-70">
               {displayName}
             </Link>
           ) : (

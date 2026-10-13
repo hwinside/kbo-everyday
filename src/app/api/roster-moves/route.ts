@@ -18,11 +18,22 @@ const SEASON_START = "2026-03-28";
 // - 말소(deregister): 전부 반환 — readiness는 링크 유무만 결정(미준비 = 링크 생략).
 export const dynamic = "force-dynamic";
 
+// CDN 캐시 계약(삼순 승인 스코프, 2026-08-30 Vercel 비용 트랙 PR②):
+// 성공 200만 s-maxage=300 — 등록/말소는 하루 단위로 바뀌는 데이터라 5분 지연 허용.
+// 인증/쿠키 무관 공용 응답(팀별 동일)이라 공용 캐시 오염 없음. 브라우저는
+// max-age=0으로 캐시 금지(클라 재방문 시 CDN만 타게) — swr 없음(추가 노화 방지).
+// 실패/에러는 no-store(실패 응답 고착 방지).
+const CACHE_OK = "public, max-age=0, s-maxage=300";
+const CACHE_NONE = "no-store";
+
 export async function GET(req: NextRequest) {
   const { searchParams } = new URL(req.url);
   const teamId = Number(searchParams.get("teamId"));
   if (!teamId) {
-    return NextResponse.json({ error: "teamId required" }, { status: 400 });
+    return NextResponse.json(
+      { error: "teamId required" },
+      { status: 400, headers: { "Cache-Control": CACHE_NONE } },
+    );
   }
 
   // rolling window 제거(삼순 P0): 항상 시즌 시작일부터 조회 → "시즌 전체 현황" 계약이
@@ -38,7 +49,10 @@ export async function GET(req: NextRequest) {
     .order("move_date", { ascending: false });
 
   if (error) {
-    return NextResponse.json({ error: error.message }, { status: 500 });
+    return NextResponse.json(
+      { error: error.message },
+      { status: 500, headers: { "Cache-Control": CACHE_NONE } },
+    );
   }
 
   const visible = filterVisibleMoves(
@@ -99,5 +113,8 @@ export async function GET(req: NextRequest) {
     await notifyRegisterAnomaly(anomalies);
   }
 
-  return NextResponse.json({ teamId, seasonStart: SEASON_START, moves });
+  return NextResponse.json(
+    { teamId, seasonStart: SEASON_START, moves },
+    { headers: { "Cache-Control": CACHE_OK } },
+  );
 }

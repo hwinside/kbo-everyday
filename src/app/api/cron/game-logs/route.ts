@@ -1,7 +1,9 @@
+import { isOutsideConfirmedRegularSeason } from "@/lib/crawler/naver-games";
 import { NextRequest, NextResponse } from "next/server";
 import { supabaseAdmin } from "@/lib/supabase/admin";
 import { startJob, finishJob } from "@/lib/admin/job-logger";
 import { fetchGames } from "@/lib/crawler/kbo-api";
+import { collectFinalGamesByDate } from "@/lib/game-logs/collect-dates";
 import { ingestGameWithLedger, type LedgerIngestResult } from "@/lib/game-logs/ledger-ingest";
 import type { UnresolvedBoxScorePlayer } from "@/lib/game-logs/ingest";
 import { notifyRosterGaps } from "@/lib/game-logs/roster-gap-alert";
@@ -38,17 +40,18 @@ export async function GET(req: NextRequest) {
   const logId = await startJob("game-logs-ingest");
 
   try {
-    const dates = [getKSTToday(), getKSTYesterday()].map((d) => d.replace(/-/g, ""));
+    const requestedDates = [getKSTToday(), getKSTYesterday()].map((d) => d.replace(/-/g, ""));
+    const skippedDates = requestedDates.filter(isOutsideConfirmedRegularSeason);
+    const dates = requestedDates.filter(d => !isOutsideConfirmedRegularSeason(d));
+    if (dates.length === 0) {
+      await finishJob(logId, "success", `skip: outside confirmed regular season (${skippedDates.join(",")})`);
+      return NextResponse.json({ ok: true, skipped: "outside confirmed regular season", skippedDates });
+    }
 
     // 날짜별 정규시즌 경기 → final만
-    const gameLists = await Promise.all(dates.map((d) => fetchGames(d, REGULAR_SEASON_SR_ID)));
-    const finalsById = new Map<string, (typeof gameLists)[number][number]>();
-    for (const list of gameLists) {
-      for (const g of list) {
-        if (g.status === "final") finalsById.set(g.gameId, g);
-      }
-    }
-    const finals = [...finalsById.values()];
+    const { finals, failedDates } = await collectFinalGamesByDate(
+      dates, (date) => fetchGames(date, REGULAR_SEASON_SR_ID),
+    );
 
     // 경기별: strict 적재 + ledger 기록 (경기 1건 실패는 건너뛰고 나머지 진행)
     const settled = await Promise.allSettled(finals.map((g) => ingestGameWithLedger(supabaseAdmin, g)));
@@ -81,10 +84,15 @@ export async function GET(req: NextRequest) {
       : "";
 
     const summary = `${dates.join(",")} | final ${finals.length} (complete ${complete}/incomplete ${incomplete.length}/에러 ${gamesFailed}) | upsert ${upserted}행${incompleteNote}${gapNote}`;
-    await finishJob(logId, "success", summary);
+    const ok = failedDates.length === 0 && gamesFailed === 0;
+    const fetchError = failedDates.map((r) => `${r.date}: ${r.error}`).join("; ");
+    await finishJob(logId, ok ? "success" : "error", summary,
+      ok ? undefined : `date fetch failures: ${fetchError || "none"}; game failures: ${gamesFailed}`);
 
     return NextResponse.json({
-      ok: true,
+      ok,
+      failedDates,
+      skippedDates,
       timestamp: new Date().toISOString(),
       dates,
       finals: finals.length,
@@ -94,7 +102,7 @@ export async function GET(req: NextRequest) {
       upserted,
       rosterGaps: gapResult.gaps,
       rosterGapAlert: gapResult.status,
-    });
+    }, { status: ok ? 200 : 500 });
   } catch (e) {
     await finishJob(logId, "error", undefined, (e as Error).message);
     return NextResponse.json({ error: (e as Error).message }, { status: 500 });

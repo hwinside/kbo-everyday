@@ -1,6 +1,6 @@
 {
   "version": 2,
-  "generatedFrom": "28b1fd80659221d4e8f21b7be5aa4e2d188b35c4",
+  "generatedFrom": "a0c7711f149a0baf8929824d344172e8478eaf02",
   "violations": {
     "0034fe9a6a6cff327c64": {
       "count": 1,
@@ -149,13 +149,6 @@
       "subject": "profiles",
       "detail": "add a bound, unique-key lookup, or query-guard annotation"
     },
-    "20b786bef55b1c0bcb1b": {
-      "count": 1,
-      "kind": "non_unique_pagination",
-      "file": "src/app/api/cron/news-clipping/route.ts",
-      "subject": "news_clipping_sends",
-      "detail": "range pagination must include a full unique order (clip_date + user_id)"
-    },
     "2282b961551f1b3fd48b": {
       "count": 1,
       "kind": "ambiguous_growing_limit",
@@ -168,13 +161,6 @@
       "kind": "unbounded_growing_select",
       "file": "scripts/transcode-videos.mjs",
       "subject": "posts",
-      "detail": "add a bound, unique-key lookup, or query-guard annotation"
-    },
-    "23d62e24a9191ade223f": {
-      "count": 1,
-      "kind": "unbounded_growing_select",
-      "file": "src/lib/supabase/useBlock.ts",
-      "subject": "user_blocks",
       "detail": "add a bound, unique-key lookup, or query-guard annotation"
     },
     "23f32bc3dd83e63a1816": {
@@ -940,13 +926,6 @@
       "subject": "event_leaderboard_snapshot",
       "detail": "add a bound, unique-key lookup, or query-guard annotation"
     },
-    "ac36e79f1adfb576dadc": {
-      "count": 1,
-      "kind": "non_unique_pagination",
-      "file": "src/app/api/cron/news-clipping/route.ts",
-      "subject": "dm_conversations",
-      "detail": "range pagination must include a full unique order (id)"
-    },
     "adabe6bdb3e2fb260b44": {
       "count": 1,
       "kind": "unbounded_growing_select",
@@ -1010,33 +989,12 @@
       "subject": "posts",
       "detail": "add a bound, unique-key lookup, or query-guard annotation"
     },
-    "ba8d3800e586223d5fd7": {
-      "count": 1,
-      "kind": "unbounded_growing_select",
-      "file": "src/lib/supabase/useBlock.ts",
-      "subject": "profiles",
-      "detail": "add a bound, unique-key lookup, or query-guard annotation"
-    },
     "bc3b4f5052dc051b98dd": {
       "count": 1,
       "kind": "unbounded_growing_select",
       "file": "src/lib/notifications/live-activity.ts",
       "subject": "live_activity_game_push_state",
       "detail": "add a bound, unique-key lookup, or query-guard annotation"
-    },
-    "bdf76cc5268436393b42": {
-      "count": 1,
-      "kind": "unbounded_growing_select",
-      "file": "src/app/api/cron/news-clipping/route.ts",
-      "subject": "notification_prefs",
-      "detail": "add a bound, unique-key lookup, or query-guard annotation"
-    },
-    "be23c7666139400d66f6": {
-      "count": 1,
-      "kind": "non_unique_pagination",
-      "file": "src/app/api/cron/news-clipping/route.ts",
-      "subject": "profiles",
-      "detail": "range pagination must include a full unique order (id)"
     },
     "c09a27262f8a1158edf4": {
       "count": 1,

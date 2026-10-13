@@ -176,7 +176,28 @@ function installSupabaseStub(rows: unknown[]) {
       Promise.resolve({ data: table === "posts" ? rows : [], error: null }).then(res);
     return q;
   };
-  return { client: { from: (table: string) => makeQuery(table) }, selected };
+  // 홈 인기글 훅(useHomePopularFeed)은 supabase.rpc("home_popular_posts", args).select(...).abortSignal(sig)
+  // 로 조회한다. .from 만 stub 하면 RPC 가 실제 네트워크로 새 0행 → 홈 0카드가 된다(삼순 #1343 ④).
+  // rpc 도 stub 해 홈 배선이 살아 있을 때만 fixture 가 렌더되게 한다(배선 끊기면 여전히 RED).
+  const rpcCalls: { fn: string; args: unknown }[] = [];
+  const makeRpc = (fn: string, args: unknown) => {
+    rpcCalls.push({ fn, args });
+    const q: Record<string, unknown> = {};
+    const chain = () => q;
+    q.select = (cols?: string) => { if (cols) selected.push(`rpc:${fn}:${cols}`); return chain(); };
+    q.abortSignal = () => chain();
+    q.then = (res: (v: unknown) => unknown) =>
+      Promise.resolve({ data: fn === "home_popular_posts" ? rows : [], error: null }).then(res);
+    return q;
+  };
+  return {
+    client: {
+      from: (table: string) => makeQuery(table),
+      rpc: (fn: string, args: unknown) => makeRpc(fn, args),
+    },
+    selected,
+    rpcCalls,
+  };
 }
 
 /**
@@ -326,13 +347,15 @@ async function main() {
 
   await act(async () => { root.unmount(); });
 
-  // ── §2. 실제 홈 최신글(CommunityLatestPosts) 렌더 ─────────────────────────
+  // ── §2. 실제 홈 전체 인기글(CommunityLatestPosts) 렌더 ────────────────────
   // 이전 판본은 배지를 직접 렌더해 홈 배선을 끊어도 GREEN 이었다(삼순 NO-GO).
-  // 이제 홈 컴포넌트를 통째로 마운트하고 useUnifiedFeed 가 supabase stub 을 타게 한다.
+  // 다팀 공개범위 배지는 전체 인기글 모드로 검증한다. 최애팀 없는 최신글은 의도적으로 숨긴다.
   const stub = installSupabaseStub(fixtures.map((f) => feedRow(f.post)));
   const clientMod = await import("../../src/lib/supabase/client");
   const originalFrom = (clientMod.supabase as unknown as { from: unknown }).from;
+  const originalRpc = (clientMod.supabase as unknown as { rpc: unknown }).rpc;
   (clientMod.supabase as unknown as { from: unknown }).from = stub.client.from;
+  (clientMod.supabase as unknown as { rpc: unknown }).rpc = stub.client.rpc;
 
   const CommunityLatestPosts = (await import("../../src/components/home/CommunityLatestPosts")).default;
 
@@ -347,7 +370,7 @@ async function main() {
         React.createElement(
           ThemeProvider,
           null,
-          React.createElement(CommunityLatestPosts as never, { myTeamId: null } as never),
+          React.createElement(CommunityLatestPosts as never, { myTeamId: null, mode: "popular" } as never),
         ),
       ),
     );
@@ -363,7 +386,7 @@ async function main() {
     homeTexts.length > 0,
     `홈이 카드를 하나도 렌더하지 않음 — 배선 끊김 또는 stub 부적합`,
   );
-  // 홈은 기본 5개만 펼쳐 보여주므로(HOME_LATEST_COLLAPSED) 앞쪽 fixture 만 대조한다.
+  // 전체 인기글은 기본 5개만 보여주므로 앞쪽 fixture 만 대조한다.
   const homeCheckCount = Math.min(homeTexts.length, fixtures.length);
   for (let i = 0; i < homeCheckCount; i++) {
     ok(
@@ -376,6 +399,7 @@ async function main() {
 
   await act(async () => { root2.unmount(); });
   (clientMod.supabase as unknown as { from: unknown }).from = originalFrom;
+  (clientMod.supabase as unknown as { rpc: unknown }).rpc = originalRpc;
 
   // ── §3. 선수 페이지 조회 컬럼 — team_tags 포함 ────────────────────────────
   // 조회에서 빠지면 다팀 글이 선수 피드에서만 축소 표시된다(런타임에 안 터지고 조용히 틀림).

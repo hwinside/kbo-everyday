@@ -2,20 +2,13 @@
 
 import { useState, useEffect } from "react";
 import Image from "next/image";
+import { loadOGPreview, type OGPreviewData as OGData } from "@/lib/community/og-preview-cache";
 
 // Match URLs in text (with or without protocol)
 const URL_REGEX = /(?:https?:\/\/|www\.)[^\s<>"')\]]+/g;
 
 // Direct image extensions
 const IMAGE_EXT_REGEX = /\.(jpg|jpeg|png|gif|webp)(\?[^\s]*)?$/i;
-
-interface OGData {
-  title: string | null;
-  description: string | null;
-  image: string | null;
-  siteName: string | null;
-  url: string;
-}
 
 interface LinkPreviewProps {
   text: string;
@@ -58,8 +51,7 @@ export default function LinkPreview({ text, maxPreviews = 3, stopPropagation = f
 
       // Fetch OG metadata
       // v=2 cache-buster forces new URL after 2026-04-21 OG parser fix
-      fetch(`/api/og-meta?url=${encodeURIComponent(url)}&v=2`)
-        .then((r) => r.ok ? r.json() : Promise.reject())
+      loadOGPreview(url)
         .then((data: OGData) => {
           setPreviews((prev) => new Map(prev).set(url, data));
         })

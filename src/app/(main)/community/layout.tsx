@@ -159,7 +159,7 @@ export default function CommunityLayout({
               const isActive = pathname === tab.href || pathname.startsWith(tab.href + "/");
               const Icon = tab.icon;
               return (
-                <Link
+                <Link prefetch={false}
                   key={tab.key}
                   href={tab.href}
                   className={`relative flex items-center gap-1.5 px-4 py-2.5 text-sm font-medium whitespace-nowrap transition-colors ${

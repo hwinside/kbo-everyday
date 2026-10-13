@@ -90,6 +90,23 @@ assert.deepEqual(summary, {
   winRate: 1 / 3,
 });
 assert.equal(summarizeVenueAttendance([pending]).winRate, null, "종료 경기 0건은 승률 미표시");
+// 점수가 남은 진행 중 취소와 0:0 미개시 취소 모두 방문만 집계한다.
+for (const [awayScore, homeScore] of [[2, 0], [0, 2], [0, 0]]) {
+  const cancelled = buildVenueDiaryItem(row({ source: "diary_manual" }), game({
+    status: "cancelled", cancelReason: "우천취소", awayScore, homeScore,
+  }));
+  assert.equal(cancelled.result, null);
+  assert.equal(cancelled.awayTeam?.score, null);
+  assert.equal(cancelled.homeTeam?.score, null);
+  assert.equal(cancelled.cancelReason, "우천취소");
+  assert.deepEqual(summarizeVenueAttendance([win, loss, draw, cancelled]), {
+    attendanceCount: 4, wins: 1, losses: 1, draws: 1, finalCount: 3, winRate: 1 / 3,
+  });
+  assert.equal(summarizeVenueAttendance([cancelled]).winRate, null);
+  // 잘못된 잔여 result가 유입되어도 status로 한 번 더 차단한다.
+  assert.equal(summarizeVenueAttendance([{ ...cancelled, result: "W" }]).finalCount, 0);
+}
+
 const manual = buildVenueDiaryItem(row({ source: "diary_manual" }), game());
 assert.equal(manual.source, "diary_manual", "직접 추가 source 응답");
 assert.equal(manual.venueVerified, false, "직접 추가는 GPS 인증과 분리");

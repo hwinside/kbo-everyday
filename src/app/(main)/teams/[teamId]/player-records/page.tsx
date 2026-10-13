@@ -38,7 +38,7 @@ export default function TeamPlayerRecordsPage() {
       </div>
 
       <p className="mt-2 mb-3 text-xs text-text-tertiary">
-        기록을 선택하면 그 순으로 정렬됩니다 · {team.shortName} 선수
+        정규시즌 기록입니다 · 기록을 선택하면 정렬됩니다 · {team.shortName} 선수
       </p>
 
       <RecordRoom scopeTeamId={team.id} />

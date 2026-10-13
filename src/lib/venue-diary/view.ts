@@ -266,6 +266,8 @@ export interface DiaryHomeThumb {
 
 /** 홈(①) 경기 미디어 그룹(목록 API 계약 2). */
 export interface DiaryMediaGroupInput {
+  /** 본인 삭제 원장의 실제 출처. 썸네일 인증 여부와 별개. */
+  deletedAttendanceSource?: "story_geofence" | "diary_manual" | null;
   gameId: string;
   gameDate: string | null;
   stadiumName: string | null;
@@ -281,6 +283,8 @@ export interface DiaryAttendanceInput {
   stadiumName?: string | null;
   source?: "story_geofence" | "diary_manual";
   favoriteTeamId?: number | null;
+  status?: string;
+  cancelReason?: string | null;
   result: "W" | "L" | "D" | null;
   awayTeam: { id: number; name: string; score: number | null } | null;
   homeTeam: { id: number; name: string; score: number | null } | null;
@@ -296,9 +300,12 @@ export interface DiaryHomeGame {
   /** 썸네일로 보여준 것 외 나머지 개수(`+N`). */
   extraCount: number;
   total: number;
+  deletedAttendanceSource: "story_geofence" | "diary_manual" | null;
   attendanceId: number | null;
   attendanceSource: "story_geofence" | "diary_manual" | null;
   favoriteTeamId: number | null;
+  status?: string;
+  cancelReason?: string | null;
   result: "W" | "L" | "D" | null;
   awayTeam: { id: number; name: string; score: number | null } | null;
   homeTeam: { id: number; name: string; score: number | null } | null;
@@ -345,10 +352,13 @@ export function buildDiaryHomeGames(input: {
       thumbnails,
       extraCount,
       total,
+      deletedAttendanceSource: group?.deletedAttendanceSource ?? null,
       attendanceId: attendance?.id ?? null,
       attendanceSource: attendance?.source ?? null,
       favoriteTeamId: attendance?.favoriteTeamId ?? null,
-      result: attendance?.result ?? null,
+      status: attendance?.status,
+      cancelReason: attendance?.cancelReason ?? null,
+      result: attendance?.status === "cancelled" ? null : attendance?.result ?? null,
       awayTeam: attendance?.awayTeam ?? null,
       homeTeam: attendance?.homeTeam ?? null,
     };

@@ -1,5 +1,6 @@
 "use client";
 
+import { postseasonGameLabel } from "@/lib/crawler/game-series";
 import { useState, useEffect } from "react";
 import { useParams, useRouter } from "next/navigation";
 import { ChevronLeft, ChevronRight } from "lucide-react";
@@ -14,6 +15,8 @@ import {
 } from "@/lib/ui/result-tone";
 
 interface ScheduleDay {
+  srId?: string;
+  gameLabel?: string;
   day: number;
   date: string;
   gameId: string;
@@ -139,7 +142,7 @@ export default function TeamSchedulePage() {
       {/* Monthly summary */}
       {summary && (summary.wins > 0 || summary.losses > 0) && (
         <div className="mx-5 mb-3 rounded-xl px-4 py-2.5 text-center text-sm font-medium" style={{ backgroundColor: `${teamColor}15`, color: teamColor }}>
-          {summary.wins}승 {summary.losses}패{summary.draws > 0 ? ` ${summary.draws}무` : ""} · 승률 {summary.winRate.toFixed(3)}
+          정규시즌 {summary.wins}승 {summary.losses}패{summary.draws > 0 ? ` ${summary.draws}무` : ""} · 승률 {summary.winRate.toFixed(3)}
         </div>
       )}
 
@@ -198,6 +201,7 @@ export default function TeamSchedulePage() {
                   <span className="text-[10px] text-text-tertiary leading-none">
                     {day}
                   </span>
+                  {game && postseasonGameLabel(game.srId, game.gameLabel, game.status) && <span className="text-[9px] text-accent leading-tight">{postseasonGameLabel(game.srId, game.gameLabel, game.status)}</span>}
                   {opponentTeam && (
                     <div className="my-0.5">
                       <TeamLogo team={opponentTeam} size={32} />
@@ -222,7 +226,7 @@ export default function TeamSchedulePage() {
                         ? "LIVE"
                         : game.status === "cancelled"
                         ? cancelReasonBadge(game.cancelReason)
-                        : game.home ? "홈" : "@"}
+                        : game.home ? "홈" : "원정"}
                     </span>
                   )}
                 </div>

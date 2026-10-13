@@ -432,6 +432,7 @@ struct KBOLockScreenCard: View {
     /// 채우도록 세로로 늘린다(콘텐츠는 상단 정렬). false면 콘텐츠 높이만큼만(잠금화면 LA 기존 동작).
     /// 이전엔 false라 medium에서 카드 배경(콘텐츠 높이)과 위젯 containerBackground 사이에
     /// 윗쪽 어두운 띠(seam)가 보였다.
+    var resultPitchers: String? = nil
     var fillHeight: Bool = false
 
     /// 홈위젯 stale 가드(B안) — live 스냅샷이 5h 넘게 갱신 안 됐을 때 true. LIVE 뱃지를 떼고
@@ -514,6 +515,12 @@ struct KBOLockScreenCard: View {
                     }
                 }
                 TeamBadge(code: attributes.homeTeamCode)
+            }
+
+            if state.isFinal, state.awayScore != state.homeScore,
+               let result = resultPitchers, !result.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
+                Text(result).font(notoKR(11, .bold)).foregroundStyle(.white.opacity(0.85))
+                    .lineLimit(2).minimumScaleFactor(0.75).multilineTextAlignment(.center)
             }
 
             // 하단: 아웃카운트(B/S 제거) + 투수/타자(소속) + 다이아몬드 (진행 중에만, 경기 전 제외).

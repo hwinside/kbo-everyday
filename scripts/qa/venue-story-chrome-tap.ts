@@ -82,6 +82,15 @@ async function main() {
 
   const scope = dom.window.document.body;
   const q = (sel: string) => scope.querySelector(sel) as HTMLElement | null;
+  // Observe the stable result, not a transient sheet that may already have
+  // unmounted by the time React act() returns on a busy CI runner.
+  const waitFor = async (condition: () => boolean, timeoutMs = 2000) => {
+    const deadline = Date.now() + timeoutMs;
+    while (!condition() && Date.now() < deadline) {
+      await act(async () => { await new Promise(resolve => setTimeout(resolve, 16)); });
+    }
+    return condition();
+  };
   // jsdom getBoundingClientRect 는 전부 0 — 릴리즈 좌표를 rect 안(0,0)으로 주면 in-bounds,
   // (999,999)로 주면 drag-out 이 된다.
   const tapIn = async (el: HTMLElement) => {
@@ -110,11 +119,18 @@ async function main() {
   // trailing click 무시(오버레이가 이미 열렸으니 상태 유지 확인)
   await act(async () => { pill.dispatchEvent(clickEv(1)); });
   ok("댓글 pill: trailing click(detail>0) 무시(오버레이 유지)", !!q("[data-venue-story-comment-overlay]"));
-  // 닫기: 백드롭 click → closing → 시트 애니메이션 완료 콜백 강제
+  // Backdrop must actually dismiss the overlay. The former !!sheet assertion
+  // failed on fast completion and also passed with a broken/no-op close handler.
   await act(async () => { q("[data-venue-story-comment-overlay]")!.dispatchEvent(clickEv(1)); });
-  const sheet = q("[data-venue-story-comment-sheet]");
-  ok("백드롭 탭으로 닫힘 요청 상태 진입", !!sheet);
-  // framer-motion onAnimationComplete 은 jsdom 에서 안 돌 수 있어 강제로 스토리 전환 없이 언마운트 확인은 생략.
+  ok("backdrop tap dismisses overlay after animation", await waitFor(() => !q("[data-venue-story-comment-overlay]")));
+  await tapIn(pill);
+  ok("comment overlay can reopen after backdrop dismissal", !!q("[data-venue-story-comment-overlay]"));
+  await act(async () => {
+    q("[data-venue-story-comment-overlay]")!.dispatchEvent(clickEv(1));
+    // Exercise completion during act as well as completion after act returns.
+    await new Promise(resolve => setTimeout(resolve, 250));
+  });
+  ok("backdrop dismissal survives delayed act completion", await waitFor(() => !q("[data-venue-story-comment-overlay]")));
 
   // ② 더보기: pointercancel 후 pointerup = 발동 0, 정상 탭 = 메뉴 오픈
   const more = q('button[aria-label="더보기"]')!;

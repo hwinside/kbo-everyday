@@ -1,3 +1,4 @@
+import { withCloudflarePublicCache } from "@/lib/http/cloudflare-cache";
 import { NextRequest, NextResponse } from "next/server";
 import {
   applyRunnerStats,
@@ -49,8 +50,8 @@ export async function GET(req: NextRequest) {
     season: req.nextUrl.searchParams.get("season"),
     full: req.nextUrl.searchParams.get("full") === "1",
   });
-  return NextResponse.json(result.body, {
+  return withCloudflarePublicCache(req, NextResponse.json(result.body, {
     status: result.status,
     headers: result.headers,
-  });
+  }));
 }

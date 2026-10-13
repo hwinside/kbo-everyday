@@ -3,7 +3,7 @@
 import { useState, useRef, useCallback, useEffect } from "react";
 import type { GameEvent } from "@/types/game-events";
 import type { CelebrationEvent, CelebrationEventType } from "@/components/game/CelebrationOverlay";
-import PLAYERS_ROSTER from "@/lib/constants/players-roster.json";
+import { resolveCelebrationPlayerId } from "@/lib/utils/celebration-player";
 import { trackCelebration } from "@/lib/admin/tracker";
 
 interface UseCelebrationOptions {
@@ -85,14 +85,6 @@ const RESUME_GRACE_MS = 1_000;
  * Per-source tracking via primedSourcesRef. Reset on PWA resume so the next
  * source-first batches re-baseline.
  */
-
-/** Look up kboId from player name + teamId */
-function findKboId(name: string | undefined, teamId: number): string | undefined {
-  if (!name) return undefined;
-  const entry = (PLAYERS_ROSTER as { name: string; teamId: number; kboId: string }[])
-    .find((p) => p.name === name && p.teamId === teamId);
-  return entry?.kboId;
-}
 
 /** Map GameEventType → CelebrationEventType, null if not celebration-worthy */
 function toCelebrationType(eventType: string): CelebrationEventType | null {
@@ -281,7 +273,7 @@ export function useCelebration({ gameId, myTeamId, homeTeamId, awayTeamId }: Use
 
         // Build celebration event
         const playerName = isOffense ? ev.detail.batter : ev.detail.pitcher;
-        const kboId = findKboId(playerName, relevantTeamId);
+        const kboId = resolveCelebrationPlayerId(playerName, relevantTeamId, celebType);
 
         let strikeoutCount: number | undefined;
         if (celebType === "strikeout" && ev.detail.pitcher) {

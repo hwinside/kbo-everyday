@@ -1,4 +1,4 @@
-import { NextRequest, NextResponse } from "next/server";
+import { NextRequest, NextResponse, after } from "next/server";
 import type { KboRawGame } from "@/types/api";
 import type { GameEvent } from "@/types/game-events";
 import type { StartPlateAppearanceEvidence } from "@/lib/notifications/start-freshness-policy";
@@ -19,14 +19,22 @@ import {
   startWidgetRefreshPipelines,
   FAST_LOOP_DEADLINE_MS,
 } from "@/lib/notifications/widget-fast-loop";
-import { fetchKboLiveGames } from "@/lib/notifications/kbo-live-games";
+import { fetchLiveGamesNaverPrimary } from "@/lib/notifications/kbo-live-games";
 import {
   startLaOrchestration,
   LA_FANOUT_DRAIN_DEADLINE_MS,
   LA_BROADCAST_DEADLINE_MS,
 } from "@/lib/notifications/live-fast-path";
 import { reconcileChannelBornFromAcks } from "@/lib/notifications/live-activity-channel-born-reconcile";
+import {
+  persistWarmupEnrichObs,
+  type WarmupEnrichObsTick,
+} from "@/lib/notifications/warmup-enrich-obs";
 import { runBeforeDeadline } from "@/lib/async-deadline";
+import { supabaseAdmin } from "@/lib/supabase/admin";
+import { runSummaryBackfill } from "@/lib/game-summary/backfill-runner";
+import { classifyGenerationFailure } from "@/lib/game-summary/failure-observability";
+import { trackApiDegradation } from "@/lib/monitoring/api-fallback-tracker";
 
 /**
  * Warm up the in-memory prevState cache of /api/game-events for every
@@ -88,7 +96,12 @@ export async function GET(req: NextRequest) {
   const currentTickStartMs = Math.floor(requestStartMs / 60_000) * 60_000;
   // 손상 응답은 정상 "라이브 0"으로 보지 않는다. 본체 알림은 이번 틱 skip하되 fast-loop는
   // +20/+40초 재시도해 일시 KBO parse/schema 오류를 다음 분까지 끌지 않는다.
-  const initialFetch = await fetchKboLiveGames(
+  // warmup 가 소비하는 games 축 전체를 앱 화면(games-user-facing)과 동일하게 Naver-primary 로 둔다.
+  // (LA broadcast·위젯·점수알림·시작감지가 같은 games 배열 하나를 공유하므로 "LA 축만"
+  // 분리는 구조적으로 불가 — games 경계에서 통째 바꿔 diff·hash·득점축·위젯을 한 소스로 정합.)
+  // 기존 fetchKboLiveGames 는 KBO-primary(200 OK 면 stale 점수도 그대로 쓰고 Naver 미조회)라
+  // KBO 스코어보드가 늦밌 때 카드 점수가 stale 된다. Naver 다운/무경기 시에만 KBO fallback.
+  const initialFetch = await fetchLiveGamesNaverPrimary(
     date,
     Math.min(deadlineAtMs, Date.now() + 10_000),
   );
@@ -96,6 +109,19 @@ export async function GET(req: NextRequest) {
   const liveGameIds = games
     .filter(g => g.GAME_STATE_SC === "2" && g.G_ID)
     .map(g => g.G_ID as string);
+  // 소스 관측 로그(#1311 삼순 item3) — 향후 "KBO stale vs Naver" 판정을 위해 source와 라이브
+  // 점수를 남긴다. broadcast failedGameIds 는 아래 laBroadcast 결과에서 별도 로깅된다.
+  if (liveGameIds.length > 0) {
+    console.log(
+      `[warmup] live source=${initialFetch.trace.source} stage=${initialFetch.trace.stage} ` +
+      liveGameIds
+        .map((id) => {
+          const g = games.find((x) => x.G_ID === id);
+          return `${id}:${g?.T_SCORE_CN ?? "?"}-${g?.B_SCORE_CN ?? "?"}`;
+        })
+        .join(" "),
+    );
+  }
 
   // Self-fetch to traverse the same generateEvents path the client takes.
   // ⚠️ VERCEL_URL은 *배포별 URL*이라 Deployment Protection(인증)이 걸려 self-fetch가
@@ -109,6 +135,132 @@ export async function GET(req: NextRequest) {
       : process.env.VERCEL_URL
         ? `https://${process.env.VERCEL_URL}`
         : req.nextUrl.origin);
+
+  // (2026-08-29 LG:롯데 콜드게임 인시던트, 삼순 A+C) final 전이 백필 — final 인데 요약
+  // row 가 없는 경기를 /api/game-summary POST 로 생성 트리거한다. KBO 가 final 전이를
+  // 늦게 내려도(콜드/서스펜디드) 전이 후 최대 ~1분 안에 자동 생성된다(기존 prewarm 매시
+  // :15 = 최대 60분 공백). 수렴 확인·생성·저장 정합성은 전부 POST 의 canonicalGate +
+  // claim lease + fingerprint fence 가 담당 — 여기선 선정·유계 재시도·발사만(runSummaryBackfill).
+  //
+  // 즉시 실행(삼순 NO-GO ②): warmup 본작업(fanout drain ~68s)이 끝난 뒤가 아니라 *지금*
+  // 시작한다. promise 를 after() 에 넘겨 응답 이후에도 함수 수명을 보장(waitUntil semantics)
+  // — 실행 시점은 즉시, 응답 latency 영향은 0.
+  // 유계 재시도(삼순 NO-GO ②): per-game 시도 상한 10회 + backoff(1~3회 매틱 → 4분 → 14분),
+  // durable 카운터(game_summary_backfill_state). 상한 소진 시 markGaveUp + 즉시 경보 1회.
+  const summaryBackfillCandidates = games.map((g) => ({
+    gameId: (g.G_ID as string) ?? "",
+    gameStateSc: (g.GAME_STATE_SC as string | undefined) ?? null,
+  }));
+  const summaryBackfillPromise = runSummaryBackfill(summaryBackfillCandidates, {
+    listExistingSummaries: async (ids) => {
+      // query-guard: bounded -- 당일 경기 gameId IN 목록(하루 최대 ~10경기) 존재 조회
+      const { data, error } = await supabaseAdmin
+        .from("game_summaries")
+        .select("game_id")
+        .in("game_id", ids)
+        .limit(20);
+      if (error) {
+        console.error("[warmup] summary-backfill existence query failed:", error.message);
+        return { ok: false, existing: new Set<string>() };
+      }
+      return { ok: true, existing: new Set((data ?? []).map((r) => r.game_id as string)) };
+    },
+    readAttemptStates: async (ids) => {
+      // query-guard: bounded -- 당일 경기 gameId IN 목록(하루 최대 ~10경기) 시도상태 조회
+      const { data, error } = await supabaseAdmin
+        .from("game_summary_backfill_state")
+        .select("game_id, attempts, last_attempt_at, gave_up")
+        .in("game_id", ids)
+        .limit(20);
+      if (error) {
+        console.error("[warmup] summary-backfill state query failed:", error.message);
+        return { ok: false, states: new Map() };
+      }
+      const states = new Map(
+        (data ?? []).map((r) => [
+          r.game_id as string,
+          {
+            attempts: (r.attempts as number) ?? 0,
+            lastAttemptAtMs: r.last_attempt_at ? new Date(r.last_attempt_at as string).getTime() : null,
+            gaveUp: (r.gave_up as boolean) ?? false,
+          },
+        ]),
+      );
+      return { ok: true, states };
+    },
+    claimAttempt: async (gameId, expectedAttempts) => {
+      // 원자 CAS(삼순 재리뷰 ②): 겹친 분 크론이 카운터를 되감지 못하게 exact-match 조건부
+      // 증가만 허용. 첫 시도는 insert-only(중복 키 = 패배), 이후는 attempts exact-match update.
+      const nowIso = new Date().toISOString();
+      if (expectedAttempts === 0) {
+        const { error } = await supabaseAdmin
+          .from("game_summary_backfill_state")
+          .insert({ game_id: gameId, attempts: 1, last_attempt_at: nowIso });
+        if (!error) return { ok: true, won: true };
+        if (error.code === "23505") return { ok: true, won: false }; // 다른 run 이 선점
+        console.error(`[warmup] summary-backfill claimAttempt insert failed (${gameId}):`, error.message);
+        return { ok: false, won: false };
+      }
+      const { data, error } = await supabaseAdmin
+        .from("game_summary_backfill_state")
+        .update({ attempts: expectedAttempts + 1, last_attempt_at: nowIso })
+        .eq("game_id", gameId)
+        .eq("attempts", expectedAttempts)
+        .eq("gave_up", false)
+        .select("game_id");
+      if (error) {
+        console.error(`[warmup] summary-backfill claimAttempt failed (${gameId}):`, error.message);
+        return { ok: false, won: false };
+      }
+      return { ok: true, won: (data ?? []).length === 1 };
+    },
+    markGaveUp: async (gameId) => {
+      // CAS(false→true): 승자만 경보를 쏘게 한다. 오류는 error 로 구분(러너가 fail-open 경보).
+      const { data, error } = await supabaseAdmin
+        .from("game_summary_backfill_state")
+        .update({ gave_up: true })
+        .eq("game_id", gameId)
+        .eq("gave_up", false)
+        .select("game_id");
+      if (error) {
+        console.error(`[warmup] summary-backfill markGaveUp failed (${gameId}):`, error.message);
+        return { won: false, error: true };
+      }
+      return { won: (data ?? []).length === 1, error: false };
+    },
+    postSummary: async (gameId) => {
+      const r = await fetch(`${baseUrl}/api/game-summary`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json", "User-Agent": "kbo-everyday-warmup/1.0" },
+        body: JSON.stringify({ gameId }),
+        cache: "no-store",
+        // Gemini 생성(수초~십수초) + 검증 재시도 여유. 순차 발사라 최악 3×45s로 maxDuration(300s) 내.
+        signal: AbortSignal.timeout(45_000),
+      });
+      const j = (await r.json().catch(() => null)) as { source?: string; error?: string } | null;
+      return { status: r.status, result: j?.source ?? j?.error ?? "?" };
+    },
+    reportGiveUp: async (gameId, attempts) => {
+      // 러너가 await 하고 러너 promise 는 after() 가 수명을 보장 — 경보 1회가 응답 종료에 안 잘린다(삼순 재리뷰 ③).
+      const c = classifyGenerationFailure("backfill-exhausted");
+      await trackApiDegradation(
+        c.apiName,
+        c.reason,
+        { errorMessage: `${gameId}: stage=backfill-exhausted attempts=${attempts} — 자동복구 상한 소진` },
+        c.policy,
+      );
+    },
+    nowMs: () => Date.now(),
+  })
+    .then((r) => {
+      if (r.launched.length > 0 || r.gaveUp.length > 0 || r.backedOff.length > 0 || r.failClosed) {
+        console.log(
+          `[warmup] summary-backfill launched=${JSON.stringify(r.launched)} gaveUp=${r.gaveUp.join(",")} backedOff=${r.backedOff.join(",")} failClosed=${r.failClosed}`,
+        );
+      }
+    })
+    .catch((e) => console.error("[warmup] summary-backfill crashed:", (e as Error).message));
+  after(summaryBackfillPromise);
 
   // 시작알림의 authoritative 첫 타석 근거와 highlight payload를 초기 KBO fetch 직후
   // 즉시 수집한다. 아래 LA/widget 파이프라인 조립과 병렬로 진행하되 highlight는 이
@@ -201,12 +353,26 @@ export async function GET(req: NextRequest) {
   // in-flight send 1건만 +8s → 상한 68s = drain deadline). 미발송 라이브 경기는
   // failedGameIds로 보고돼 fast path가 다음 틱 catch-up p10으로 재-arm한다.
   const broadcastDeadlineAtMs = requestStartMs + LA_BROADCAST_DEADLINE_MS;
+  // 서브틱 enrich 관측 수집(삼순 #1317 P1) — fast loop 가 +15/30/45s 마다 다시 fetch 하므로
+  // 초기 1회만 응답에 실으면 분당 relay 라운드의 25%만 보이고, 서브틱에서 mode B 가
+  // 터져도 응답은 깨끗한 0으로 오독된다. 서브틱 trace.enrichObs 를 전부 모아 노출한다.
+  const enrichObsTicks: { atMs: number; obs: string[]; source: string; stage: string }[] = [];
   const laOrchestration = startLaOrchestration(
     {
       now: () => Date.now(),
       sleep: (ms) => new Promise((r) => setTimeout(r, ms)),
-      fetchLiveGames: () =>
-        fetchKboLiveGames(date, Math.min(deadlineAtMs, Date.now() + 10_000)),
+      fetchLiveGames: async () => {
+        const r = await fetchLiveGamesNaverPrimary(date, Math.min(deadlineAtMs, Date.now() + 10_000));
+        if (r.trace.enrichObs !== undefined) {
+          enrichObsTicks.push({
+            atMs: r.trace.fetchedAtMs,
+            obs: r.trace.enrichObs,
+            source: r.trace.source,
+            stage: r.trace.stage,
+          });
+        }
+        return r;
+      },
       fetchRelayLines: fetchRelayLinesForFastPath,
       ensureChannels: (gs) =>
         ensureLiveActivityChannels(gs, { deadlineAtMs: broadcastDeadlineAtMs }),
@@ -396,6 +562,34 @@ export async function GET(req: NextRequest) {
     channelBornReconcilePromise,
   ]);
   const { lastPlayByGame, laChannels, laBroadcast } = laCritical;
+
+  // ⓕ enrichObs 발현 틱 DB 적재(삼순 2026-08-28 설계 주문) — 모든 발송/fanout 이 끝난 뒤라
+  // broadcast critical path 를 못 막는다. 발현 틱(score-src=schedule/frames·relay-failed·
+  // deadline-cut)만 기록("무발현 = 행 없음"), 실패는 삼킨다(fire-and-forget — 3s 상한).
+  const enrichObsAllTicks: WarmupEnrichObsTick[] = [
+    {
+      atMs: initialFetch.trace.fetchedAtMs,
+      tickKind: "initial",
+      liveSource: initialFetch.trace.source,
+      liveStage: initialFetch.trace.stage,
+      obs: initialFetch.trace.enrichObs ?? [],
+    },
+    ...enrichObsTicks.map((tick): WarmupEnrichObsTick => ({
+      atMs: tick.atMs,
+      tickKind: "subtick",
+      liveSource: tick.source,
+      liveStage: tick.stage,
+      obs: tick.obs,
+    })),
+  ];
+  const enrichObsPersist = await Promise.race([
+    persistWarmupEnrichObs(enrichObsAllTicks),
+    new Promise<{ error: string }>((resolve) =>
+      setTimeout(() => resolve({ error: "persist_timeout" }), 3_000),
+    ),
+  ]).catch((e): { error: string } => ({
+    error: e instanceof Error ? e.message : "persist_failed",
+  }));
   const laFanout = laFanoutDrain.results;
   const cycle0Fanout = laFanout.find((f) => f.label === "cycle0")?.result as
     | { legacyLa?: unknown; liveActivityStart?: unknown; iosWidget?: unknown }
@@ -408,6 +602,17 @@ export async function GET(req: NextRequest) {
     date,
     polled: liveGameIds.length,
     liveGameIds,
+    // 소스 관측(삼순 2026-08-28 분리 선배포) — mode B(stale-equal) 판독을 tail 가시성과
+    // 무관하게 응답에서 직접 한다. 기각/확정 판정은 score-src 단독이 아니라
+    // relay-failed/deadline-cut(조건 발현 여부)와 source/stage(소스 경로)를 함께 읽는다.
+    liveSource: initialFetch.trace.source,
+    liveStage: initialFetch.trace.stage,
+    enrichObs: initialFetch.trace.enrichObs ?? [],
+    // 서브틱(fast loop) 관측 — 초기 fetch 이후의 relay 라운드까지 전부(삼순 #1317 P1).
+    // 빈 배열 = 서브틱 경로가 Naver-primary 가 아니었거나(failover) fast loop 미진입.
+    enrichObsTicks,
+    // ⓕ 발현 틱 DB 적재 결과 — { persisted: n } | { error }. 실패해도 본체 동작 무영향(관측 전용).
+    enrichObsPersist,
     gameNotify,
     rankNotify,
     scoreNotify,

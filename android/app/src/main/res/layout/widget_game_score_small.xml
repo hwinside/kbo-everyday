@@ -151,6 +151,19 @@
             </LinearLayout>
         </LinearLayout>
 
+        <TextView
+            android:id="@+id/widget_result_pitchers"
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:layout_marginTop="3dp"
+            android:gravity="center"
+            android:fontFamily="@font/notosanskr"
+            android:textColor="#D9FFFFFF"
+            android:textSize="9sp"
+            android:maxLines="2"
+            android:ellipsize="end"
+            android:visibility="gone" />
+
         <!-- 상태 pill: {시각} 경기 예정 / ● LIVE N회초 / 경기 종료.
              pill/선발/매치업 폰트 크기 동일(12sp) 위해 TextView로 통일. 배경·패딩 축소(과대 방지). -->
         <LinearLayout

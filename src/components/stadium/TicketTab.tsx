@@ -391,6 +391,9 @@ export default function TicketTab({
 
   return (
     <div className="space-y-3">
+      <p className="text-xs text-text-tertiary">
+        경기일이 지나면 양도중·예약중인 글은 자동으로 완료 처리됩니다. (한국시간 기준)
+      </p>
       {(showHeader || teamIds.length > 1) && (
         <div className="flex items-center justify-between">
           <div className="flex items-center gap-2">

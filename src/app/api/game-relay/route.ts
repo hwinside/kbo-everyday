@@ -4,9 +4,10 @@ import {
   trackApiDegradation,
   type DegradationAlertPolicy,
 } from "@/lib/monitoring/api-fallback-tracker";
-import { isAllStarGameId } from "@/lib/constants/teams";
+import { naverGameId as toNaverGameId, resolveNaverGameId } from "@/lib/crawler/naver-game-id";
 import { GAME_ID_FORMAT_HINT, isCanonicalKboGameId } from "@/lib/game/game-id";
 import { parseNaverPitch, type PitchDetail } from "@/lib/game/pitch-provider";
+import { buildRelayJsonResponse } from "@/lib/game/relay-degraded-header";
 import { toDeltaResponse } from "@/lib/game/relay-delta";
 import {
   NO_STORE_HEADERS,
@@ -199,13 +200,6 @@ export interface GameRelayResponse {
 
 // ===== Helpers =====
 
-function toNaverGameId(kboGameId: string): string {
-  const year = kboGameId.slice(0, 4);
-  // 올스타는 네이버가 앞 4자리 연도 대신 9999 prefix로 서비스한다.
-  // 예: KBO 20260711WEEA0 → Naver 99990711WEEA02026 (연도 suffix는 실제 연도 유지).
-  const base = isAllStarGameId(kboGameId) ? `9999${kboGameId.slice(4)}` : kboGameId;
-  return base + year;
-}
 
 function classifyResult(text: string): PlayEvent["type"] {
   // Order matters: 확정 결과 키워드 먼저 매칭하고, 모호한 hit 분류는 *마지막*에
@@ -1084,7 +1078,12 @@ export async function GET(req: NextRequest) {
   // 값이 없거나 0 이하이면 종전대로 전체 이닝을 반환한다(첫 로드/self-heal).
   const sinceInning = parseInt(req.nextUrl.searchParams.get("since") || "0") || 0;
 
-  const naverGameId = toNaverGameId(gameId);
+  let naverGameId: string;
+  try {
+    naverGameId = await resolveNaverGameId(gameId);
+  } catch {
+    return NextResponse.json({ error: "game series unavailable" }, { status: 503, headers: NO_STORE_HEADERS });
+  }
 
   // Cache hit short-circuits Naver upstream entirely.
   const cacheKey = `${naverGameId}-${inningHint}`;
@@ -1423,9 +1422,14 @@ export async function GET(req: NextRequest) {
     }
     // 엣지 캡시는 route 내부 캐시와 **정확히 같은 조건**으로 건다. degraded 응답을
     // 엣지에 올리면 TTL 동안 열화 응답이 고정되어 다음 폴링의 자가복구를 막는다.
-    return NextResponse.json(toDeltaResponse(response, sinceInning), {
-      headers: liveCacheHeaders(!anyInningDegraded, RELAY_EDGE_TTL_SECONDS),
-    });
+    // degraded 명시 헤더(삼순 #1331 NO-GO ①)는 buildRelayJsonResponse(producer seam 순수
+    // 함수)가 부착한다 — 게이트가 이 함수를 직접 실행해 양방향 검증(헤더 삭제·오타
+    // mutation 이 실행으로 RED). 이 경로에서 NextResponse.json 직접 호출 금지.
+    return buildRelayJsonResponse(
+      toDeltaResponse(response, sinceInning),
+      liveCacheHeaders(!anyInningDegraded, RELAY_EDGE_TTL_SECONDS),
+      anyInningDegraded,
+    );
   } catch (e) {
     if (e instanceof RelayUpstreamError) {
       return NextResponse.json(e.body, {

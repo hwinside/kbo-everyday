@@ -20,6 +20,8 @@ import type { BroadcastChannel } from "@/lib/broadcast-channels";
 import { pickGameWeather, type StadiumWeatherMap } from "@/lib/weather/stadium-weather";
 
 interface GameData {
+  srId?: string;
+  gameLabel?: string;
   id: string;
   awayTeamId: number;
   homeTeamId: number;
@@ -112,8 +114,10 @@ export default function GamesPage() {
         const res = await fetch(`/api/games?date=${formatDate(date)}`, { signal });
         const data = await res.json();
         if (data.error) throw new Error(data.error);
-        const mapped: GameData[] = (data.games ?? []).map((g: { gameId: string; awayTeamId: number; homeTeamId: number; awayScore: number | null; homeScore: number | null; status: "scheduled" | "live" | "final" | "cancelled"; time: string; stadium: string; inning?: string; isTop?: boolean; awayStarterName?: string; homeStarterName?: string; broadcastChannels?: BroadcastChannel[]; balls?: number; strikes?: number; outs?: number; runnersOn?: { first: boolean; second: boolean; third: boolean }; currentPitcher?: string; currentBatter?: string; lastPlay?: string; liveDetailFromKbo?: boolean; cancelReason?: string | null }) => ({
+        const mapped: GameData[] = (data.games ?? []).map((g: { gameId: string; srId?: string; gameLabel?: string; awayTeamId: number; homeTeamId: number; awayScore: number | null; homeScore: number | null; status: "scheduled" | "live" | "final" | "cancelled"; time: string; stadium: string; inning?: string; isTop?: boolean; awayStarterName?: string; homeStarterName?: string; broadcastChannels?: BroadcastChannel[]; balls?: number; strikes?: number; outs?: number; runnersOn?: { first: boolean; second: boolean; third: boolean }; currentPitcher?: string; currentBatter?: string; lastPlay?: string; liveDetailFromKbo?: boolean; cancelReason?: string | null }) => ({
           id: g.gameId,
+          srId: g.srId,
+          gameLabel: g.gameLabel,
           awayTeamId: g.awayTeamId,
           homeTeamId: g.homeTeamId,
           awayScore: g.awayScore,

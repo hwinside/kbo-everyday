@@ -57,12 +57,24 @@ export async function GET(req: NextRequest) {
     (tickets ?? []).map((t: { id: number; author_id: string; seat_area: string; price: number; status: string }) => [t.id, t]),
   );
 
+  const reviewIds = [...new Set(rows.filter(r => r.target_type === "game_review").map(r => r.target_id))];
+  const commentIds = [...new Set(rows.filter(r => r.target_type === "game_review_comment").map(r => r.target_id))];
+  // query-guard: bounded -- each ID list is derived from the <=200 report rows.
+  const [reviewResult, commentResult] = await Promise.all([
+    reviewIds.length ? supabase.from("game_reviews").select("id,game_id,author_id,content,is_hidden,deleted_at").in("id", reviewIds) : Promise.resolve({ data: [], error: null }),
+    commentIds.length ? supabase.from("game_review_comments").select("id,review_id,author_id,content,is_hidden,deleted_at").in("id", commentIds) : Promise.resolve({ data: [], error: null }),
+  ]);
+  if (reviewResult.error) return supabaseErrorResponse(reviewResult.error);
+  if (commentResult.error) return supabaseErrorResponse(commentResult.error);
+  const reviewMap = new Map((reviewResult.data ?? []).map(r => [r.id, r]));
+  const commentMap = new Map((commentResult.data ?? []).map(r => [r.id, r]));
   const enriched = rows.map((r) => {
     const t = r.target_type === "ticket" ? ticketMap.get(r.target_id) ?? null : null;
     return {
       ...r,
       reporter_nickname: nicknameMap.get(r.reporter_id) ?? null,
       ticket: t,
+      game_review: r.target_type === "game_review" ? reviewMap.get(r.target_id) ?? null : r.target_type === "game_review_comment" ? commentMap.get(r.target_id) ?? null : null,
     };
   });
 

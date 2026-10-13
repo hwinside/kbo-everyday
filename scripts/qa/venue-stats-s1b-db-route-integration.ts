@@ -3,6 +3,7 @@
  * 실행: npm run qa:venue-stats-s1b-db-route
  */
 import assert from "node:assert/strict";
+import { mock } from "node:test";
 import { readFileSync } from "node:fs";
 import { resolve } from "node:path";
 import { PGlite } from "@electric-sql/pglite";
@@ -299,7 +300,7 @@ async function seasonUniverseFailClosedRegression() {
   __resetSeasonAggregatesCaches();
   const red2 = await fetchSeasonAggregates(2026, { fetcher: rejectGameDate, rpc: faithfulRpc });
   assert.equal(red2.seasonGames, null);
-  const partialCollection = await collectSeasonGameUniverse(2026, "0", { fetcher: rejectGameDate });
+  const partialCollection = await collectSeasonGameUniverse(2026, "0", { fetcher: rejectGameDate, today: "2026-09-01" });
   assert.equal(partialCollection.complete, false);
   assert.ok(partialCollection.games.length > 0);
   assert.deepEqual(partialCollection.failedDates, [DATE_B]);
@@ -490,7 +491,8 @@ async function backfillContrastRegression(db: PGlite) {
   const { collectSeasonGameUniverse } = await import("../../src/lib/crawler/season-games-cache");
   const contrastFetcher: SeasonGameFetcher = async (date) =>
     gamesByDate[date] ? gamesResult(gamesByDate[date]) : VERIFIED_EMPTY;
-  const collection = await collectSeasonGameUniverse(2026, "0", { fetcher: contrastFetcher });
+  // The 480-game fixture has a fixed season horizon; wall-clock October must not add unverified dates.
+  const collection = await collectSeasonGameUniverse(2026, "0", { fetcher: contrastFetcher, today: "2026-09-01" });
   assert.equal(collection.complete, true);
   assert.equal(collection.failedDates.length, 0);
   // 수집 helper가 만든 final 우주를 그대로 RPC에 넘긴다 (route와 동일 매핑).
@@ -630,6 +632,7 @@ async function regularSeasonWindowScopeRegression() {
   const { collectSeasonGameUniverse } = await import("../../src/lib/crawler/season-games-cache");
   const { REGULAR_SEASON_WINDOWS } = await import("../../src/lib/crawler/naver-games");
   const w = REGULAR_SEASON_WINDOWS["2026"];
+  const provisionalWindow = { ...w, finalized: false };
   assert.ok(w, "2026 정규시즌 window 등록됨");
 
   // 수집 자체는 일어나지 않게 모든 날짜 verified-empty 로 닫고 범위만 관찰한다.
@@ -643,12 +646,13 @@ async function regularSeasonWindowScopeRegression() {
   assert.equal(regular.complete, true, "window 교집합이면 complete=true 도달 가능");
 
   const future = await collectSeasonGameUniverse(2026, "0", {
-    today: "2026-10-01",
+    today: "2026-10-13",
+    regularSeasonWindow: provisionalWindow,
     fetcher: async (date) => date > w.end ? { games: [], emptyVerified: false } : VERIFIED_EMPTY,
   });
-  assert.ok(future.expectedDates.includes("20261001"), "window.end 뒤 날짜를 조용히 제외하지 않음");
+  assert.ok(future.expectedDates.includes("20261013"), "window.end 뒤 날짜를 조용히 제외하지 않음");
   assert.equal(future.complete, false, "순연 가능 날짜 미검증이면 complete=true 금지");
-  assert.ok(future.failedDates.includes("20261001"));
+  assert.ok(future.failedDates.includes("20261013"));
 
   // 삼순 P0 RED — 앞의 assert 는 end 뒤 날짜를 **강제로** unverified 로 만들어 반대가설을
   // 검사하지 않았다. 진짜 경계는 "KBO+Naver 둘 다 미래 날짜를 빈 응답으로 줌" —
@@ -656,7 +660,8 @@ async function regularSeasonWindowScopeRegression() {
   // complete=true / last=20261031 로 권위 우주를 거짓 확정했다(독립 probe 재현).
   // end 뒤 horizon 은 응답 내용과 무관하게 구조적 incomplete 여야 한다.
   const alwaysVerifiedEmpty = await collectSeasonGameUniverse(2026, "0", {
-    today: "2026-10-01",
+    today: "2026-10-13",
+    regularSeasonWindow: provisionalWindow,
     fetcher: async (): Promise<SeasonGameFetchResult> => VERIFIED_EMPTY,
   });
   assert.equal(
@@ -689,6 +694,12 @@ async function regularSeasonWindowScopeRegression() {
 
   // provisional end는 과거가 되어도 실제 종료일이 아니다. 운영자가 공식 actual end와
   // finalized=true를 함께 넣은 뒤에만 그 날짜에서 자르고 complete를 열 수 있다.
+  const productionFinal = await collectSeasonGameUniverse(2026, "0", {
+    today: "2026-11-01", fetcher: noop,
+  });
+  assert.equal(w.finalized, true, "2026 공식 종료 확정 설정");
+  assert.equal(productionFinal.complete, true, "현재 설정으로 정규 비교 복구");
+  assert.equal(productionFinal.expectedDates.at(-1), "20261012", "PS 날짜는 정규 모수에서 제외");
   const finalizedWindow = { start: w.start, end: "20261020", finalized: true } as const;
   const settledPast = await collectSeasonGameUniverse(2026, "0", {
     today: "2026-11-01",
@@ -707,6 +718,7 @@ async function regularSeasonWindowScopeRegression() {
   // 모르므로 우주 완전함은 주장하지 않는다(window 갱신이 유일한 해소 조건).
   const postponed = await collectSeasonGameUniverse(2026, "0", {
     today: "2026-10-15",
+    regularSeasonWindow: provisionalWindow,
     fetcher: async (date): Promise<SeasonGameFetchResult> =>
       date === "20261020" ? gamesResult([makeFinalGame("20261020LGOB0")]) : VERIFIED_EMPTY,
   });
@@ -719,7 +731,8 @@ async function regularSeasonWindowScopeRegression() {
 
   // 전-시리즌 우주(srId≠"0")는 이 경계 규칙의 대상이 아니다 — 종랰 동작 보존.
   const allFuture = await collectSeasonGameUniverse(2026, "0,1,3,4,5,7,9", {
-    today: "2026-10-01",
+    today: "2026-10-13",
+    regularSeasonWindow: provisionalWindow,
     fetcher: async (): Promise<SeasonGameFetchResult> => VERIFIED_EMPTY,
   });
   assert.equal(allFuture.complete, true, "전-시리즌 우주는 end 경계 규칙 미적용(기존 동작)");
@@ -731,7 +744,7 @@ async function regularSeasonWindowScopeRegression() {
   assert.equal(unknown.complete, false, "window 미등록 연도는 fail-close");
 
   // 전-시리즈 우주(시범·포스트 포함)는 종래대로 3월 1일부터 — 범위를 즐이지 않는다.
-  const all = await collectSeasonGameUniverse(2026, "0,1,3,4,5,7,9", { fetcher: noop });
+  const all = await collectSeasonGameUniverse(2026, "0,1,3,4,5,7,9", { fetcher: noop, today: "2026-09-01" });
   assert.ok(all.expectedDates.includes("20260301"), "전-시리즈 우주는 3/1 포함(기존 동작 보존)");
   assert.ok(
     all.expectedDates.length > regular.expectedDates.length,
@@ -776,7 +789,7 @@ async function verifiedEmptyActualRegression() {
         : date === GAME_DATE
           ? gamesResult([makeFinalGame(GAME_ID)])
           : VERIFIED_EMPTY; // 무경기 확정
-    const red = await collectSeasonGameUniverse(2026, "0", { fetcher: seamFetcher });
+    const red = await collectSeasonGameUniverse(2026, "0", { fetcher: seamFetcher, today: "2026-09-01" });
     assert.equal(red.complete, false, "P0-1 RED: unverified soft-empty → complete=false");
     assert.ok(red.failedDates.includes(FAULT_DATE), "fault 날짜가 failedDates에");
     assert.ok(red.games.some((g) => g.gameId === GAME_ID), "non-empty partial(진짜 경기 수집)");
@@ -794,7 +807,7 @@ async function verifiedEmptyActualRegression() {
     gameDate: GAME_DATE, gameId: GAME_ID, faultDate: FAULT_DATE, faultNaverHasGame: true,
   });
   try {
-    const failover = await collectSeasonGameUniverse(2026, "0"); // 기본 fetcher=fetchSeasonUniverseDate
+    const failover = await collectSeasonGameUniverse(2026, "0", { today: "2026-09-01" }); // 기본 fetcher=fetchSeasonUniverseDate
     assert.equal(failover.complete, false, "미설명 Naver 경기 → fail-close");
     assert.ok(failover.failedDates.includes(FAULT_DATE));
     assert.ok(!failover.games.some((g) => g.gameId === `${FAULT_DATE}KTSS0`));
@@ -808,7 +821,7 @@ async function verifiedEmptyActualRegression() {
     gameDate: GAME_DATE, gameId: GAME_ID, faultDate: FAULT_DATE, faultNaverHasGame: false,
   });
   try {
-    const green = await collectSeasonGameUniverse(2026, "0");
+    const green = await collectSeasonGameUniverse(2026, "0", { today: "2026-09-01" });
     assert.equal(green.complete, true, "P0-1 GREEN: 모든 빈 날짜 verified-empty → complete=true");
     assert.equal(green.failedDates.length, 0);
     assert.ok(green.games.some((g) => g.gameId === GAME_ID));
@@ -912,7 +925,7 @@ async function seriesAwareVerifiedEmptyRegression() {
     preseasonDate: PRESEASON_DATE, preseasonGameIds: PRESEASON_IDS,
   });
   try {
-    const green = await collectSeasonGameUniverse(2026, "0"); // 기본 fetcher=fetchSeasonUniverseDate
+    const green = await collectSeasonGameUniverse(2026, "0", { today: "2026-09-01" }); // 기본 fetcher=fetchSeasonUniverseDate
     assert.equal(green.complete, true, "P0-1 series GREEN: 시범경기일이 정규 우주를 죽이지 않는다");
     assert.equal(green.failedDates.length, 0);
     // 우주에는 정규 경기만 — 시범경기가 우주·분모에 샐지 않는다.
@@ -947,7 +960,7 @@ async function seriesAwareVerifiedEmptyRegression() {
     kboNonRegularDrops: ["20260711WEEA0"],
   });
   try {
-    const scoped = await collectSeasonGameUniverse(2026, "0");
+    const scoped = await collectSeasonGameUniverse(2026, "0", { today: "2026-09-01" });
     assert.ok(scoped.expectedDates.includes(PRESEASON_DATE), "올스타일은 window 내부 수집 대상");
     assert.equal(scoped.complete, false, "미설명 Naver 경기는 fail-close");
     assert.ok(scoped.failedDates.includes(PRESEASON_DATE));
@@ -1529,12 +1542,20 @@ async function routeGameErrorsWiringRegression() {
 }
 
 async function main() {
-  await rpcDbRegression();
-  await seasonUniverseFailClosedRegression();
-  await routeShapeRegression();
-  await routeEligibleAttendanceRegression();
-  await routeGameErrorsWiringRegression();
-  console.log("\n결과: S1b DB/RPC + 시즌 우주 fail-closed(gate1/2/3) + owner-auth route actual + D7 실책 route 배선 PASS");
+  // Pin the synthetic 2026 fixture clock at the outermost boundary, including
+  // fetchSeasonAggregates -> collectSeasonGameUniverse and route-internal calls.
+  // Explicit season-end override cases still exercise their own dates.
+  mock.timers.enable({ apis: ["Date"], now: Date.parse("2026-09-01T03:00:00Z") });
+  try {
+    await rpcDbRegression();
+    await seasonUniverseFailClosedRegression();
+    await routeShapeRegression();
+    await routeEligibleAttendanceRegression();
+    await routeGameErrorsWiringRegression();
+    console.log("\n결과: S1b DB/RPC + 시즌 우주 fail-closed(gate1/2/3) + owner-auth route actual + D7 실책 route 배선 PASS");
+  } finally {
+    mock.timers.reset();
+  }
 }
 
 void main().catch((error) => {

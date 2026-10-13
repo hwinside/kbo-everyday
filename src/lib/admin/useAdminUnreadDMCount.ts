@@ -1,6 +1,6 @@
 "use client";
 
-import { useCallback, useEffect, useState } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
 
 function getAdminPin(): string {
   if (typeof window === "undefined") return "";
@@ -15,16 +15,19 @@ function getAdminPin(): string {
  */
 export function useAdminUnreadDMCount(pollMs = 30000, enabled = true): number {
   const [count, setCount] = useState(0);
+  const requestSerialRef = useRef(0);
 
   const load = useCallback(async () => {
     const pin = getAdminPin();
     if (!pin) return;
+    const requestSerial = ++requestSerialRef.current;
     try {
       const res = await fetch("/api/admin/messages?count=unread", {
         headers: { "x-admin-pin": pin },
       });
       if (res.ok) {
         const json = await res.json();
+        if (requestSerial !== requestSerialRef.current) return;
         setCount(typeof json.unreadTotal === "number" ? json.unreadTotal : 0);
       }
     } catch {
@@ -41,10 +44,12 @@ export function useAdminUnreadDMCount(pollMs = 30000, enabled = true): number {
     };
     document.addEventListener("visibilitychange", onVisible);
     window.addEventListener("focus", load);
+    window.addEventListener("admin-dm-read", load);
     return () => {
       clearInterval(interval);
       document.removeEventListener("visibilitychange", onVisible);
       window.removeEventListener("focus", load);
+      window.removeEventListener("admin-dm-read", load);
     };
   }, [load, pollMs, enabled]);
 

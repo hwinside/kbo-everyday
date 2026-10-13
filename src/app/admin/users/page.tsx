@@ -15,6 +15,7 @@ import {
   Legend,
 } from "recharts";
 import { Loader2, Users, BarChart3 } from "lucide-react";
+import type { GaDauResponse } from "@/lib/admin/ga4-dau";
 
 const TEAM_MAP: Record<number, { name: string; color: string }> = {
   1: { name: "LG", color: "#C60C30" },
@@ -71,35 +72,39 @@ interface UsersResponse {
   dailySignups?: { date: string; count: number }[];
 }
 
-interface GA4DauResponse {
-  daily: { date: string; activeUsers: number; pageViews: number }[];
-  dau: number;
-  wau: number;
-  mau: number;
-}
+const DAU_PERIODS = [
+  { key: "7d", label: "7일" }, { key: "30d", label: "30일" },
+  { key: "90d", label: "90일" }, { key: "180d", label: "180일" },
+  { key: "all", label: "전체(일별)" },
+] as const;
 
 export default function AdminUsersPage() {
   const [loading, setLoading] = useState(true);
   const [usersData, setUsersData] = useState<UsersResponse | null>(null);
-  const [ga4Data, setGa4Data] = useState<GA4DauResponse | null>(null);
+  const [ga4Data, setGa4Data] = useState<GaDauResponse | null>(null);
+  const [period, setPeriod] = useState<typeof DAU_PERIODS[number]["key"]>("30d");
 
   useEffect(() => {
+    let alive = true;
     async function load() {
       try {
         const [users, ga4] = await Promise.all([
           apiFetch<UsersResponse>("/api/admin/users"),
-          apiFetch<GA4DauResponse>("/api/admin/analytics?type=dau").catch(() => null),
+          apiFetch<GaDauResponse>(`/api/admin/analytics?type=daily-active-users&period=${period}`).catch(() => null),
         ]);
-        setUsersData(users);
-        setGa4Data(ga4);
+        if (alive) {
+          setUsersData(users);
+          setGa4Data(ga4);
+        }
       } catch (e) {
         console.error("Failed to load admin users data:", e);
       } finally {
-        setLoading(false);
+        if (alive) setLoading(false);
       }
     }
     load();
-  }, []);
+    return () => { alive = false; };
+  }, [period]);
 
   if (loading) {
     return (
@@ -131,28 +136,16 @@ export default function AdminUsersPage() {
     };
   });
 
-  // Signup vs UV chart data — combine profiles dailySignups + GA4 UV
+  // Join by the full date, not MM/DD (all-history can span multiple years).
+  // Unavailable GA/sign-up dates remain null rather than invented zeroes.
   const ga4Daily = ga4Data?.daily ?? [];
-  const ga4UvMap = new Map(ga4Daily.map((d) => {
-    // GA4 date format: "20260414" → "04/14"
-    return [`${d.date.slice(4, 6)}/${d.date.slice(6)}`, d.activeUsers];
-  }));
-
   const dailySignups = usersData.dailySignups ?? [];
-  const signupVsUv = dailySignups.length > 0
-    ? dailySignups.map((s) => {
-        const label = s.date.slice(5).replace("-", "/");
-        return {
-          date: label,
-          가입자: s.count,
-          활성사용자: ga4UvMap.get(label) ?? 0,
-        };
-      })
-    : ga4Daily.map((d) => ({
-        date: `${d.date.slice(4, 6)}/${d.date.slice(6)}`,
-        가입자: 0,
-        활성사용자: d.activeUsers,
-      }));
+  const signupMap = new Map(dailySignups.map(s => [s.date, s.count]));
+  const signupVsUv = ga4Daily.map(d => ({
+    date: period === "all" ? d.date : d.date.slice(5).replace("-", "/"),
+    가입자: signupMap.get(d.date) ?? null,
+    활성사용자: d.activeUsers,
+  }));
 
   // Recent users with mapped team names
   const recentUsers = usersData.recentUsers.map((u) => ({
@@ -175,18 +168,31 @@ export default function AdminUsersPage() {
 
       {/* Signup vs UV */}
       <div className="glass-card p-5">
-        <h2 className="text-lg font-semibold mb-4">가입자 vs 활성 사용자 추이</h2>
-        {signupVsUv.length > 0 ? (
+        <div className="flex flex-wrap items-center justify-between gap-3 mb-3">
+          <h2 className="text-lg font-semibold">가입자 vs DAU (GA4)</h2>
+          <div className="flex flex-wrap gap-1">
+            {DAU_PERIODS.map(p => (
+              <button key={p.key} onClick={() => { if (period !== p.key) { setLoading(true); setPeriod(p.key); } }} className={`px-3 py-1 rounded-lg text-xs ${period === p.key ? "bg-[#6366F1] text-white" : "bg-white/5 text-[#8E8E93]"}`}>
+                {p.label}
+              </button>
+            ))}
+          </div>
+        </div>
+        <p className="text-xs text-[#8E8E93] mb-4">DAU는 GA4의 일별 활성 사용자입니다. 당일은 제외하며 가입자는 최근 30일만 표시합니다.</p>
+        {ga4Data?.missingDates.length ? <p className="text-xs text-[#FFD60A] mb-3">GA에서 확인되지 않은 날짜는 비워 표시합니다.</p> : null}
+        {!ga4Data ? (
+          <div className="text-sm text-[#FF453A] py-10">GA4 DAU를 불러오지 못했습니다. 0이나 트래픽 수치로 대체하지 않습니다.</div>
+        ) : signupVsUv.length > 0 ? (
           <ResponsiveContainer width="100%" height={280}>
             <LineChart data={signupVsUv}>
               <CartesianGrid strokeDasharray="3 3" stroke="rgba(255,255,255,0.06)" />
-              <XAxis dataKey="date" stroke="#636366" fontSize={12} />
+              <XAxis dataKey="date" stroke="#636366" fontSize={12} minTickGap={28} />
               <YAxis yAxisId="left" stroke="#636366" fontSize={12} />
               <YAxis yAxisId="right" orientation="right" stroke="#636366" fontSize={12} />
               <Tooltip {...tooltipStyle} />
               <Legend />
-              <Line yAxisId="right" type="monotone" dataKey="활성사용자" stroke="#6366F1" strokeWidth={2} dot={false} />
-              <Line yAxisId="left" type="monotone" dataKey="가입자" stroke="#FFD60A" strokeWidth={2} dot={false} />
+              <Line yAxisId="right" type="monotone" dataKey="활성사용자" name="DAU (GA4)" stroke="#6366F1" strokeWidth={2} dot={false} connectNulls={false} />
+              <Line yAxisId="left" type="monotone" dataKey="가입자" stroke="#FFD60A" strokeWidth={2} dot={false} connectNulls={false} />
             </LineChart>
           </ResponsiveContainer>
         ) : (

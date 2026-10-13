@@ -612,11 +612,11 @@ async function main() {
     [{ apiName: "game-detail-dual-source-outage", reason: "timeout" }],
   );
 
-  const retry = await scenario("srId 0 empty → 1 blackhole", "sr-retry-blackhole", "normal", "final");
-  assert.deepEqual(retry.srIds.filter((v) => v === "0" || v === "1"), ["0", "1"]);
+  const retry = await scenario("known srId 0 empty → Naver without unrelated series probe", "sr-retry-blackhole", "normal", "final");
+  assert.deepEqual(retry.srIds, ["0"], "known series must not probe an unrelated series");
   assert.equal(retry.body.status, "final");
   assert.equal(retry.body.lineup?.isToday, true, "srId 재시도 실패해도 Naver preview 폴백");
-  assert.deepEqual(retry.degradationEvents, [{ apiName: "kbo-game-detail", reason: "timeout" }]);
+  assert.deepEqual(retry.degradationEvents, [{ apiName: "kbo-game-detail", reason: "schema-error" }]);
 
   const httpError = await scenario("KBO HTTP 503 + Naver normal", "http-error", "normal", "final");
   assert.equal(httpError.body.status, "final");

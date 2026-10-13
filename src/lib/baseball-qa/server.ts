@@ -1,13 +1,29 @@
+import { loadPostseasonSnapshot } from "@/lib/postseason/snapshot";
+import { loadAppLineups } from "./app-lineup";
+import { buildOfficialContextRequest } from "./rag/official-context-request";
+import { normalizeKey, originalSpellingScope } from "./normalize";
+import type { OriginalSpellingAssessment } from "./correction-term-identity";
+import { renderTeamCorrection } from "./rag/correction";
+import { gameConversationRequest, type GameConversationInput, type GameConversationResult } from "./game-conversation";
+import { getTeamById } from "@/lib/constants/teams";
+import { createCurrentSeasonRecordFetcher } from "@/lib/baseball-qa/stats/current-season-source";
+import { productionAgentFallback } from "./agent/production";
+import { readClassifierObservation } from "./classifier-observation";
 // 야잘알봇 질문 서버 처리 코어. POST /api/baseball-qa(즉시 경로)와
 // /api/cron/baseball-qa-drain(durable 복구 경로)이 같은 처리기를 공유한다.
 // 질문 INSERT와 같은 트랜잭션에서 trigger가 만든 genius_question_jobs 행을
 // claim → (idempotent quota/LLM) 파이프라인 → ready 저장 → 답변 DM → completed 순으로 진행한다.
 import { supabaseAdmin } from "@/lib/supabase/admin";
+import { DEFINITION_REPAIR_TIMEOUT_MS, type StatDefinitionFrame } from "./stats/definition-intent";
+import { previousTurnFromSql, type PreviousTurnRowSql } from "./previous-turn-row";
 import { buildQuestionLogRow } from "@/lib/baseball-qa/log-row";
 import { planQuestionJobReady } from "@/lib/baseball-qa/job-ready-plan";
 import { sendOpsMessageToUser } from "@/lib/cs/send-ops-message";
 import {
   answerQuestion,
+  glossaryCandidatesIn,
+  glossaryTermTypoCandidates,
+  matchGlossary,
   BLOCKED_ANSWER,
   answerTeamIdForResult,
   answerPlayerRoleForTarget,
@@ -30,7 +46,6 @@ import { fetchGamesUserFacingWithMeta } from "@/lib/crawler/games-user-facing";
 import {
   isFollowupPhrase,
   type ContextTurn,
-  type PreviousTurnRow,
 } from "@/lib/baseball-qa/context";
 import {
   BASEBALL_GENIUS_USER_ID,
@@ -50,13 +65,17 @@ import {
 import {
   buildRagLlmRequest,
   RAG_SYSTEM_PROMPT,
-  RAG_CANDIDATE_LIMIT,
   RAG_DOCUMENT_CANDIDATE_LIMIT,
+  RAG_DOCUMENT_MAX_DISTANCE,
   RAG_NEWS_CANDIDATE_LIMIT,
   RAG_NEWS_SYSTEM_PROMPT,
   RAG_OFFICIAL_SYSTEM_PROMPT,
   RAG_TEAM_SYSTEM_PROMPT,
   searchSourcePriorityCandidates,
+  resolveSeasonTarget,
+  RAG_MAX_SEASON_LANES,
+  type SeasonLaneMode,
+  type SeasonTarget,
   type RagDocumentSourceKind,
   type RagEntityCandidate,
   type RagEvidence,
@@ -66,7 +85,7 @@ import {
 import type { RagSourceKind } from "@/lib/baseball-qa/rag/contracts";
 import type { EvidenceProjector } from "@/lib/baseball-qa/rag/retrieve";
 import { createSeasonRecordFetcher } from "@/lib/baseball-qa/stats/fetch-season-record";
-import { createServedRecordFetcher } from "@/lib/baseball-qa/stats/served-record";
+import { createServedRecordFetcher, fetchServedBatterSnapshot } from "@/lib/baseball-qa/stats/served-record";
 import { createCareerRecordFetcher } from "@/lib/baseball-qa/stats/career-series";
 import { createCareerLeaderboardFetcher } from "@/lib/baseball-qa/stats/career-leaderboard";
 import { createCareerMetricLeaderboardFetcher } from "@/lib/baseball-qa/stats/career-metric-leaderboard";
@@ -75,7 +94,7 @@ import { createEventRecordFetcher } from "@/lib/baseball-qa/stats/event-records"
 import eventRecordSnapshot from "@/../data/baseball-qa/kbo-event-records-2026.json";
 import { fetchServedCareerSnapshot } from "@/lib/baseball-qa/stats/served-record";
 import { createSeriesPrizeHtmlFetcher } from "@/lib/baseball-qa/awards/series-prize";
-import { createTeamRecordFetchers } from "@/lib/baseball-qa/stats/team-record";
+import { createTeamRecordFetchers, kstSeasonOf } from "@/lib/baseball-qa/stats/team-record";
 import type { SeasonRecordClient } from "@/lib/baseball-qa/stats/fetch-season-record";
 import { renderTeamFanCopy } from "@/lib/constants/baseball-genius-team-copy";
 import { embedQuery } from "@/lib/baseball-qa/rag/embed";
@@ -120,7 +139,7 @@ const SYSTEM_PROMPT = BASEBALL_QA_SYSTEM_PROMPT;
 export const MAX_DELIVERY_ATTEMPTS = 5;
 /**
  * LLM 시작 fence (삼순 5차 P1): llm_started=true·결과 없음이어도 시작 후 이 창 안에서는
- * winner의 callLlm(15s timeout)이 아직 진행 중일 수 있으므로 loser는 답변 없이 물러난다.
+ * winner의 callLlm(15s) 및 정의 검증 재작성(최대 8s)이 진행 중일 수 있으므로 loser는 답변 없이 물러난다.
  * fence 경과 후에만(winner는 이미 성공 저장 또는 사망) ambiguous fail-closed 복구가 동작한다.
  */
 export const LLM_START_FENCE_MS = 30_000;
@@ -147,18 +166,44 @@ export async function loadGlossary(): Promise<GlossaryEntry[]> {
   return entries;
 }
 
+/** Bounded semantic selector; it returns no generated answer text to the user. */
+export async function callGameConversation(input: GameConversationInput): Promise<GameConversationResult> {
+  if (!GEMINI_API_KEY) throw new Error("GEMINI_API_KEY missing");
+  const res = await fetch(GEMINI_URL, {
+    method: "POST", headers: { "Content-Type": "application/json" },
+    body: JSON.stringify(gameConversationRequest(input)),
+    signal: AbortSignal.timeout(3000),
+  });
+  if (!res.ok) throw new Error(`Game context provider failed: ${res.status}`);
+  const data = await res.json();
+  return {
+    text: data.candidates?.[0]?.content?.parts?.find((part: { text?: string }) => part.text)?.text ?? "",
+    inputTokens: data.usageMetadata?.promptTokenCount ?? null,
+    outputTokens: data.usageMetadata?.candidatesTokenCount ?? null,
+  };
+}
+
+async function boundedGameContext<T>(work: Promise<T>, fallback: T): Promise<T> {
+  let timer: ReturnType<typeof setTimeout> | undefined;
+  try {
+    return await Promise.race([work.catch(() => fallback),
+      new Promise<T>((resolve) => { timer = setTimeout(() => resolve(fallback), 1200); })]);
+  } finally { if (timer) clearTimeout(timer); }
+}
+
 export async function callLlm(
   question: string,
   context?: ContextTurn,
   rosterBlock?: string,
   statIntentMode = false,
+  definition?: StatDefinitionFrame,
 ): Promise<LlmResult> {
   if (!GEMINI_API_KEY) throw new Error("GEMINI_API_KEY missing");
   const res = await fetch(GEMINI_URL, {
     method: "POST",
     headers: { "Content-Type": "application/json" },
-    body: JSON.stringify(buildBaseballQaGeminiRequest(question, SYSTEM_PROMPT, context, rosterBlock, statIntentMode)),
-    signal: AbortSignal.timeout(15000),
+    body: JSON.stringify(buildBaseballQaGeminiRequest(question, SYSTEM_PROMPT, context, rosterBlock, statIntentMode, definition)),
+    signal: AbortSignal.timeout(definition?.repair ? DEFINITION_REPAIR_TIMEOUT_MS : 15000),
   });
   if (!res.ok) throw new Error(`Gemini API failed: ${res.status}`);
   const data = await res.json();
@@ -185,6 +230,10 @@ export async function mapGlossaryDefinition(
 ): Promise<{ term: string | null; inputTokens: number | null; outputTokens: number | null }> {
   if (!GEMINI_API_KEY) throw new Error("GEMINI_API_KEY missing");
   const systemPrompt = GLOSSARY_MAPPER_SYSTEM_PROMPT;
+  const entries = await loadGlossary().catch(() => []);
+  const candidates = candidateTerms.map(term => ({
+    term, aliases: entries.find(entry => entry.term === term)?.aliases ?? [],
+  }));
   const res = await fetch(GEMINI_URL, {
     method: "POST",
     headers: { "Content-Type": "application/json" },
@@ -192,7 +241,7 @@ export async function mapGlossaryDefinition(
       systemInstruction: { parts: [{ text: systemPrompt }] },
       contents: [{
         role: "user",
-        parts: [{ text: `후보 용어: ${JSON.stringify(candidateTerms)}\n질문: ${question}` }],
+        parts: [{ text: JSON.stringify({ question, candidates }) }],
       }],
       generationConfig: {
         temperature: 0,
@@ -218,11 +267,48 @@ export async function mapGlossaryDefinition(
     return { term: null, inputTokens, outputTokens };
   }
   const term = (parsed as { term?: unknown })?.term;
+  const scope = (parsed as { scope?: unknown })?.scope;
   return {
-    term: typeof term === "string" && term.length > 0 ? term : null,
+    term: scope === "baseball" && typeof term === "string" && term.length > 0 ? term : null,
     inputTokens,
     outputTokens,
   };
+}
+
+/** Candidate-blind veto: repair suggestions must never be evidence that the source is invalid.
+ * A failed veto call abstains locally; it must not throw into dictionary fail-open repair. */
+async function assessOriginalSpelling(quote: string): Promise<{
+  status: "valid" | "typo" | "unknown"; inputTokens: number; outputTokens: number;
+}> {
+  let inputTokens = 0;
+  let outputTokens = 0;
+  try {
+    const res = await fetch(GEMINI_URL, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        systemInstruction: { parts: [{ text: [
+          "quote는 원문에서 그대로 추출한 판정 대상이다. 이 구간 자체의 표기 유효성만 판정한다. 교정 후보를 생성하거나 추측하지 않는다.",
+          "원문의 단어 전체가 실제 일반어·야구 용어·고유명으로 독립된 뜻을 가지면 valid다. 다른 용어를 뜻하도록 고치는 것과, 같은 용어의 잘못된 표기를 바로잡는 것을 구분한다.",
+          "같은 전문 용어를 가리키더라도 외래어 음역·된소리·모음·자음의 오기나 음절 누락으로 표준 표기와 다른 경우 typo다. 흔히 보이는 표기이거나 뜻을 알아볼 수 있다는 이유만으로 valid로 보지 않는다. 다만 독립된 개념의 명칭·약칭·관용 표현을 다른 전문 용어로 대체해서는 안 된다. 일부 음절이 일반어인 것은 전체 단어가 유효하다는 근거가 아니다.",
+          "정의 질문인지, 답할 수 있는지는 판정 대상이 아니다. 정상 서술어·반응·생략 후속은 valid다. 실제 쓰이는 말인지 확신이 없으면 unknown이다.",
+          'JSON 하나만 출력: {"status":"valid|typo|unknown"}',
+        ].join("\n") }] },
+        contents: [{ role: "user", parts: [{ text: JSON.stringify({ quote }) }] }],
+        generationConfig: { temperature: 0, maxOutputTokens: 64, responseMimeType: "application/json" },
+      }),
+      signal: AbortSignal.timeout(8000),
+    });
+    if (!res.ok) return { status: "unknown", inputTokens, outputTokens };
+    const data = await res.json();
+    inputTokens = data.usageMetadata?.promptTokenCount ?? 0;
+    outputTokens = data.usageMetadata?.candidatesTokenCount ?? 0;
+    const text = data.candidates?.[0]?.content?.parts?.find((part: { text?: string }) => part.text)?.text ?? "";
+    const status = JSON.parse(text)?.status;
+    return { status: ["valid", "typo", "unknown"].includes(status) ? status : "unknown", inputTokens, outputTokens };
+  } catch {
+    return { status: "unknown", inputTokens, outputTokens };
+  }
 }
 
 /**
@@ -235,37 +321,59 @@ export async function mapGlossaryDefinition(
  */
 export async function normalizeQuestionLlm(
   question: string,
-): Promise<{ text: string | null; inputTokens: number | null; outputTokens: number | null }> {
+  glossary?: GlossaryEntry[],
+): Promise<{ text: string | null; originalSpelling?: OriginalSpellingAssessment; inputTokens: number | null; outputTokens: number | null }> {
   if (!GEMINI_API_KEY) throw new Error("GEMINI_API_KEY missing");
+  // Reuse the pipeline's loaded SSOT. Standalone probes use the same loader;
+  // unavailable evidence must not turn optional normalization into a hard error.
+  const entries = glossary ?? await loadGlossary().catch(() => []);
+  const spellingCandidates = glossaryTermTypoCandidates(question, entries);
+  const repairEntries = spellingCandidates.flatMap(candidate => {
+    const entry = matchGlossary(entries, candidate);
+    return entry ? [entry] : [];
+  });
+  const evidence = [...new Map([
+    ...glossaryCandidatesIn(entries, question), ...repairEntries,
+  ].map(entry => [entry.term, { term: entry.term, aliases: entry.aliases }])).values()];
   const systemPrompt = [
     "너는 KBO 야구 서비스에 들어온 사용자 질문의 표기 교정기다.",
     "질문의 의미는 절대 바꾸지 말고 **표기만** 교정한다: 띄어쓰기, 명백한 오탈자, 붙여 쓴 단어 분리.",
     "다음은 금지다:",
-    "· 단어 추가·삭제·다른 단어로 대체 (표기 교정이 아닌 바꿔쓰기)",
+    "· 단어 추가·삭제·다른 단어로 대체 (표기 교정이 아닌 바꿔쓰기). 생략된 단어나 반복 명사를 보충하지 않는다. 공백만으로 읽을 수 있으면 문자 구성은 그대로 둔다.",
     "· 숫자 변경",
     "· 질문을 답변이나 설명으로 바꾸는 것",
     "· 확신 없는 사람 이름 교정 — 이름은 명백한 오타일 때만 고친다",
     "교정할 것이 없거나 확신이 없으면 null 을 준다 — 잘못 고치는 쪽이 안 고치는 쪽보다 나쁘다.",
-    '반드시 JSON 하나만 출력한다: {"normalized":"교정한 질문"} 또는 {"normalized":null}',
+    "후보를 만들기 전에 원문 자체의 표기가 유효한지 판정한다. 정상 단어·엔티티·반응·생략된 후속 질문은 valid이다. 문맥이 없어 답할 수 없다는 것은 오타가 아니다. 낯선 단어를 야구 용어와 비슷하다는 이유로 typo로 판단하지 않는다. 확실하지 않으면 unknown이다.",
+    "originalSpelling.status=typo는 원문에 명백한 철자 오류가 있을 때만 가능하며 quote에는 그 원문 오류 부분을 정확히 복사한다. valid/unknown이면 quote는 빈 문자열이다. 후보가 유효한 야구 용어라는 사실은 원문이 오타라는 근거가 아니다.",
+    "철자를 바꾸어 알아본 용어와 원문 그대로 유효한 표기를 구분한다. 참고 복원 문장이 여럿이면 원문의 발음·전체 문맥으로 하나가 명백할 때만 제안하고, 애매하면 기권한다. 원문 단어 일부를 삭제해 짧은 다른 용어로 만드는 것은 교정이 아니다.",
+    "참고 사전은 서버의 검수 용어·별칭이다. 원문에 등장하거나 기존 폐쇄집합 복원기가 찾은 참고 자료일 뿐 정답이나 교정 명령이 아니다. 원문 전체와 문장 내 역할이 그 용어를 유일하게 지지하는 경우에만 오타 후보로 쓸 수 있다.",
+    "valid는 원문 표기 자체가 실제 일반어·용어·고유명으로 유효하다는 뜻이다. 의도한 용어를 알아볼 수 있다는 뜻이 아니다. 원문 그대로의 단어에 독립된 뜻이나 이름 근거가 있으면 다른 용어와 가깝더라도 valid다. 뜻을 추정하기 위해 철자를 바꿔야 하고 원문 표기 자체에는 유효한 해석이 없을 때만 typo다. 두 가능성이 있으면 unknown으로 기권한다.",
+    "오타 여부는 단어 전체와 문장 내 역할로 판정한다. 단어 일부가 일반어와 겹친다는 이유만으로 유효한 표기라고 보지 않는다. 정의 요청의 대상이나 단독 용어가 사전 근거의 한 용어로 유일하게 복원되며 다른 자연스러운 전체 해석이 없다면 typo를 허용한다. 완전한 일반어 해석이 실제로 경쟁하면 unknown이다.",
+    "교정 후에도 원문의 질문 기능과 서술어를 보존한다. 일반어의 구어체·축약된 서술어를 비슷한 야구 명사로 바꾸지 않는다. 평가·감상 질문을 용어 정의 질문으로 바꾸거나 서술어를 명사+조사로 바꾸는 후보는 거절한다. 명사 오타에 붙은 잘못된 조사도 고쳐 정의 질문이 성립하게 할 수 있다. 이때 quote는 조사까지 포함해 실제 변경 부분 전체를 인용한다. 후보 문장이 문법적으로 성립하지 않으면 제안하지 않는다.",
+    '반드시 JSON 하나만 출력한다: {"originalSpelling":{"status":"valid|typo|unknown","quote":"원문 오류 부분 또는 빈 문자열"},"normalized":"교정한 질문 또는 null"}',
   ].join("\n");
-  const res = await fetch(GEMINI_URL, {
+  const spellingScope = originalSpellingScope(question);
+  // Scope comes only from the original question, never from repair candidates.
+  // Start both independent reads together: no second model round-trip on the critical path.
+  const [res, independent] = await Promise.all([fetch(GEMINI_URL, {
     method: "POST",
     headers: { "Content-Type": "application/json" },
     body: JSON.stringify({
       systemInstruction: { parts: [{ text: systemPrompt }] },
-      contents: [{ role: "user", parts: [{ text: `질문: ${question}` }] }],
+      contents: [{ role: "user", parts: [{ text: JSON.stringify({ question, glossaryEvidence: evidence, spellingCandidates }) }] }],
       generationConfig: {
         temperature: 0,
-        maxOutputTokens: 128,
+        maxOutputTokens: 256,
         responseMimeType: "application/json",
       },
     }),
     signal: AbortSignal.timeout(8000),
-  });
+  }), assessOriginalSpelling(spellingScope)]);
   if (!res.ok) throw new Error(`Gemini API failed: ${res.status}`);
   const data = await res.json();
-  const inputTokens: number | null = data.usageMetadata?.promptTokenCount ?? null;
-  const outputTokens: number | null = data.usageMetadata?.candidatesTokenCount ?? null;
+  const inputTokens = (data.usageMetadata?.promptTokenCount ?? 0) + independent.inputTokens;
+  const outputTokens = (data.usageMetadata?.candidatesTokenCount ?? 0) + independent.outputTokens;
   const text: string =
     data.candidates?.[0]?.content?.parts?.find((part: { text?: string }) => part.text)?.text ?? "";
   let parsed: unknown;
@@ -276,8 +384,27 @@ export async function normalizeQuestionLlm(
     return { text: null, inputTokens, outputTokens };
   }
   const normalized = (parsed as { normalized?: unknown })?.normalized;
+  const assessment = (parsed as { originalSpelling?: OriginalSpellingAssessment })?.originalSpelling;
+  let originalSpelling = assessment && ["valid", "typo", "unknown"].includes(assessment.status)
+    && typeof assessment.quote === "string" ? {
+      status: assessment.status,
+      quote: assessment.quote,
+    } : undefined;
+  if (originalSpelling?.status === "typo") {
+    // Bind the proposal's exact source quote to the independently checked scope.
+    // Missing/out-of-scope quotes must not borrow a typo verdict from another token.
+    const quoteInScope = originalSpelling.quote.trim().length > 0
+      && spellingScope.includes(originalSpelling.quote);
+    if (!quoteInScope || independent.status !== "typo") {
+      originalSpelling = { status: quoteInScope ? independent.status : "unknown", quote: "" };
+      // Do not leave a lexical candidate available to downstream fallback routes.
+      const surfaceOnly = typeof normalized === "string" && normalizeKey(normalized) === normalizeKey(question);
+      return { text: surfaceOnly ? normalized.trim() : null, originalSpelling, inputTokens, outputTokens };
+    }
+  }
   return {
     text: typeof normalized === "string" && normalized.trim().length > 0 ? normalized.trim() : null,
+    originalSpelling,
     inputTokens,
     outputTokens,
   };
@@ -302,6 +429,7 @@ interface RagServingChunkRow {
  * 768차원 벡터 12개를 \uc automation으로 끌어오면 응답만 무거워진다.
  */
 interface RagOfficialChunkRow {
+  calendar_season?: RagEvidence["calendarSeason"];
   content: string;
   page_title: string;
   canonical_url: string;
@@ -311,6 +439,11 @@ interface RagOfficialChunkRow {
   source_grade: string;
   /** RPC 가 아직 안 돌려줄 수 있으므로 optional. 없으면 sanitizer 가 URL 로 판정한다. */
   source_kind?: string;
+  /**
+   * 질문 임베딩과의 코사인 거리(작을수록 가깝다). RPC 가 임계로 이미 걸렀지만,
+   * 호출자가 **관측**할 수 있어야 임계를 나중에 재보정할 수 있다(2026-08-27 실측 도입).
+   */
+  distance?: number;
 }
 
 /**
@@ -332,11 +465,44 @@ export interface RagSearchRuntime {
      * DB 가 이 벡터 기준으로 정렬한 상위 N 을 돌려주게 하기 위해 시그니처에 박는다.
      */
     queryVector: number[],
+    /**
+     * 시즌 lane 집합. **DB 절단 전에** 목표 시즌 후보를 확보하기 위해 필요하다 —
+     * 앱에서 재정렬하면 목표 청크가 상위 40 밖일 때 복구 불가다(삼순 2026-08-28 P0-①).
+     * 생략하면 종전 단일 조회(전 시즌 대상 상위 N).
+     *
+     * 🔴 lane 팬아웃을 **구현체 안으로** 내린 이유(삼순 2026-08-29 6차 P0-3):
+     *   호출자가 lane 마다 따로 부르면 `PGRST202` fallback 도 lane 마다 따로 돌아
+     *   최악 2×lane×source 호출이 된다. 한 소스의 lane 을 한 번에 받으면 fallback 을
+     *   소스당 1회로 합칠 수 있고, 호출 예산을 여기 한 곳에서 강제할 수 있다.
+     */
+    lanes?: Array<{ mode: SeasonLaneMode; year?: number }>,
   ) => Promise<RagEvidenceCandidate[]>;
 }
 
+/**
+ * 한 소스당 허용하는 최대 RPC 호출 수 — lane 팬아웃 + `PGRST202` fallback 1회.
+ *
+ * 게이트가 이 상수로 호출 증폭을 판정한다(삼순 2026-08-29 6차 P0-3).
+ * 바꾸려면 게이트와 같이 올려야 하므로 "조용한 증폭"이 구조적으로 불가능하다.
+ */
+export const RAG_MAX_RPC_PER_SOURCE = RAG_MAX_SEASON_LANES + 1;
+
 /** 선수(tier2) 후보 정렬 RPC 이름 — 게이트가 이 상수로 production 배선을 결속한다. */
 export const RAG_PLAYER_CHUNK_SEARCH_RPC = "search_baseball_genius_player_chunks" as const;
+
+/**
+ * PostgREST 가 "그 시그니처의 함수를 못 찾았다"고 말하는 코드.
+ *
+ * 🔴 왜 이걸 따로 다루는가 (삼순 2026-08-28 재리뷰 P0-③ "배포 순서도 fail-open"):
+ *   migration 보다 앱이 먼저 뜼면 7인자 오버로드가 아직 없어 `PGRST202` 가 난다.
+ *   그런데 이 경로는 throw 를 상위에서 잡아 **team RAG 를 조용히 양보한다** —
+ *   즉 배포 순서 하나로 구단 서술 경로가 통째로 죽는다(유저는 이유를 모른다).
+ *
+ * 계약: **lane 은 최적화지 전제가 아니다.** 오버로드가 없으면 종전 5인자로 **한 번만**
+ * 내려가 답한다(bounded — 재시도 루프 없음). recall 은 종전 수준으로 떨어지지만
+ * 그것이 지금 리이브에 배포된 상태고, **아무 답도 안 하는 것보다 난다**.
+ */
+const PGRST_FUNCTION_NOT_FOUND = "PGRST202";
 
 /**
  * production RAG 후보 검색 런타임 팩토리.
@@ -350,22 +516,60 @@ export function createProductionRagSearchRuntime(
 ): RagSearchRuntime {
   return {
     embed: embedQuery,
-    fetchBySourceKind: async (candidate, sourceKind, limit, queryVector) => {
+    fetchBySourceKind: async (candidate, sourceKind, limit, queryVector, lanes) => {
       // ⚠️ 여기서 **정렬 없이** `.from(...).limit(40)` 을 쓰면 안 된다 (2026-08-05 production 사고).
       //   문보경 나무위키 chunk 는 133건인데 무순서 40건만 받아오면 '문보물' 이 든 chunk_index 51 이
       //   후보에조차 못 들어와, 앱에서 코사인을 아무리 정확히 계산해도 복구할 수 없다.
       //   그래서 **DB(pgvector)가 질문 벡터 기준으로 정렬한 상위 N** 만 받는다.
       //   최종 근거 4건 선택과 소스 우선순위는 종전대로 앱이 하므로 embedding 도 함께 받는다.
-      // query-guard: bounded -- RPC 가 1..50 으로 clamp 하는 정렬 조회이며 caller 는 RAG_CANDIDATE_LIMIT(40) 을 준다.
-      const { data, error } = await client.rpc(RAG_PLAYER_CHUNK_SEARCH_RPC, {
+      // 🔴 lane 은 **DB 인자**다 (삼순 2026-08-28 P0-①). 앱에서 거르면 이미 잘린 뒤라
+      //   목표 시즌 청크가 상위 40 밖이면 영원히 복구되지 않는다. lane 없이 부르면
+      //   종전 5인자 오버로드가 그대로 돌아 기존 경로(선수·뉴스)는 무영향이다.
+      // ⚠️ 아래 주석은 호출문 **바로 앞**에 있어야 한다 — query-guard 는 직전 4줄만 읽는다.
+      //   이번에 설명 주석을 사이에 끼워 넣었다가 CI 가 unbounded_rpc 로 잡았다.
+      const baseArgs = {
         p_entity_type: candidate.entityType,
         p_entity_id: candidate.entityId,
         p_source_kind: sourceKind,
         p_query_embedding: JSON.stringify(queryVector),
         p_limit: limit,
-      });
-      if (error) throw error;
-      return ((data ?? []) as RagServingChunkRow[]).map((row) => ({
+      };
+      // 🔴 호출 예산 (삼순 2026-08-29 6차 P0-3). lane 이 예산을 넘으면 **잘라서** 부른다 —
+      //   lane 은 최적화라 못 도는 lane 이 있어도 any lane 이 답을 낸다. 예산을 액수로
+      //   둘 수가 없으므로 여기서 구조적으로 강제한다(fallback 몴을 1회 남긴다).
+      const planned = (lanes ?? []).slice(0, RAG_MAX_RPC_PER_SOURCE - 1);
+      let rows: RagServingChunkRow[];
+      if (planned.length === 0) {
+        // query-guard: bounded -- RPC 가 1..50 으로 clamp 하는 정렬 조회이며 caller 는 RAG_CANDIDATE_LIMIT(40) 을 준다.
+        const { data, error } = await client.rpc(RAG_PLAYER_CHUNK_SEARCH_RPC, baseArgs);
+        if (error) throw error;
+        rows = (data ?? []) as RagServingChunkRow[];
+      } else {
+        const results = await Promise.all(planned.map((lane) =>
+          // query-guard: bounded -- RPC 가 1..50 으로 clamp 하는 정렬 조회이며 caller 는 RAG_CANDIDATE_LIMIT(40) 을 준다.
+          client.rpc(RAG_PLAYER_CHUNK_SEARCH_RPC, {
+            ...baseArgs,
+            p_season_mode: lane.mode,
+            p_season_year: lane.year ?? null,
+          })));
+        const failed = results.find((result) => result.error);
+        // 🔴 migration-before-app 이 깨졌을 때의 bounded fallback (삼순 2026-08-28 P0-③).
+        //   lane 오버로드가 아직 없으면 team RAG 가 통째로 사라진다 — 그건 배포 순서라는
+        //   **우리 쪽 사정**을 유저 답변 손실로 전가하는 것이다. lane 없이 다시 부른다.
+        //   ⚠️ 재시도는 **소스당 정확히 1회**다 — lane 마다 따로 재시도하면 오버로드가
+        //   없는 순간 호출이 2배로 튀는다(삼순 6차 P0-3). lane 준 호출의 PGRST202 만
+        //   fallback 하고, fallback 자체의 PGRST202 는 종전 함수조차 없다는 뜻이라 던진다.
+        if (failed && (failed.error as { code?: string } | null)?.code === PGRST_FUNCTION_NOT_FOUND) {
+          // query-guard: bounded -- 같은 RPC 의 종전 5인자 오버로드이며 p_limit 은 동일하게 bounded 다.
+          const { data, error } = await client.rpc(RAG_PLAYER_CHUNK_SEARCH_RPC, baseArgs);
+          if (error) throw error;
+          rows = (data ?? []) as RagServingChunkRow[];
+        } else {
+          if (failed?.error) throw failed.error;
+          rows = results.flatMap((result) => (result.data ?? []) as RagServingChunkRow[]);
+        }
+      }
+      return rows.map((row) => ({
         content: row.content,
         pageTitle: row.page_title,
         canonicalUrl: row.canonical_url,
@@ -385,6 +589,51 @@ export function createProductionRagSearchRuntime(
 
 const productionRagSearchRuntime: RagSearchRuntime = createProductionRagSearchRuntime(supabaseAdmin);
 
+/**
+ * team/player RAG 검색 **전체**에 걸리는 절대 deadline (삼순 2026-08-30 7차 P0-3, A안).
+ *
+ * 🔴 왜 개별 타임아웃으로 부족한가:
+ *   embed 는 `AbortSignal` 로 10s 를 걸지만 RPC(`client.rpc`)에는 abort 신호가 없다.
+ *   `Promise.all(planned.map(client.rpc))` 에서 **하나만 영원히 settle 되지 않으면**
+ *   검색 전체가 무기한 정지하고, 유저는 응답 자체를 못 받는다. 병렬성 측정(P3f)은
+ *   "응답이 오기만 하면" 통과하므로 never-settle 을 원리적으로 못 본다.
+ *
+ * 계약: 초과하면 **throw** 한다. 호출자(`pipeline.ts` team/player RAG)는 검색 실패를
+ * catch 해 기존 generic 경로로 양보하므로, 유저는 늦은 답 대신 **다른 답**을 받는다.
+ * 부분 근거로 답하지 않는다 — 근거 일부만으로 답하면 "왜 그 얘기가 빠졌나"가 된다(B안 기각).
+ *
+ * ⚠️ 이 값을 늘리려면 그만큼 유저가 빈 화면을 보는 시간이 늘어난다. 게이트가 상한을
+ *   assertion 으로 박아둔다(P4a) — 조용히 키우면 RED 다.
+ */
+export const RAG_SEARCH_DEADLINE_MS = 8_000;
+
+/** 게이트가 상한을 판정하는 기준. 이 위로 올리는 변경은 게이트를 통과하지 못한다. */
+export const RAG_SEARCH_DEADLINE_MAX_MS = 15_000;
+
+/**
+ * 절대 deadline 래퍼. 초과 시 reject 하고, 정상 종료 시 타이머를 반드시 해제한다.
+ *
+ * ⚠️ `finally` 의 `clearTimeout` 이 없으면 요청이 끝나도 타이머가 이벤트 루프를 붙잡아
+ *   서버리스 인스턴스가 늦게 정리된다. 성공·실패·타임아웃 세 경로 모두에서 해제된다.
+ */
+async function withAbsoluteDeadline<T>(
+  work: () => Promise<T>,
+  deadlineMs: number,
+  label: string,
+): Promise<T> {
+  let timer: ReturnType<typeof setTimeout> | undefined;
+  try {
+    return await Promise.race([
+      work(),
+      new Promise<never>((_resolve, reject) => {
+        timer = setTimeout(() => reject(new Error(`${label}_deadline_exceeded`)), deadlineMs);
+      }),
+    ]);
+  } finally {
+    if (timer !== undefined) clearTimeout(timer);
+  }
+}
+
 export async function searchRag(
   candidate: RagEntityCandidate,
   question: string,
@@ -397,20 +646,64 @@ export async function searchRag(
    */
   project?: EvidenceProjector,
   runtime: RagSearchRuntime = productionRagSearchRuntime,
+  /**
+   * 현재 시즌(KST 연도) 주입 seam. 게이트가 경계값을 넣을 수 있어야 하므로 인자다 —
+   * 함수 안에서 `new Date()` 를 부르면 "작년에도 같은 판정이 나오는가"를 못 태운다.
+   */
+  now: () => number = Date.now,
+  /**
+   * 절대 deadline 주입 seam. 게이트가 짧은 값을 넣어 **초과 경로를 실제로 실행**할 수
+   * 있어야 하므로 인자다 — 안에서 상수를 직접 읽으면 never-settle 축을 태울 수 없다.
+   */
+  deadlineMs: number = RAG_SEARCH_DEADLINE_MS,
+): Promise<RagEvidence[]> {
+  // 🔴 절대 deadline 은 embed 까지 **함께** 감싼다 (삼순 7차 P0-3, A안).
+  //   never-settle 은 RPC 뿐 아니라 임베딩 fetch 에서도 난다 — embed 밖에 두면
+  //   "타임아웃이 있다"는 말만 있고 실제로는 안 걸리는 구간이 남는다.
+  return withAbsoluteDeadline(
+    () => searchRagInner(candidate, question, project, runtime, now),
+    deadlineMs,
+    "rag_search",
+  );
+}
+
+/** deadline 안에서 도는 실제 검색 본문. 계약은 `searchRag` 주석 참조. */
+async function searchRagInner(
+  candidate: RagEntityCandidate,
+  question: string,
+  project: EvidenceProjector | undefined,
+  runtime: RagSearchRuntime,
+  now: () => number,
 ): Promise<RagEvidence[]> {
   const embedded = await runtime.embed(question);
   if (!embedded.ok) return [];
   // query-guard: bounded -- entity + source_kind 폐쇄집합 각각 최대 40행. entity 전체를
   // 먼저 limit(40)하면 Namu 41건 뒤의 Wikipedia가 DB에서 소실된다.
   // 각 source_kind 안에서도 **질문 벡터 기준 상위 40건**이어야 한다(무순서 40건 금지).
+  const currentSeason = kstSeasonOf(now());
+  // 🔴 시즌 축은 **구단 경로에만** 켠다 (삼순 2026-08-28 P0-②).
+  //   선수 문서는 `문보경/2025년` 처럼 시즌으로 쪼개져 있지 않고, 별명·프로필·학교 같은
+  //   시점 무관 서술이 대부분이라 시즌 가중이 득보다 실이 크다. 구단 문서만 연도로
+  //   쪼개져 있다는 것이 이 축의 전제이므로 전제가 성립하는 곳에만 적용한다.
+  const seasonAware = candidate.entityType === "team";
+  const seasonTarget: SeasonTarget = seasonAware
+    ? resolveSeasonTarget(question, currentSeason)
+    : { kind: "none" };
+
   return searchSourcePriorityCandidates(
-    (sourceKind) =>
-      runtime.fetchBySourceKind(candidate, sourceKind, RAG_CANDIDATE_LIMIT, embedded.vector),
+    (sourceKind, limit, vector, lanes) =>
+      runtime.fetchBySourceKind(candidate, sourceKind, limit, vector, lanes),
     embedded.vector,
     // 순서 강제가 아니라 **질문 의도별 가중**이다(삼순 P0).
     // 별명·여담은 나무위키를, 소속·프로필은 위키피디아를 살짝 올릴 뿐 반대편을 탈락시키지 않는다.
     tier2WeightForQuestion(question),
     project,
+    // 🔴 시즌 인식 (2026-08-28). 나무위키 구단 문서는 `구단명/연도[/월]` 로 쪼개져 있어
+    //   순수 코사인으로는 작년 문서가 올해를 이긴다 — `롯데 가을야구 갈 수 있을까?` 의
+    //   top1 이 `롯데 자이언츠/2025년/9월`("진출 가능성 거의 사라진 상황")이었다.
+    //   환각이 아니라 과거 문서를 정확히 읽은 것이므로, 고칠 지점은 생성이 아니라 검색이다.
+    seasonAware ? currentSeason : undefined,
+    seasonTarget,
   );
 }
 
@@ -424,8 +717,8 @@ export async function callRagLlm(
 }
 
 /** 공식 간행물(tier1) 근거 전용 호출 — 프롬프트만 다르고 경계는 동일하다. */
-export async function callOfficialRagLlm(question: string, evidence: RagEvidence[]): Promise<LlmResult> {
-  return callRagLlmWithPrompt(question, evidence, RAG_OFFICIAL_SYSTEM_PROMPT);
+export async function callOfficialRagLlm(question: string, evidence: RagEvidence[], extras?: RagLlmExtras): Promise<LlmResult> {
+  return callRagLlmWithPrompt(question, evidence, RAG_OFFICIAL_SYSTEM_PROMPT, extras);
 }
 
 /**
@@ -439,7 +732,8 @@ export async function callTeamRagLlm(
   evidence: RagEvidence[],
   extras?: RagLlmExtras,
 ): Promise<LlmResult> {
-  return callRagLlmWithPrompt(question, evidence, RAG_TEAM_SYSTEM_PROMPT, extras);
+  const result = await callRagLlmWithPrompt(question, evidence, RAG_TEAM_SYSTEM_PROMPT, extras);
+  return { ...result, text: renderTeamCorrection(result.text, evidence, extras?.context) };
 }
 
 /**
@@ -480,6 +774,33 @@ async function fetchTeamEntry(
   return { snapshotDate, players: rows.map((row) => row.player_name as string) };
 }
 
+/**
+ * production 요청 본문 조립 — `callRagLlmWithPrompt` 가 Gemini 에 실제로 보내는 바로 그 payload.
+ *
+ * 🔴 왜 별도 export 함수인가 (삼순 2026-08-28 4차 NO-GO ① — 실재했던 결함):
+ *   종전에는 fetch 안에서 `{ context, rosterBlock }` 만 손으로 재조립했다. 그래서
+ *   pipeline 이 `liveTeamBlock`·`evidenceTime` 을 넘겨도 **여기서 조용히 버려졌고**,
+ *   이 PR 은 프로덕션에서 아무 일도 하지 않고 있었다. 게이트는 mock extras 캐처와
+ *   builder 직접 호출을 **따로** 태워서 GREEN 이었다(전형적인 false-green).
+ *
+ *   근본 원인은 "extras 를 손으로 옮기는 지점"이 존재한다는 것이다 — 필드를 추가할 때마다
+ *   여기를 같이 고쳐야 하고, 안 고쳐도 타입이 통과한다. 그래서 **재조립을 없앨다** —
+ *   extras 를 그대로 넘기면 필드 추가 시 자동으로 하류까지 간다(구조적으로 누락 불가).
+ *   그리고 게이트가 **배포되는 바로 이 함수**를 태워 payload 를 검사할 수 있게 export 한다.
+ */
+export function buildProductionRagRequest(
+  question: string,
+  evidence: RagEvidence[],
+  systemPrompt?: string,
+  extras?: RagLlmExtras,
+): ReturnType<typeof buildRagLlmRequest> {
+  // ⚠️ 여기서 필드를 골라 적지 않는다. `extras` 를 통째로 넘긴다 — 그게 계약이다.
+  if (systemPrompt === RAG_OFFICIAL_SYSTEM_PROMPT) {
+    return buildOfficialContextRequest(question, evidence, extras);
+  }
+  return buildRagLlmRequest(question, evidence, systemPrompt ?? RAG_SYSTEM_PROMPT, extras ?? {});
+}
+
 async function callRagLlmWithPrompt(
   question: string,
   evidence: RagEvidence[],
@@ -491,14 +812,9 @@ async function callRagLlmWithPrompt(
     method: "POST",
     headers: { "Content-Type": "application/json" },
     body: JSON.stringify(
-      buildRagLlmRequest(
-        question,
-        evidence,
-        systemPrompt ?? RAG_SYSTEM_PROMPT,
-        { context: extras?.context, rosterBlock: extras?.rosterBlock },
-      ),
+      buildProductionRagRequest(question, evidence, systemPrompt, extras),
     ),
-    signal: AbortSignal.timeout(15000),
+    signal: AbortSignal.timeout(extras?.definition?.repair ? DEFINITION_REPAIR_TIMEOUT_MS : 15000),
   });
   if (!res.ok) throw new Error(`Gemini API failed: ${res.status}`);
   const data = await res.json();
@@ -529,9 +845,29 @@ export async function searchOfficialRag(question: string): Promise<RagEvidence[]
   const { data, error } = await supabaseAdmin.rpc("search_baseball_genius_official_chunks", {
     p_query_embedding: JSON.stringify(embedded.vector),
     p_limit: RAG_DOCUMENT_CANDIDATE_LIMIT,
+    // 🔴 **유사도 임계**를 넘겨준다 (2026-08-27 실측 도입).
+    //   임계가 없으면 RPC 는 무슨 질문이든 상한만큼 돌려준다 — "오늘 점심 뭐 먹지?" 도
+    //   12건을 받았다. 개수로는 근거 유무를 판정할 수 없고, RAG-first 라우팅은
+    //   그 판정 위에 서 있으므로 임계가 없으면 전 질문이 환각 통로가 된다.
+    //   값은 앱 상수 SSOT 이며, RPC 가 0.60 상한을 다시 강제한다(무력화 방지).
+    p_max_distance: RAG_DOCUMENT_MAX_DISTANCE,
   });
-  if (error) throw error;
+  // 🔴 **배포 순서 방어** (2026-08-27 프로덕션 실측으로 확인한 실제 위험).
+  //   이 PR 은 RPC 시그니처를 바꾼다(`p_max_distance` 추가). 앱이 migration 보다 **먼저**
+  //   배포되면 PostgREST 가 함수를 못 찾아 `PGRST202` 404 를 낸다 — 실측:
+  //     구 시그니처 → HTTP 200 / 신 시그니처 → HTTP 404 PGRST202
+  //   여기서 throw 하면 공식 RAG 경로가 통째로 예외가 되어 유저에게 오류가 나간다.
+  //
+  //   ⚠️ 구 시그니처로 **재시도하지 않는다.** 구 RPC 는 임계가 없어 무슨 질문이든 상한만큼
+  //     돌려주므로, 재시도는 "근거 없음을 근거 있음으로 만드는" 바로 그 결함으로 되돌아간다.
+  //     대신 **근거 0건으로 접는다** — 라우팅은 종전 경로로 그대로 흘러 오늘과 같은 동작이
+  //     되고(기능 손실 없음), migration 이 적용되는 순간 자동으로 새 동작이 켜진다.
+  if (error) {
+    if (error.code === "PGRST202") return [];
+    throw error;
+  }
   return ((data ?? []) as RagOfficialChunkRow[]).map((row) => ({
+    calendarSeason: row.calendar_season ?? null,
     content: row.content,
     pageTitle: row.page_title,
     canonicalUrl: row.canonical_url,
@@ -543,6 +879,13 @@ export async function searchOfficialRag(question: string): Promise<RagEvidence[]
     // 공식 문서는 나무위키가 아니므로 정제 대상이 아니다. RPC 가 값을 주면 그대로 쓰고,
     // 안 주면 `kbo_ebook` 으로 고정한다 — 이 RPC 는 공식 e북만 반환하는 경로다.
     sourceKind: (row.source_kind as RagSourceKind | undefined) ?? "kbo_ebook",
+    // 🔴 거리를 호출자까지 실어 올린다 (삼순 2026-08-27 "distance 가 RagEvidence/로그로 전달되지
+    //   않아 72시간 재보정 근거가 약하다"). 임계를 값으로 두면서 그 값이 실제로 어떤
+    //   분포를 자르고 있는지를 관측 안 하면, 재보정은 영원히 "감"으로 한다.
+    //   ⚠️ **부재와 0 을 섞지 않는다** — RPC 가 값을 안 주면 undefined 로 둔다.
+    //     소유권 판정이 이 값을 쓰는데, 미제공을 0 으로 응급처리하면 "가장 가까움"으로
+    //     읽혀 migration 이전 배포에서 소유권이 통째로 뒤집힌다.
+    distance: typeof row.distance === "number" ? row.distance : undefined,
   }));
 }
 
@@ -637,15 +980,6 @@ export function newsRagEnabled(): boolean {
   return !["1", "true", "yes", "on"].includes(raw);
 }
 
-/** baseball_genius_previous_turn RPC 반환 행 (snake_case SQL 시그니처). */
-interface PreviousTurnRowSql {
-  question: string | null;
-  answer: string | null;
-  job_source: string | null;
-  answered_at: string | null;
-  current_created_at: string | null;
-}
-
 /**
  * picker 선택을 job 행에 고정하거나, 입력이 없으면 이미 고정된 값을 읽어온다.
  *
@@ -736,6 +1070,30 @@ export function makeDeps(
     // 로스터가 끊기는 변종을 RED 로 잡는다(삼순 8차 P0-2).
     loadPlayers: loadRosterPlayers,
     callLlm,
+    callGameConversation,
+    loadGameLineups: loadAppLineups,
+    loadPostseason: loadPostseasonSnapshot,
+    loadGameConversation: async (date) => {
+      const tomorrowDate = new Date(Date.parse(`${date}T00:00:00Z`) + 86_400_000).toISOString().slice(0, 10);
+      const [games, tomorrowGames, standings, favoriteTeam] = await Promise.all([
+        boundedGameContext<GameConversationInput["games"]>(fetchTodayStarters(date.replaceAll("-", "")), null),
+        boundedGameContext<GameConversationInput["games"]>(fetchTodayStarters(tomorrowDate.replaceAll("-", "")), null),
+        boundedGameContext(createTeamRecordFetchers().fetchStandings(), null),
+        boundedGameContext<string | null>((async () => {
+          if (!signatureUserId) return null;
+          // query-guard: bounded -- own profile by primary key, used only as context.
+          const { data, error } = await supabaseAdmin.from("profiles").select("team_id")
+            .eq("id", signatureUserId).maybeSingle();
+          if (error) throw error;
+          return data?.team_id == null ? null : getTeamById(Number(data.team_id))?.name ?? null;
+        })(), null),
+      ]);
+      // Same app adapters preserve starter provenance, schedule dates and
+      // upstream standings freshness. Never relabel retrieval time as freshness.
+      return { favoriteTeam, games, appFacts: {
+        tomorrow: { date: tomorrowDate, games: tomorrowGames }, standings,
+      } };
+    },
     // C 질문 정규화 (2026-08-11): 사전 exact 매칭이 잉여어로 놓친 정의 질문을
     // 폐쇄집합 후보 + LLM 의도판정으로 사전 답변에 결속한다. 후보 밖 반환은 pipeline 이 버린다.
     mapGlossaryDefinition,
@@ -761,6 +1119,7 @@ export function makeDeps(
     // `genius_news_articles` 2,438행 · embedding 2,438/2,438 · 서빙뷰 2,438건 · 커버리지 140/140칸 ok.
     // 적재만 되고 조회 배선이 없으면 근거는 사장된다(#1110 구단 RAG 에서 이미 겪은 사고).
     enableNewsRag: newsRagEnabled(),
+    agentFallback: productionAgentFallback,
     searchNewsRag,
     callNewsRagLlm,
     pickedPlayerKboId: pickedPlayerKboId ?? null,
@@ -780,6 +1139,8 @@ export function makeDeps(
      */
     // 인라인 lambda 대신 seam factory를 쓴다 — 테스트가 이 같은 함수를 그대로 실행해
     // table/kboId/row 전달을 actual 검증한다(정규식만 보는 false-green 제거, 삼순 3차 P0-3).
+    // Request-scoped app snapshot takes precedence over legacy DB/served dependencies.
+    fetchCurrentSeasonRecord: createCurrentSeasonRecordFetcher(),
     fetchSeasonRecord: createSeasonRecordFetcher(
       supabaseAdmin as unknown as SeasonRecordClient,
     ),
@@ -790,6 +1151,7 @@ export function makeDeps(
      * 여기도 인라인 lambda 대신 seam factory 를 쓴다(게이트가 실제 배포 함수를 실행).
      */
     fetchServedRecord: createServedRecordFetcher(),
+    fetchBatterRanking: fetchServedBatterSnapshot,
     /**
      * 연도별·통산·과거 시즌 — KBO 공식 선수 상세 `Total.aspx` (2026-08-10 캐처:
      * `최형우 연도별 타율 추이`가 올해 단일값으로 오답). 공식 구조화 테이블 조회라
@@ -905,18 +1267,16 @@ export function makeDeps(
     // spec §4.1 B1·B2: 바로 직전 user turn 1행만 가져온다 (과거 폴백 없음).
     loadPreviousTurn: async () => {
       // query-guard: bounded -- 직전 turn RPC는 messageId 기준 최대 한 행만 반환한다.
-      const { data, error } = await supabaseAdmin
-        .rpc("baseball_genius_previous_turn", { p_message_id: messageId });
-      if (error) throw error;
-      const row = (data as PreviousTurnRowSql[] | null)?.[0];
-      if (!row) return null;
-      return {
-        question: row.question,
-        answer: row.answer,
-        jobSource: row.job_source,
-        answeredAt: row.answered_at,
-        currentCreatedAt: row.current_created_at,
-      } satisfies PreviousTurnRow;
+      let result = await supabaseAdmin
+        .rpc("baseball_genius_previous_turn_v2", { p_message_id: messageId });
+      // Additive deployment/rollback compatibility only. Other DB failures keep
+      // the existing no-context behavior; never broaden the previous-turn query.
+      if (result.error?.code === "PGRST202" || result.error?.code === "42883") {
+        // query-guard: bounded -- v1 fallback도 동일 messageId의 직전 user turn 최대 1행만 반환한다.
+        result = await supabaseAdmin.rpc("baseball_genius_previous_turn", { p_message_id: messageId });
+      }
+      if (result.error) throw result.error;
+      return previousTurnFromSql((result.data as PreviousTurnRowSql[] | null)?.[0]);
     },
     setCache: async (questionNorm, answer) => {
       const { error } = await supabaseAdmin
@@ -941,7 +1301,7 @@ export function makeDeps(
     getLlmState: async () => {
       const { data, error } = await supabaseAdmin
         .from("genius_question_jobs")
-        .select("llm_started, llm_started_at, llm_text, llm_input_tokens, llm_output_tokens")
+        .select("llm_started, llm_started_at, llm_text, llm_input_tokens, llm_output_tokens, classifier_observation")
         .eq("message_id", messageId)
         .maybeSingle();
       if (error) throw error;
@@ -949,6 +1309,7 @@ export function makeDeps(
       const result = data?.llm_text
         ? {
             text: data.llm_text as string,
+            classifierObservation: readClassifierObservation(data.classifier_observation),
             inputTokens: data.llm_input_tokens as number | null,
             outputTokens: data.llm_output_tokens as number | null,
           }
@@ -984,6 +1345,7 @@ export function makeDeps(
         .from("genius_question_jobs")
         .update({
           llm_text: result.text,
+          classifier_observation: readClassifierObservation(result.classifierObservation),
           llm_input_tokens: result.inputTokens,
           llm_output_tokens: result.outputTokens,
           updated_at: new Date().toISOString(),

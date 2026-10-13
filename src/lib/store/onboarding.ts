@@ -33,6 +33,12 @@ export function setOnboardingStatus(status: OnboardingStatus): void {
   localStorage.setItem(ONBOARDING_KEY, status);
 }
 
+/** 온보딩 상태 제거 (계정 전환·로그아웃 시 공식 clear). guest_id는 유지. */
+export function clearOnboardingStatus(): void {
+  if (typeof window === "undefined") return;
+  localStorage.removeItem(ONBOARDING_KEY);
+}
+
 export function isOnboardingDone(): boolean {
   const status = getOnboardingStatus();
   return status === "completed" || status === "skipped";

@@ -5,6 +5,8 @@ import { Play } from "lucide-react";
 import Link from "next/link";
 import { handleExternalAnchorClick } from "@/lib/open-external";
 import { getTeamById } from "@/lib/constants/teams";
+import GameReviewSection from "./GameReviewSection";
+import { GAME_REVIEWS_ENABLED } from "@/lib/game-reviews/feature";
 
 interface InterviewPlayer {
   name: string;
@@ -27,7 +29,16 @@ interface InterviewResponse {
   collecting?: boolean;
 }
 
-export default function PostgameInterviewSection({
+// Preserve the existing page's post-game slot, without changing live polling
+// orchestration. Reviews must remain visible even when the interview is absent.
+export default function PostgameInterviewSection(props: { gameId: string; enabled: boolean }) {
+  return <>
+    {GAME_REVIEWS_ENABLED && props.enabled && <GameReviewSection key={props.gameId} gameId={props.gameId} />}
+    <PostgameInterviewContent {...props} />
+  </>;
+}
+
+function PostgameInterviewContent({
   gameId,
   enabled,
 }: {

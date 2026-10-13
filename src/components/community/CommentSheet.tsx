@@ -1,6 +1,6 @@
 "use client";
 
-import { useState, useEffect, useRef, useCallback } from "react";
+import { useState, useEffect, useRef, useCallback, type ReactNode } from "react";
 import { createPortal } from "react-dom";
 import { motion, AnimatePresence } from "framer-motion";
 import { Send, X, MoreHorizontal, Check, Heart, CornerDownRight, ImagePlay, ImagePlus, Loader2, Flag } from "lucide-react";
@@ -10,7 +10,8 @@ import LoginSheet from "@/components/auth/LoginSheet";
 import { supabase } from "@/lib/supabase/client";
 import type { Comment } from "@/lib/supabase/usePosts";
 import { getTeamById, getTeamBgColor } from "@/lib/constants/teams";
-import GifPicker from "@/components/community/GifPicker";
+import dynamic from "next/dynamic";
+import EmojiSuggestions from "@/components/community/EmojiSuggestions";
 import CommentImageLightbox from "@/components/community/CommentImageLightbox";
 import { isImageComment, prepareCommentImageForUpload } from "@/lib/community/comment-media";
 import { normalizeForFloodKey } from "@/lib/utils/normalize-message";
@@ -18,7 +19,22 @@ import ReportSheet from "@/components/community/ReportSheet";
 import CommunityAuthorHeader from "@/components/community/CommunityAuthorHeader";
 import CommunityCommentRow from "@/components/community/CommunityCommentRow";
 
+/** Alternate text-comment backend; presentation/keyboard behavior stays shared. */
+export interface CommentSheetSource {
+  load: (before?: number) => Promise<{ rows: Comment[]; next: number | null }>;
+  create: (content: string) => Promise<void>;
+  update: (id: number, content: string) => Promise<void>;
+  remove: (id: number) => Promise<void>;
+  report: (id: number) => void;
+  validate: (content: string) => void;
+}
+
+const GifPicker = dynamic(() => import("@/components/community/GifPicker"), { ssr: false });
+
 interface CommentSheetProps {
+  source?: CommentSheetSource;
+  context?: ReactNode;
+  onNavigate?: () => void;
   isOpen: boolean;
   onClose: () => void;
   postId: number | null;
@@ -73,7 +89,7 @@ function buildCommentTree(comments: Comment[]): Comment[] {
   return roots;
 }
 
-export default function CommentSheet({ isOpen, onClose, postId, teamId, onCommentAdded, onCommentDeleted }: CommentSheetProps) {
+export default function CommentSheet({ isOpen, onClose, postId, teamId, onCommentAdded, onCommentDeleted, source, context, onNavigate }: CommentSheetProps) {
   const [input, setInput] = useState("");
   const [submitting, setSubmitting] = useState(false);
   const [comments, setComments] = useState<Comment[]>([]);
@@ -114,12 +130,46 @@ export default function CommentSheet({ isOpen, onClose, postId, teamId, onCommen
   const [kbInset, setKbInset] = useState(0);
   const [vvHeight, setVvHeight] = useState<number | null>(null);
   const { user, profile } = useAuth();
-  const canModerateComments = profile?.is_operator === true;
+  const canModerateComments = !source && profile?.is_operator === true;
+  const [loadError, setLoadError] = useState("");
+  const [nextPage, setNextPage] = useState<number | null>(null);
+  const [loadingMore, setLoadingMore] = useState(false);
+  const sourceRequest = useRef(0);
+  const activeSource = useRef(source); activeSource.current = source;
+  const loadSource = useCallback(async (before?: number) => {
+    if (!source) return;
+    const sequence = ++sourceRequest.current;
+    if (before) setLoadingMore(true); else setLoading(true);
+    setLoadError("");
+    try {
+      const page = await source.load(before);
+      if (sequence !== sourceRequest.current) return;
+      setComments(previous => before
+        ? [...previous, ...page.rows].filter((row, index, all) => all.findIndex(item => item.id === row.id) === index)
+        : page.rows);
+      setNextPage(page.next);
+    } catch (error) {
+      if (sequence !== sourceRequest.current) return;
+      setLoadError(error instanceof Error ? error.message : "댓글을 불러오지 못했어요");
+      // Never retain a parent/author that may have become hidden or blocked.
+      setComments([]); setNextPage(null);
+    } finally {
+      if (sequence === sourceRequest.current) { setLoading(false); setLoadingMore(false); }
+    }
+  }, [source]);
+  useEffect(() => {
+    if (!source) return;
+    setComments([]); setNextPage(null);
+    void loadSource();
+    // Sequence counter, not a DOM ref: invalidate pending responses on teardown.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+    return () => { sourceRequest.current++; };
+  }, [source, loadSource]);
   const shouldRender = isOpen && postId !== null;
 
   // Fetch comments + liked_by_me
   useEffect(() => {
-    if (!postId) return;
+    if (!postId || source) return;
     setLoading(true);
     setComments([]);
 
@@ -155,7 +205,7 @@ export default function CommentSheet({ isOpen, onClose, postId, teamId, onCommen
       }
       setLoading(false);
     })();
-  }, [postId, user]);
+  }, [postId, user, source]);
 
   // Lock body scroll when sheet is open
   useEffect(() => {
@@ -232,7 +282,7 @@ export default function CommentSheet({ isOpen, onClose, postId, teamId, onCommen
 
   // 시트가 (b)/(c)로 높이가 바뀐 직후, 목록이 바닥 근처면 자동으로 맨 아래로(최신 댓글) 스냅.
   useEffect(() => {
-    if (!shouldRender) return;
+    if (!shouldRender || source) return;
     const el = listRef.current;
     if (!el) return;
     const nearBottom = el.scrollHeight - el.scrollTop - el.clientHeight < 120;
@@ -241,10 +291,11 @@ export default function CommentSheet({ isOpen, onClose, postId, teamId, onCommen
       el.scrollTop = el.scrollHeight;
     });
     return () => cancelAnimationFrame(id);
-  }, [shouldRender, expanded, comments.length]);
+  }, [shouldRender, expanded, comments.length, source]);
 
   // 댓글 목록 DB 재조회
   const refetchComments = useCallback(async (pid: number) => {
+    if (source) { await loadSource(); return; }
     const { data } = await supabase
       .from("comments")
       .select("*, profiles!comments_author_id_fkey(nickname, team_id, grade, avatar_url)")
@@ -274,11 +325,25 @@ export default function CommentSheet({ isOpen, onClose, postId, teamId, onCommen
         }))
       );
     }
-  }, [user]);
+  }, [user, source, loadSource]);
 
   const handleSubmit = useCallback(async () => {
     if (!input.trim() || !postId || submitting || uploadingImage || cooldown) return;
+    if (!user) { setShowLogin(true); return; }
     const trimmed = input.trim();
+    if (source) {
+      setSubmitting(true);
+      try {
+        source.validate(trimmed);
+        await source.create(trimmed);
+        if (activeSource.current !== source) return;
+        setInput("");
+        void loadSource();
+      } catch (error) {
+        if (activeSource.current === source) alert(error instanceof Error ? error.message : "댓글 저장에 실패했어요");
+      } finally { setSubmitting(false); }
+      return;
+    }
     const now = Date.now();
 
     // 10초 쿨다운
@@ -344,7 +409,7 @@ export default function CommentSheet({ isOpen, onClose, postId, teamId, onCommen
     } finally {
       setSubmitting(false);
     }
-  }, [input, postId, submitting, uploadingImage, cooldown, user, onCommentAdded, profile, refetchComments, replyTo]);
+  }, [input, postId, submitting, uploadingImage, cooldown, user, onCommentAdded, profile, refetchComments, replyTo, source, loadSource]);
 
   // GIF·이미지 공용 도배 방지 가드. 통과 시 true(쿨다운 마커 소비), 차단 시 false.
   const startMediaCooldown = useCallback((marker: string, repeatReason: string) => {
@@ -485,7 +550,8 @@ export default function CommentSheet({ isOpen, onClose, postId, teamId, onCommen
 
     setSavingEdit(true);
     try {
-      await updateComment(editingId, trimmed);
+      if (source) { source.validate(trimmed); await source.update(editingId, trimmed); }
+      else await updateComment(editingId, trimmed);
       setComments((prev) =>
         prev.map((c) =>
           c.id === editingId
@@ -501,21 +567,22 @@ export default function CommentSheet({ isOpen, onClose, postId, teamId, onCommen
     } finally {
       setSavingEdit(false);
     }
-  }, [editingId, editInput, savingEdit, postId, refetchComments]);
+  }, [editingId, editInput, savingEdit, postId, refetchComments, source]);
 
   const handleDelete = useCallback(async (commentId: number) => {
     setMenuOpenId(null);
     if (!confirm("이 댓글을 삭제할까요?")) return;
 
     try {
-      await deleteComment(commentId, { canDeleteAny: canModerateComments });
+      if (source) await source.remove(commentId);
+      else await deleteComment(commentId, { canDeleteAny: canModerateComments });
       const removedCount = comments.filter((c) => c.id === commentId || c.parent_id === commentId).length;
       setComments((prev) => prev.filter((c) => c.id !== commentId && c.parent_id !== commentId));
       if (postId) onCommentDeleted?.(postId, Math.max(1, removedCount));
     } catch {
       alert("댓글 삭제에 실패했어요");
     }
-  }, [postId, onCommentDeleted, canModerateComments, comments]);
+  }, [postId, onCommentDeleted, canModerateComments, comments, source]);
 
   const handleLike = useCallback(async (commentId: number) => {
     if (!user) { setShowLogin(true); return; }
@@ -566,6 +633,15 @@ export default function CommentSheet({ isOpen, onClose, postId, teamId, onCommen
     setClosing(true);
   }, []);
 
+  useEffect(() => {
+    if (!source || !shouldRender) return;
+    const keydown = (event: KeyboardEvent) => {
+      if (event.key === "Escape" && editingId === null) { event.preventDefault(); requestClose(); }
+    };
+    document.addEventListener("keydown", keydown);
+    return () => document.removeEventListener("keydown", keydown);
+  }, [source, shouldRender, editingId, requestClose]);
+
   const handleSheetTouchStart = useCallback((e: React.TouchEvent<HTMLDivElement>) => {
     if (e.touches.length !== 1) return;
     dragStartX.current = e.touches[0].clientX;
@@ -578,7 +654,7 @@ export default function CommentSheet({ isOpen, onClose, postId, teamId, onCommen
 
     const target = e.target;
     if (!(target instanceof HTMLElement)) return;
-    if (target.closest("input, textarea")) return;
+    if (target.closest("input, textarea, [aria-label='추천 이모지']")) return;
 
     const deltaX = Math.abs(e.touches[0].clientX - dragStartX.current);
     const deltaY = e.touches[0].clientY - dragStartY.current;
@@ -654,7 +730,7 @@ export default function CommentSheet({ isOpen, onClose, postId, teamId, onCommen
                       <button onClick={() => startEdit(comment)} className="block w-full px-3 py-2 text-left text-xs text-text-primary hover:bg-bg-tertiary">수정</button>
                     )}
                     {canReport && (
-                      <button onClick={() => { setMenuOpenId(null); setReportCommentId(comment.id); }} className="flex w-full items-center gap-1.5 px-3 py-2 text-left text-xs text-text-primary hover:bg-bg-tertiary">
+                      <button onClick={() => { setMenuOpenId(null); if (source) source.report(comment.id); else setReportCommentId(comment.id); }} className="flex w-full items-center gap-1.5 px-3 py-2 text-left text-xs text-text-primary hover:bg-bg-tertiary">
                         <Flag size={12} /> 신고
                       </button>
                     )}
@@ -704,7 +780,7 @@ export default function CommentSheet({ isOpen, onClose, postId, teamId, onCommen
             </div>
           ) : (
             <>
-              {isImageComment(comment.content) ? (
+              {!source && isImageComment(comment.content) ? (
                 <button
                   type="button"
                   onClick={() => setLightboxSrc(comment.content.trim())}
@@ -719,11 +795,11 @@ export default function CommentSheet({ isOpen, onClose, postId, teamId, onCommen
                   />
                 </button>
               ) : (
-                <p className="readable-body mt-0.5 break-words">
+                <p className={`readable-body mt-0.5 break-words ${source ? "whitespace-pre-wrap [overflow-wrap:anywhere]" : ""}`}>
                   {comment.content}
                 </p>
               )}
-              <div className="flex items-center gap-3 mt-1">
+              {!source && <div className="flex items-center gap-3 mt-1">
                 <button
                   onClick={() => handleLike(comment.id)}
                   className="flex items-center gap-1 text-text-tertiary hover:text-[#FF453A] transition-colors"
@@ -740,7 +816,7 @@ export default function CommentSheet({ isOpen, onClose, postId, teamId, onCommen
                     <span className="text-[11px]">답글</span>
                   </button>
                 )}
-              </div>
+              </div>}
             </>
           )}
       </CommunityCommentRow>
@@ -818,8 +894,13 @@ export default function CommentSheet({ isOpen, onClose, postId, teamId, onCommen
             </div>
 
             {/* Comment list */}
-            <div ref={listRef} data-comment-scroll="true" className="flex-1 min-h-0 overflow-y-auto overscroll-contain px-4 py-3 space-y-4">
-              {loading ? (
+            <div onClickCapture={source ? (event) => { if ((event.target as HTMLElement).closest("a[href]")) (onNavigate ?? onClose)(); } : undefined} ref={listRef} data-comment-scroll="true" className="flex-1 min-h-0 overflow-y-auto overscroll-contain px-4 py-3 space-y-4">
+              {!loading && !loadError && context}
+              {loadError ? (
+                <div role="alert" className="py-8 text-center text-sm text-text-secondary">
+                  {loadError}<button className="block mx-auto min-h-11 px-4 text-accent" onClick={() => void loadSource()}>다시 시도</button>
+                </div>
+              ) : loading ? (
                 <div className="space-y-4">
                   {[...Array(4)].map((_, i) => (
                     <div key={i} className="flex gap-2.5 animate-pulse">
@@ -849,6 +930,8 @@ export default function CommentSheet({ isOpen, onClose, postId, teamId, onCommen
               )}
             </div>
 
+            {source && nextPage && <button disabled={loadingMore} onClick={() => void loadSource(nextPage)} className="min-h-11 shrink-0 text-sm text-text-secondary">{loadingMore ? "불러오는 중…" : "댓글 더 보기"}</button>}
+
             {/* Reply indicator */}
             {replyTo && (
               <div className="flex-none border-t border-border px-4 py-2 flex items-center gap-2 bg-bg-tertiary/50">
@@ -862,18 +945,26 @@ export default function CommentSheet({ isOpen, onClose, postId, teamId, onCommen
 
             {/* Input area + GIF Picker overlay */}
             <div className="flex-none relative border-t border-border px-4 py-3" style={{ paddingBottom: "calc(0.75rem + var(--safe-area-inset-bottom, env(safe-area-inset-bottom)))" }}>
+              {user && (
+                <EmojiSuggestions
+                  inputRef={inputRef}
+                  onChange={setInput}
+                  disabled={submitting || uploadingImage || cooldown}
+                />
+              )}
               {/* GIF Picker — pure overlay above input, no layout shift */}
               <AnimatePresence>
                 {showGifPicker && (
                   <motion.div
                     className="absolute left-0 right-0 border-t border-border bg-bg-secondary z-10"
-                    style={{ height: 280, bottom: "100%" }}
+                    style={{ bottom: "100%" }}
                     initial={{ y: "100%" }}
                     animate={{ y: 0 }}
                     exit={{ y: "100%" }}
                     transition={{ type: "spring", damping: 28, stiffness: 300 }}
                   >
                     <GifPicker
+                      context="community_gif"
                       onSelect={handleGifSelect}
                       onClose={() => setShowGifPicker(false)}
                     />
@@ -883,6 +974,7 @@ export default function CommentSheet({ isOpen, onClose, postId, teamId, onCommen
               <div className="flex items-center gap-2">
                 {user ? (
                   <>
+                    {!source && <>
                     <input
                       ref={fileInputRef}
                       type="file"
@@ -912,10 +1004,12 @@ export default function CommentSheet({ isOpen, onClose, postId, teamId, onCommen
                     >
                       <ImagePlay size={20} />
                     </button>
+                    </>}
                     <input
                       ref={inputRef}
                       type="text"
                       value={input}
+                      disabled={!!source && (loading || !!loadError || submitting)}
                       onChange={(e) => setInput(e.target.value)}
                       onFocus={() => {
                         if (blurCollapseTimer.current) {
@@ -925,7 +1019,7 @@ export default function CommentSheet({ isOpen, onClose, postId, teamId, onCommen
                         setShowGifPicker(false);
                         setExpanded(true);
                         const scrollToBottom = () => {
-                          if (listRef.current) listRef.current.scrollTop = listRef.current.scrollHeight;
+                          if (!source && listRef.current) listRef.current.scrollTop = listRef.current.scrollHeight;
                         };
                         requestAnimationFrame(scrollToBottom);
                         [120, 300, 600].forEach((ms) => setTimeout(scrollToBottom, ms));
@@ -962,7 +1056,7 @@ export default function CommentSheet({ isOpen, onClose, postId, teamId, onCommen
                 <button
                   onMouseDown={(e) => e.preventDefault()}
                   onClick={handleSubmit}
-                  disabled={!input.trim() || submitting || uploadingImage || cooldown || !user}
+                  disabled={!input.trim() || submitting || uploadingImage || cooldown || !user || (!!source && (loading || !!loadError))}
                   className="flex items-center justify-center w-9 h-9 rounded-full text-white disabled:opacity-50 transition-opacity"
                   style={{ backgroundColor: teamId ? (() => { const t = getTeamById(teamId); return t ? getTeamBgColor(t) : '#FF453A'; })() : '#FF453A' }}
                 >

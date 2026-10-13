@@ -52,6 +52,7 @@ struct WidgetGameSnapshot: Codable {
     /// "live" | "final" | "scheduled" | "cancelled". 구버전 스냅샷엔 없을 수 있어 옵셔널(기본 nil).
     /// 없으면 isFinal로 live/final을 추론(하위호환). "scheduled"/"cancelled"면 다음 경기 카드.
     var status: String? = nil
+    var resultPitchers: String? = nil
     /// 문자중계 최근 플레이 한 줄(1.0.7, 옵셔널) — 잠금 카드와 동일 소스/렌더. 구버전 스냅샷 nil 안전.
     var lastPlay: String? = nil
     /// 예정/취소 경기 표시용 시각 문구(예: "18:30"). live/final이면 빈 문자열.
@@ -138,8 +139,19 @@ struct GameWidgetProvider: TimelineProvider {
     }
 
     func getSnapshot(in context: Context, completion: @escaping (GameWidgetEntry) -> Void) {
-        let snap = context.isPreview ? sampleSnapshot : loadSnapshot()
-        completion(GameWidgetEntry(date: Date(), snapshot: snap))
+        let now = Date()
+        var snap = context.isPreview ? sampleSnapshot : loadSnapshot()
+        if !context.isPreview, let current = snap,
+           ["final", "cancelled", "scheduled"].contains(current.resolvedStatus),
+           let expiry = Self.rollover6amKST(gameId: current.gameId), now >= expiry {
+            if let next = current.next?.asSnapshot(),
+               let nextExpiry = Self.rollover6amKST(gameId: next.gameId), now < nextExpiry {
+                snap = next
+            } else {
+                snap = nil
+            }
+        }
+        completion(GameWidgetEntry(date: now, snapshot: snap))
     }
 
     func getTimeline(in context: Context, completion: @escaping (Timeline<GameWidgetEntry>) -> Void) {
@@ -189,11 +201,24 @@ struct GameWidgetProvider: TimelineProvider {
             let nextSnap = nextRaw.asSnapshot()
             if now >= rollover {
                 // 이미 전환 시각을 지남 → 지금 바로 예정 경기 표시(앱 미실행 폴백).
-                entries.append(GameWidgetEntry(date: now, snapshot: nextSnap))
+                let nextExpiry = Self.rollover6amKST(gameId: nextSnap.gameId)
+                entries.append(GameWidgetEntry(date: now, snapshot: nextExpiry.map { now >= $0 } == true ? nil : nextSnap))
+                if let nextExpiry, now < nextExpiry {
+                    entries.append(GameWidgetEntry(date: nextExpiry, snapshot: nil))
+                }
             } else {
                 // 전환 전 → 지금은 결과(live면 5h 후 stale), rollover 시점에 예정 경기로 자동 전환.
                 appendCurrent(before: rollover)
                 entries.append(GameWidgetEntry(date: rollover, snapshot: nextSnap))
+            }
+        } else if let snap, ["final", "cancelled", "scheduled"].contains(snap.resolvedStatus),
+                  let expiry = Self.rollover6amKST(gameId: snap.gameId) {
+            // No next game: do not pin the last regular-season result for the offseason.
+            if now >= expiry {
+                entries.append(GameWidgetEntry(date: now, snapshot: nil))
+            } else {
+                appendCurrent(before: expiry)
+                entries.append(GameWidgetEntry(date: expiry, snapshot: nil))
             }
         } else {
             appendCurrent(before: nil)
@@ -271,6 +296,7 @@ struct KBOHomeWidgetEntryView: View {
                     // #278에서 카드를 충분히 컴팩트화해 medium 높이에 수용.
                     KBOLockScreenCard(attributes: attributes(from: snap),
                                       state: state(from: snap),
+                                      resultPitchers: snap.resolvedStatus == "final" ? snap.resultPitchers : nil,
                                       fillHeight: true,
                                       isStale: snap.isStale == true)
                         .widgetContainerBackground { smallBackground(snap) }
@@ -283,6 +309,7 @@ struct KBOHomeWidgetEntryView: View {
                     // large — 세로 여유가 충분해 잠금화면 카드를 그대로 재사용 (디자인 동일)
                     KBOLockScreenCard(attributes: attributes(from: snap),
                                       state: state(from: snap),
+                                      resultPitchers: snap.resolvedStatus == "final" ? snap.resultPitchers : nil,
                                       isStale: snap.isStale == true)
                         .padding(8)
                         .widgetContainerBackground { Color(hex: 0x0A0A0B) }
@@ -365,6 +392,11 @@ struct HomeWidgetSmallCard: View {
                 smallTeam(code: snap.homeTeamCode, score: snap.homeScore)
             }
 
+            if snap.resolvedStatus == "final", snap.awayScore != snap.homeScore,
+               let result = snap.resultPitchers, !result.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
+                Text(result).font(notoKR(9, .bold)).foregroundStyle(.white.opacity(0.85))
+                    .lineLimit(2).minimumScaleFactor(0.75).multilineTextAlignment(.center)
+            }
             Group {
                 if snap.isStale == true {
                     // B안 — 5h 넘게 갱신 안 된 live 스냅샷: LIVE 떼고 중립 표기('경기 종료' 단정 X,

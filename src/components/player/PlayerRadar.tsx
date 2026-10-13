@@ -1,5 +1,7 @@
 "use client";
 
+import { fetchPlayerResource } from "@/lib/stats/player-resource-client";
+
 import { useRouter } from "next/navigation";
 
 import { useState, useEffect } from "react";
@@ -41,7 +43,7 @@ export default function PlayerRadar({ playerId, position, teamColor }: PlayerRad
   const isPitcher = position === "투수" || position?.includes("투");
 
   useEffect(() => {
-    fetch(`/api/player-stats?id=${playerId}&pos=${encodeURIComponent(position)}`)
+    fetchPlayerResource("player-stats", playerId, position)
       .then(r => r.json())
       .then(d => {
         if (d.stats) {

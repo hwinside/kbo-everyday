@@ -9,6 +9,7 @@
 export type HomeSectionKey =
   | "news"
   | "communityLatest"
+  | "communityPopular"
   | "favPlayers"
   | "shorts"
   | "liveOtherTeams"
@@ -25,7 +26,8 @@ interface SectionDef {
 // 배열 순서 = 기본 표시 순서(순서 설정이 없을 때 fallback).
 export const HOME_SECTIONS: SectionDef[] = [
   { key: "news", label: "뉴스", desc: "주요 뉴스 카드", storageKey: "kbo-home-news-visible" },
-  { key: "communityLatest", label: "커뮤니티 최신글", desc: "커뮤니티 최신 글 미리보기", storageKey: "kbo-home-community-visible" },
+  { key: "communityLatest", label: "커뮤니티 최신글", desc: "최애팀 단독 공개 최신글", storageKey: "kbo-home-community-visible" },
+  { key: "communityPopular", label: "최근 24시간 인기글", desc: "팀 구분 없이 하트·댓글 많은 글", storageKey: "kbo-home-community-popular-visible" },
   { key: "favPlayers", label: "최애선수 카드", desc: "최애선수 최근 기록", storageKey: "kbo-home-favplayers-visible" },
   { key: "shorts", label: "숏츠", desc: "홈 숏츠 영상 섹션", storageKey: "kbo-shorts-visible" },
   { key: "liveOtherTeams", label: "다른 팀 실시간", desc: "다른 경기 실시간 스코어 (Live 시에만 노출)", storageKey: "kbo-home-livegames-visible" },
@@ -41,6 +43,7 @@ export const DEFAULT_SECTION_ORDER: HomeSectionKey[] = [
   "liveOtherTeams",
   "news",
   "communityLatest",
+  "communityPopular",
   "favPlayers",
   "shorts",
   "allGames",
@@ -64,6 +67,14 @@ export const ALL_VISIBLE: HomeSectionVisibility = Object.fromEntries(
 
 export function getSectionVisible(key: HomeSectionKey): boolean {
   if (typeof window === "undefined") return true;
+  // 기존 커뮤니티를 숨긴 사용자는 분리된 인기글도 기본 숨김. 이후 두 토글은 독립적이다.
+  if (key === "communityPopular") {
+    const own = localStorage.getItem(byKey.communityPopular.storageKey);
+    if (own !== null) return own !== "0";
+    const inherited = localStorage.getItem(byKey.communityLatest.storageKey) !== "0";
+    localStorage.setItem(byKey.communityPopular.storageKey, inherited ? "1" : "0");
+    return inherited;
+  }
   // liveOtherTeams는 신규 분리 키. 자체 설정이 없으면 기존 allGames 설정을 상속
   // (기존 allGames=on이면 둘 다 on, off면 둘 다 off로 호환).
   if (key === "liveOtherTeams") {
@@ -105,7 +116,12 @@ function normalizeOrder(saved: string[]): HomeSectionKey[] {
   }
   // 저장된 순서에 없는 신규/누락 키는 기본 순서(합의안) 위치를 따라 뒤에 붙인다.
   for (const k of DEFAULT_SECTION_ORDER) {
-    if (!seen.has(k)) result.push(k);
+    if (!seen.has(k)) {
+      // 신규 인기글은 기존 커뮤니티 위치 바로 뒤에 삽입. 저장된 나머지 순서는 그대로 보존한다.
+      if (k === "communityPopular" && result.includes("communityLatest")) {
+        result.splice(result.indexOf("communityLatest") + 1, 0, k);
+      } else result.push(k);
+    }
   }
   return result;
 }

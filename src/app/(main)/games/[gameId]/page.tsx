@@ -1,5 +1,7 @@
 "use client";
 
+import { postseasonGameLabel } from "@/lib/crawler/game-series";
+
 import { useState, useCallback, useEffect, useRef } from "react";
 import { useParams, useSearchParams } from "next/navigation";
 import { motion, AnimatePresence } from "framer-motion";
@@ -418,6 +420,18 @@ export default function GameDetailPage() {
 
   // gameRelay 교체·수비위치 이벤트를 넘겨 필드뷰 수비 배치를 소스 진실(타임라인) 기반으로 확정한다.
   const d = deriveGameState(liveGame, game, gameDetail, gameRelay?.innings);
+  // 경기 날짜는 기기 시간대와 관계없이 한국 날짜/요일로 표시한다.
+  const gameDate = new Date(`${game.date}T00:00:00+09:00`);
+  const gameDateParts = Number.isNaN(gameDate.getTime()) ? null : Object.fromEntries(new Intl.DateTimeFormat("ko-KR", {
+    timeZone: "Asia/Seoul",
+    year: "numeric",
+    month: "numeric",
+    day: "numeric",
+    weekday: "short",
+  }).formatToParts(gameDate).map(({ type, value }) => [type, value]));
+  const gameDateLabel = gameDateParts
+    ? `${gameDateParts.year}년 ${gameDateParts.month}월 ${gameDateParts.day}일(${gameDateParts.weekday})`
+    : null;
   // 두 API의 요청시각은 payload revision이 아니다. live 성공 여부만 전달하고,
   // 불일치 시 confirmed lineup 우선 정책은 resolveLineupStarter가 담당한다.
   const liveStarterFresh = Boolean(liveSnapshot);
@@ -478,6 +492,7 @@ export default function GameDetailPage() {
     <div className="min-h-[100dvh] bg-bg-primary max-w-[640px] mx-auto w-full">
       {/* 헤더는 스크롤 컨테이너(PullToRefresh) 밖 page-root에 두어 sticky top-0가 페이지 스크롤 기준으로 고정되게 한다 */}
       <GameDetailHeader title={matchupTitle} />
+      {postseasonGameLabel(gameDetail?.srId, gameDetail?.gameLabel) && <p className="px-5 py-1 text-xs font-bold text-accent">{postseasonGameLabel(gameDetail?.srId, gameDetail?.gameLabel)}</p>}
 
     <PullToRefresh
       onRefresh={handleRefresh}
@@ -510,6 +525,12 @@ export default function GameDetailPage() {
           awayScore={d.awayScore}
           homeScore={d.homeScore}
         />
+      )}
+
+      {gameDateLabel && (
+        <div className="px-5 pt-1.5 text-center text-[13px] text-text-secondary">
+          <time dateTime={game.date}>{gameDateLabel}</time>
+        </div>
       )}
 
       {/* 헤더에서 내린 경기 정보줄: 상태(예정/경기 중/종료)·예정 시간·중계 방송사·구장 */}
@@ -661,6 +682,7 @@ export default function GameDetailPage() {
               {activeTab === "kgwan" && (
                 <motion.div key="kgwan" initial={{ opacity: 0 }} animate={{ opacity: 1 }} exit={{ opacity: 0 }} className="h-full">
                   <KgwanTab
+                    srId={gameDetail?.srId}
                     gameId={gameId}
                     homeTeamId={game.homeTeamId}
                     awayTeamId={game.awayTeamId}

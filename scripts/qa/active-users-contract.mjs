@@ -9,7 +9,7 @@
  *   [C2] 중복 제거 — 전 구간 전역 DISTINCT (플랫폼별/일별 UV 합산 금지)
  *   [C3] 누적은 365일 보존 롤업(admin_traffic_daily_visitors) 의존 금지 —
  *        영구 원장(admin_visitor_first_seen / admin_traffic_daily_stats)만
- *   [C4] KPI/추이의 GA4 폴백 금지 — 실패는 fail-close로 표기
+ *   [C4] 자체 소스 폴백 금지; 2026-09-08 개요·유저 일별 DAU는 명시적 GA 원복
  *   [C5] RPC 권한 — service_role 전용 (REVOKE + GRANT)
  *
  * 검증력: 각 조항은 실제 배포 소스(마이그레이션 SQL·route·page)를 파싱해
@@ -118,8 +118,8 @@ const hybrid = readFileSync(HYBRID, "utf8");
 
 /* ── [C4] 현재 자체 지표의 GA4 폴백 금지 (fail-close) ── */
 {
-  // GA4는 C6의 6/24 이전 고정 prehistory에만 사용한다. 현재 자체 RPC를
-  // /analytics API로 대체하거나 기존 ga4Dau state로 폴백하는 것은 금지.
+  // 자체 RPC/누적 계약은 보존. 소유자 2026-09-08 지시로 화면의 일별 DAU만
+  // GA로 명시적으로 원복하며, 오류 시 다른 소스로 바꾸는 폴백은 계속 금지.
   check(
     "C4",
     "route는 기존 analytics endpoint로 위임하지 않음",
@@ -127,9 +127,9 @@ const hybrid = readFileSync(HYBRID, "utf8");
   );
   check(
     "C4",
-    "page KPI는 자체 집계 단일 소스 (ga4Dau 폴백 제거)",
-    !/ga4Dau/.test(page),
-    "activeUsers ?? ga4Dau 패턴 금지",
+    "DAU KPI는 명시적 GA 일별 소스이며 자체 dau로 폴백하지 않음",
+    /daily-active-users&period=today/.test(page) && /data\.gaDau\.dau/.test(page) && !/value: data\.activeUsers\.dau/.test(page),
+    "오늘 DAU에 자체 집계값 대체 금지",
   );
   check(
     "C4",
@@ -139,9 +139,10 @@ const hybrid = readFileSync(HYBRID, "utf8");
   );
   check(
     "C4",
-    "추이 카드는 자체 API(/api/admin/active-users?period=)를 조회",
+    "DAU는 GA 일별 API, PV/누적은 자체 API를 유지",
     /\/api\/admin\/active-users\?period=\$\{period\}/.test(page) &&
-      !/\/api\/admin\/analytics\?type=trend/.test(page),
+      /\/api\/admin\/analytics\?type=daily-active-users&period=/.test(page) &&
+      /metric === "dau" && period !== "cumulative"/.test(page),
   );
 }
 

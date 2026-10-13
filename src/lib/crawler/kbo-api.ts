@@ -1,3 +1,4 @@
+import { rememberGameSeries, resolveGameSeries } from "./resolve-game-series";
 /* ===== KBO 공식 API 크롤러 ===== */
 
 import { resolvePlayer } from "@/lib/utils/resolve-player";
@@ -48,6 +49,9 @@ export function resolveTeamId(code: string, name: string): number {
 }
 
 export interface KboGame {
+  /** Source series identity: 0 regular, 1 exhibition, 3/4/5/7 postseason, 9 all-star. */
+  srId?: string;
+  gameLabel?: string;
   gameId: string;
   date: string;
   time: string;
@@ -109,6 +113,8 @@ function parseGameStatus(stateCode: string, cancelCode: string): KboGame["status
 }
 
 interface KboGameRaw {
+  SR_ID?: string | number;
+  GAME_SC_NM?: string;
   G_ID: string;
   G_DT: string;
   G_TM: string;
@@ -178,6 +184,8 @@ export function parseGame(raw: KboGameRaw): KboGame {
   const liveDetailOk = hasValidLiveDetail(raw, status);
   return {
     gameId: raw.G_ID,
+    srId: rememberGameSeries(raw.G_ID, raw.SR_ID),
+    gameLabel: raw.GAME_SC_NM,
     date: raw.G_DT,
     time: raw.G_TM,
     stadium: raw.S_NM,
@@ -426,13 +434,23 @@ export function teamCardRank(standings: TeamStanding[], teamId: number): number 
   return buildRankMap(standings).get(teamId) ?? null;
 }
 
+/**
+ * 순위표가 대표하는 시즌 — upstream URL 에 박힌 값의 SSOT.
+ *
+ * 🔴 왜 상수로 빼냈는가 (삼순 2026-08-28 재리뷰 P0-④): 이 값은 URL 문자열 안에만
+ *   있어서 **소비자가 볼 수 없었다**. 그래서 해가 바뀌면 2026 최종 순위를 받아놓고
+ *   `2027 진행 중` 이라 말하는 사고가 구조적으로 가능했다. 값과 시점을 같은 곳에서 파생시켜
+ *   둘이 갈라질 수 없게 한다 — 시즌을 올릴 땐 이 상수 하나만 바꾸면 URL 도 함께 올라간다.
+ */
+export const STANDINGS_SEASON = 2026;
+
 /** 팀 순위 (HTML 파싱) */
 /** 팀 순위 (네이버 API → KBO HTML 폴백) */
 export async function fetchStandings(): Promise<TeamStanding[]> {
   try {
     // Primary: 네이버 실시간 API (빠름)
     const naverRes = await fetch(
-      "https://api-gw.sports.naver.com/statistics/categories/kbo/seasons/2026/teams?gameType=REGULAR_SEASON",
+      `https://api-gw.sports.naver.com/statistics/categories/kbo/seasons/${STANDINGS_SEASON}/teams?gameType=REGULAR_SEASON`,
       {
         headers: {
           "Referer": "https://sports.news.naver.com/",
@@ -766,7 +784,7 @@ export const BOXSCORE_NAVER_TIMEOUT_MS = 2500;
 export async function fetchBoxScore(
   gameId: string,
   seasonId?: string,
-  opts?: { kboTimeoutMs?: number; naverTimeoutMs?: number },
+  opts?: { kboTimeoutMs?: number; naverTimeoutMs?: number; srId?: string },
 ): Promise<BoxScoreResult | null> {
   const kboBudget = opts?.kboTimeoutMs ?? BOXSCORE_KBO_TIMEOUT_MS;
   const naverReserve = opts?.naverTimeoutMs ?? BOXSCORE_NAVER_TIMEOUT_MS;
@@ -779,14 +797,16 @@ export async function fetchBoxScore(
     return await fetchNaverBoxScore(gameId, { timeoutMs: naverBudget() });
   };
   try {
-    const sid = seasonId || new Date().getFullYear().toString();
-    const body = `leId=1&srId=0&seasonId=${sid}&gameId=${gameId}`;
+    const sid = seasonId || gameId.slice(0, 4);
+    const signal = AbortSignal.timeout(kboBudget);
+    const srId = await resolveGameSeries(gameId, { signal, srId: opts?.srId });
+    const body = `leId=1&srId=${srId}&seasonId=${sid}&gameId=${gameId}`;
     const res = await fetch(`${KBO_SCHEDULE_BASE}/GetBoxScore`, {
       method: "POST",
       headers: SCHEDULE_HEADERS,
       body,
       // KBO sub-budget 으로 response+body stall 을 함께 bound (같은 signal 이 res.json() 도 중단).
-      signal: AbortSignal.timeout(Math.min(kboBudget, naverBudget() || kboBudget)),
+      signal,
     });
 
     if (!res.ok) {
@@ -803,7 +823,7 @@ export async function fetchBoxScore(
 
     const data = await res.json();
     const parsed = parseBoxScore(data);
-    if (!parsed) {
+    if (!parsed || (parsed.awayBatters.length === 0 && parsed.homeBatters.length === 0)) {
       // KBO 응답 파싱 실패(스키마 열화) → Naver failover. 관제는 응답 경로를 블록하지 않게 fire-and-forget.
       void trackFallback("kbo-boxscore", "schema-error", {
         errorMessage: "parseBoxScore returned null",
@@ -833,15 +853,17 @@ export async function fetchBoxScore(
 }
 
 /** 이닝별 스코어 조회 (특정 경기). 종료 직후 빈 이닝표면 null을 반환해 settle 재시도를 유도한다. */
-export async function fetchGameLinescore(gameId: string, seasonId?: string): Promise<GameLinescore | null> {
+export async function fetchGameLinescore(gameId: string, seasonId?: string, seriesId?: string): Promise<GameLinescore | null> {
   try {
     const sid = seasonId || gameId.slice(0, 4);
-    const body = `leId=1&srId=0&seasonId=${sid}&gameId=${gameId}`;
+    const signal = AbortSignal.timeout(10000);
+    const srId = await resolveGameSeries(gameId, { signal, srId: seriesId });
+    const body = `leId=1&srId=${srId}&seasonId=${sid}&gameId=${gameId}`;
     const res = await fetch(`${KBO_SCHEDULE_BASE}/GetScoreBoard`, {
       method: "POST",
       headers: SCHEDULE_HEADERS,
       body,
-      signal: AbortSignal.timeout(10000),
+      signal,
       cache: "no-store",
     });
     if (!res.ok) return null;

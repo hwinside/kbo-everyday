@@ -99,7 +99,8 @@ async function main() {
       reserveDaily: async () => ({ allowed: true, remaining: 19 }),
       log: async () => {},
       fetchTeamRecord: {
-        fetchStandings: async () => STANDINGS,
+        // 순위표는 **행 + 소스 수신 시각** 스냅샷이다 (삼순 2026-08-28 P0-③).
+        fetchStandings: async () => ({ rows: STANDINGS, fetchedAt: new Date().toISOString() }),
         fetchTeamRecords: async () => TEAM_RECORDS,
       },
     } as unknown as QaDeps;

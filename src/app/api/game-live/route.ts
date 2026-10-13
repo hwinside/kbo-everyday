@@ -224,6 +224,14 @@ export async function gameLiveRoute(
 ) {
   const deps = { ...DEFAULT_DEPS, ...depsOverride };
   const date = req.nextUrl.searchParams.get("date") || resolveGameLiveDate();
+  // Match /api/games' YYYYMMDD contract before any upstream or witness I/O.
+  // Omitted/empty date keeps the existing KST-today default above.
+  if (!/^\d{8}$/.test(date)) {
+    return NextResponse.json(
+      { error: "date must be YYYYMMDD", games: [] },
+      { status: 400, headers: NO_STORE_HEADERS },
+    );
+  }
   const deadlineAtMs = Date.now() + GAME_LIVE_DEADLINE_MS;
   
   try {

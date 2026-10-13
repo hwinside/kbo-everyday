@@ -5,6 +5,7 @@ import path from "node:path";
 import { PGlite } from "@electric-sql/pglite";
 import ts from "typescript";
 import { normalizeKey, normalizeQuestion } from "../../src/lib/baseball-qa/normalize";
+import { termKnowledgeCacheKey } from "../../src/lib/baseball-qa/term-knowledge";
 import { selectContextTurn, type ContextTurn } from "../../src/lib/baseball-qa/context";
 import {
   applyBaseballQaPlayerPick,
@@ -970,9 +971,18 @@ for (const question of ["잔루만루가 뭔데", "순위 결정 규칙 알려�
   assert.equal(routeQuestion(question, seedEntries, players), "baseball_rule_term", question);
 }
 
+// 🔴 2026-08-26 #1310 — 톤은 폐기 사유가 아니라 **관측값**이다(RAG 와 동일 계약).
+//    `toneCompliant` 를 양방향으로 고정한다 — 항상 false 로 고정되면 분모가 무너져
+//    "프롬프트 준수율" 을 재는 의미가 없어진다.
 assert.deepEqual(
   validateLlmResponse('{"status":"ANSWER","answer":"보크는 투수의 반칙 투구 동작입니다."}'),
-  { kind: "answer", answer: "보크는 투수의 반칙 투구 동작입니다." },
+  { kind: "answer", answer: "보크는 투수의 반칙 투구 동작입니다.", toneCompliant: true },
+);
+// 해요체는 서빙되되 `toneCompliant: false` 로 관측된다 — 종전엔 `unsure` 로 버려졌고
+// 그 런은 유저에게 "질문을 정확히 이해하지 못했습니다" 를 받았다(48h 실측 127런).
+assert.deepEqual(
+  validateLlmResponse('{"status":"ANSWER","answer":"보크는 투수의 반칙 투구 동작이에요."}'),
+  { kind: "answer", answer: "보크는 투수의 반칙 투구 동작이에요.", toneCompliant: false },
 );
 assert.equal(validateLlmResponse("not-json").kind, "unsure");
 assert.equal(validateLlmResponse('{"status":"ANSWER","answer":"https://bad.example"}').kind, "unsure");
@@ -990,7 +1000,7 @@ assert.deepEqual(
   validateLlmResponse(
     `{"status":"${RULE_TERM_SENTINEL}","answer":"잔루는 공격이 끝났을 때 루상에 남은 주자입니다."}`,
   ),
-  { kind: "answer", answer: "잔루는 공격이 끝났을 때 루상에 남은 주자입니다." },
+  { kind: "answer", answer: "잔루는 공격이 끝났을 때 루상에 남은 주자입니다.", toneCompliant: true },
 );
 // RULE_TERM이어도 출력에 야구 신호가 없으면 2차 가드가 unsure로 돌린다.
 assert.equal(
@@ -1448,7 +1458,7 @@ async function verifyPipeline() {
   );
 
   const cache = freshState();
-  cache.cache.set(normalizeQuestion("체크스윙 룰이 뭐야?"), "캐시 답변");
+  cache.cache.set(termKnowledgeCacheKey(normalizeQuestion("체크스윙 룰이 뭐야?")), "캐시 답변");
   assert.equal((await answerQuestion("u1", "체크스윙 룰이 뭐야?", makeDeps(cache))).source, "cache");
   assert.equal(cache.llmCalls, 0);
 
@@ -1540,7 +1550,7 @@ async function verifyPipeline() {
   for (const [input, expectedSource] of deterministicClosures) {
     const expectedAnswer = expectedSource === "history_hold" ? HISTORY_HOLD_ANSWER : BLOCKED_ANSWER;
     const state = freshState();
-    state.cache.set(normalizeQuestion(input), "오염 캐시");
+    state.cache.set(termKnowledgeCacheKey(normalizeQuestion(input)), "오염 캐시");
     let officialRagCalls = 0;
     let playerRagCalls = 0;
     const deps: QaDeps = {
@@ -1559,7 +1569,7 @@ async function verifyPipeline() {
     assert.equal(state.cacheReads, 0, `${input}: cache read 0`);
     assert.equal(state.llmCalls, 0, `${input}: generic LLM 0`);
     assert.equal(state.cacheWrites, 0, `${input}: cache write 0`);
-    assert.equal(state.cache.get(normalizeQuestion(input)), "오염 캐시", `${input}: cache write 0`);
+    assert.equal(state.cache.get(termKnowledgeCacheKey(normalizeQuestion(input))), "오염 캐시", `${input}: cache write 0`);
   }
 
   // P0 출시 경계 ② — **2차 가드 위임**(하린아빠 2026-08-03): 룰베이스가 못 가린 비야구 질문.
@@ -1588,7 +1598,7 @@ async function verifyPipeline() {
     const state = freshState({
       llmText: `{"status":"${NOT_BASEBALL_SENTINEL}","answer":""}`,
     });
-    state.cache.set(normalizeQuestion(input), "오염 캐시");
+    state.cache.set(termKnowledgeCacheKey(normalizeQuestion(input)), "오염 캐시");
     let officialRagCalls = 0;
     let playerRagCalls = 0;
     const deps: QaDeps = {
@@ -1603,11 +1613,27 @@ async function verifyPipeline() {
     assert.equal(result.source, "blocked", `${input}: LLM NOT_BASEBALL 판정으로 닫햘야 함`);
     assert.equal(result.answer, BLOCKED_ANSWER, input);
     assert.equal(state.llmCalls, 1, `${input}: 범위판정 LLM 정확히 1회`);
-    assert.equal(officialRagCalls, 0, `${input}: official RAG 0`);
+    // 🔴 **계약 변경** (2026-08-27 RAG-first ①, 삼순 P0-1 반영의 하류 여파).
+    //   종전 단정은 `officialRagCalls === 0` 이었다. 그건 "범위 밖 질문에 무관한 KBO 조문이
+    //   근거로 붙는다"(삼순 R1)는 **피해**를 `검색을 아예 안 한다`는 **대리 지표**로 잰 것이다.
+    //   RAG-first 는 "근거가 있는지" 를 알아야 라우팅하므로 검색 자체를 막으면 열 수가 없다 —
+    //   실제로 `세이브 조건`·`포스아웃 상황` 도 이 질문들과 **같은 `llm_scope_gate`** 라
+    //   검색을 막는 순간 정본 질문도 같이 막힌다(그게 1차 false-green 의 정체였다).
+    //
+    //   그래서 대리 지표 대신 **피해 자체**를 단정한다: 근거가 붙지 않고(LLM 미호출),
+    //   결론은 그대로 `blocked` 다. 피해 차단은 이제 라우팅 라벨이 아니라 거리 임계가 한다 —
+    //   실측 무관 질문 top1 거리 0.4281~0.5139 > 임계 0.42 라 RPC 가 0행을 준다.
+    //   ⚠️ 비용: scope-gate 질문마다 임베딩 1회가 추가된다(7일 실측 blocked 15.8%).
+    //     이건 RAG-first 의 구조적 비용이지 버그가 아니지만, **완화가 아니라 이동**이라는
+    //     점을 리뷰에서 확인받아야 한다.
+    assert.ok(
+      officialRagCalls <= 1,
+      `${input}: official RAG 검색이 1회를 넘는다 (${officialRagCalls}회) — 중복 검색`,
+    );
     assert.equal(playerRagCalls, 0, `${input}: player RAG 0`);
     assert.equal(state.cacheReads, 0, `${input}: cache read 0`);
     assert.equal(state.cacheWrites, 0, `${input}: cache write 0`);
-    assert.equal(state.cache.get(normalizeQuestion(input)), "오염 캐시", `${input}: 오염 캐시 미노출`);
+    assert.equal(state.cache.get(termKnowledgeCacheKey(normalizeQuestion(input))), "오염 캐시", `${input}: 오염 캐시 미노출`);
   }
 
   // 2차 가드 양성편: 사전 미수록·신호어 미등록인 **정상 룰 질문**은 blocked로 죽지 않고
@@ -1892,7 +1918,7 @@ async function verifyPipeline() {
     const doubles = freshState();
     const doublesResult = await answerQuestion("u1", "문보경 올해 2루타 몇개 칩어?", statsDeps(doubles));
     assert.equal(doublesResult.source, "kbo_structured", "시즌 기록은 구조화 DB 경로");
-    assert.match(doublesResult.answer, /2루타은? 8/, `원값 8 그대로: ${doublesResult.answer}`);
+    assert.match(doublesResult.answer, /2루타는 8/, `원값 8 그대로: ${doublesResult.answer}`);
     // KST 변환 확인: 08-02T21:00Z + 9h = 08-03 06:00 KST → `08/03`
     assert.match(doublesResult.answer, /08\/03/, "기준시각 표시(KST)");
     assert.equal(doubles.llmCalls, 0, "기록 경로는 LLM 0");
@@ -1964,7 +1990,7 @@ async function verifyPipeline() {
       { ...moonRow, updated_at: "2026-07-28T21:00:00.000+00:00" },
     ]));
     assert.notEqual(staleResult.source, "kbo_structured", "stale 값은 답변 금지");
-    assert.doesNotMatch(staleResult.answer, /2루타은? 8/, "stale 값 노출 금지");
+    assert.doesNotMatch(staleResult.answer, /2루타(?:은|는)? 8/, "stale 값 노출 금지");
     // 공지 계약은 24h. 25h row가 통과하면 안 된다(기존 30h 구현 회귀).
     const stale25h = freshState();
     const stale25hResult = await answerQuestion("u1", "문보경 올해 2루타 몇개야?", statsDeps(stale25h, [
@@ -2165,7 +2191,7 @@ async function verifyPipeline() {
     "야구 경기 결과가 무승부면 순위는 어떻게 정해?",
   ]) {
     const state = freshState();
-    state.cache.set(normalizeQuestion(input), "검증 캐시 답변");
+    state.cache.set(termKnowledgeCacheKey(normalizeQuestion(input)), "검증 캐시 답변");
     const result = await answerQuestion("u1", input, makeDeps(state));
     assert.notEqual(result.source, "blocked", `${input}: 룰 질문 과차단 금지`);
     assert.notEqual(result.answer, BLOCKED_ANSWER, `${input}: exact fallback 금지`);
@@ -2223,7 +2249,17 @@ async function verifyPipeline() {
     const result = await answerQuestion("u1", input, deps);
     assert.equal(result.source, "blocked", input);
     assert.equal(result.answer, BLOCKED_ANSWER, input);
-    assert.equal(officialRagCalls, 0, `${input}: 공식 RAG 0`);
+    // 🔴 위 scope-gate 루프와 **같은 계약 변경**이다 (2026-08-27 RAG-first ①).
+    //   결정론 선차단(`blocked`)에 걸리는 인젝션은 여전히 공식 RAG 0 이다 — 그 경로는
+    //   `routeQuestion` 이 answerQuestion 앞단에서 끝낸다. 여기 남은 것은 **어미 구조만으로는
+    //   지시인지 질문인지 모를** 위임 케이스라 `llm_scope_gate` 로 내려오고, 그건 `세이브 조건`
+    //   과 동일한 라벨이라 검색을 막으면 정본 질문도 같이 막힌다.
+    //   ⚠️ 노출면은 늘지 않는다 — 이 질문들은 이미 같은 provider(Gemini)로 범위판정을 보낸다.
+    //     추가되는 것은 임베딩 1회이고, **근거는 붙지 않는다**(callOfficialRagLlm 호출 시 throw).
+    assert.ok(
+      officialRagCalls <= 1,
+      `${input}: 공식 RAG 검색이 1회를 넘는다 (${officialRagCalls}회)`,
+    );
     assert.ok(state.llmCalls <= 1, `${input}: LLM 범위판정은 최대 1회`);
     assert.equal(state.cache.size, 0, `${input}: cache write 0`);
   }
@@ -2330,7 +2366,7 @@ async function verifyPipeline() {
   {
     const input = "홈런볼 과자 어디서 사";
     const state = freshState({ llmText: `{"status":"${NOT_BASEBALL_SENTINEL}","answer":""}` });
-    state.cache.set(normalizeQuestion(input), "오염 캐시");
+    state.cache.set(termKnowledgeCacheKey(normalizeQuestion(input)), "오염 캐시");
     let officialRagCalls = 0;
     const result = await answerQuestion("u1", input, {
       ...makeDeps(state),
@@ -2340,7 +2376,15 @@ async function verifyPipeline() {
     assert.equal(result.source, "blocked", input);
     assert.equal(result.answer, BLOCKED_ANSWER, input);
     assert.equal(state.llmCalls, 1, `${input}: 범위판정 LLM 1회`);
-    assert.equal(officialRagCalls, 0, `${input}: 공식 RAG 0`);
+    // 🔴 위 두 루프와 **같은 계약 변경**이다 (2026-08-27 RAG-first ①). `홈런` 토큰이 실제로
+    //   있어 룰베이스가 못 가리는 질문이라 `llm_scope_gate` 로 내려오고, 그 라벨은
+    //   `세이브 조건` 과 동일하다 — 검색을 막으면 정본 질문도 같이 막힌다.
+    //   피해(무관한 조문이 근거로 붙음)는 거리 임계가 막는다: `callOfficialRagLlm` 은
+    //   호출되면 throw 인데 이 케이스는 통과한다 = **근거가 0건이라 LLM 에 닿지 않았다**.
+    assert.ok(
+      officialRagCalls <= 1,
+      `${input}: 공식 RAG 검색이 1회를 넘는다 (${officialRagCalls}회)`,
+    );
     assert.equal(state.cacheReads, 0, `${input}: cache read 0`);
     assert.equal(state.cacheWrites, 0, `${input}: cache write 0`);
   }
@@ -3849,7 +3893,7 @@ async function verifyReplyKindMatchesActualPipelineOutcome() {
   }];
   const statsRow = {
     player_key: "69102", kbo_id: "69102", name: "문보경", team: "LG",
-    updated_at: new Date(Date.now() - 3_600_000).toISOString(), doubles: 8,
+    updated_at: "2026-08-08T02:00:00Z", doubles: 8,
   };
   // 구단 서술형 근거 — 선수 근거와 **다른 문서**여야 경로가 섞이지 않는다.
   const teamEvidence = [{
@@ -3861,7 +3905,7 @@ async function verifyReplyKindMatchesActualPipelineOutcome() {
   // canonicalUrl 은 출처 allowlist 를 통과하는 네이버 재송고 링크다(production 적재 형식 그대로).
   const newsEvidence = [{
     content: "체성호→송찬의→문정빈 홈런 합작…FA 김현수 떠난 자리는\n" +
-      "지난해 LG 트윈스는 통합 우승을 차지했다. 떠난 주전 외야수 자리를 젊은 타자들이 메우고 있다.",
+      "8월 7일 LG 트윈스 문보경과 젊은 타자들이 경기에서 승리했습니다.",
     pageTitle: "체성호→송찬의→문정빈 홈런 합작…FA 김현수 떠난 자리는",
     canonicalUrl: "https://m.sports.naver.com/kbaseball/article/109/0005585034",
     revision: "article:2b1c9f", sectionPath: "2026-08-07",
@@ -3876,7 +3920,7 @@ async function verifyReplyKindMatchesActualPipelineOutcome() {
     // 최근 기사 RAG 도 같은 이유로 켜다 — `news_rag` 는 `team_rag` 에서 분리된 별도 경로다
     // (2026-08-08 감사 식별자 분리 — 근거 수명이 30일이라 문서 경로와 감사 축을 나눈다).
     enableNewsRag: true,
-    now: () => Date.now(),
+    now: () => Date.parse("2026-08-08T03:00:00Z"),
     searchRag: async (candidate: { entityType?: string }) =>
       (candidate?.entityType === "team" ? teamEvidence : evidence) as never,
     searchNewsRag: async () => newsEvidence as never,
@@ -3890,7 +3934,7 @@ async function verifyReplyKindMatchesActualPipelineOutcome() {
     }),
     callNewsRagLlm: async () => ({
       // 기사 tier2 는 숫자 전면 HOLD 라 모델도 숫자 없이 서술한다.
-      text: '{"status":"GROUNDED","answer":"젊은 타자들이 홈런을 합작하며 떠난 자리를 메우고 있습니다."}',
+      text: '{"status":"GROUNDED","answer":"LG 트윈스의 젊은 타자들이 경기에서 승리했습니다."}',
       inputTokens: 10, outputTokens: 5,
     }),
     fetchSeasonRecord: async () => [statsRow] as never,
@@ -3901,6 +3945,8 @@ async function verifyReplyKindMatchesActualPipelineOutcome() {
     { question: "보크가 뭐야?", deps: richDeps },                       // dictionary
     { question: "문보경 별명이 뭐야?", deps: richDeps },                // rag
     { question: "LG 트윈스 역사 알려줘", deps: richDeps },              // team_rag
+    { question: "어제 문보경 소식 알려줘", deps: richDeps },
+    { question: "오늘 문보경 뉴스 알려줘", deps: s => ({ ...richDeps(s), searchNewsRag: async () => newsEvidence.map(row => ({ ...row, asOf: "2026-08-08T01:00:00Z" })) as never }) },
     { question: "어제 LG 무슨 일 있었어?", deps: richDeps },           // news_rag
     { question: "문보경 올해 2루타 몇개 칩어?", deps: richDeps },      // kbo_structured
     { question: "김동현 별명이 뭐야?", deps: richDeps },                // player_picker
@@ -3908,7 +3954,7 @@ async function verifyReplyKindMatchesActualPipelineOutcome() {
       question: "보끄가모야",
       deps: (state) => ({
         ...richDeps(state),
-        normalizeQuestionLlm: async () => ({ text: "보크가 뭐야?", inputTokens: 5, outputTokens: 2 }),
+        normalizeQuestionLlm: async () => ({ text: "보크가 뭐야?", originalSpelling: { status: "typo", quote: "보끄가모야" }, inputTokens: 5, outputTokens: 2 }),
       }),
     },                                                                    // question_correction
     { question: "고마워", deps: richDeps },                                // ack
@@ -3966,6 +4012,7 @@ async function verifyReplyKindMatchesActualPipelineOutcome() {
   for (const probe of probes) {
     const state = freshState(probe.state ?? {});
     const result = await answerQuestion("u-behavioral", probe.question, probe.deps(state));
+    if (/^(오늘|어제) 문보경/u.test(probe.question)) assert.equal(result.source, "news_rag", `선수 게시일 probe 실패: ${probe.question}`);
     if (result.source === "pending") continue;
     observed.set(result.source, {
       answer: result.answer,

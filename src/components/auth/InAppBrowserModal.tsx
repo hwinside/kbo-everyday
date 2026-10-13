@@ -9,6 +9,7 @@ import {
   currentAbsoluteUrl,
   type InAppDetection,
 } from "@/lib/detect-inapp";
+import { useDialogFocus } from "@/lib/a11y/useDialogFocus";
 
 interface InAppBrowserModalProps {
   isOpen: boolean;
@@ -35,6 +36,7 @@ export default function InAppBrowserModal({
   onClose,
   onContinueAnyway,
 }: InAppBrowserModalProps) {
+  const dialogRef = useDialogFocus(isOpen);
   const [detection, setDetection] = useState<InAppDetection | null>(null);
   const [copied, setCopied] = useState(false);
   // True after a scheme attempt timed out without the user actually leaving
@@ -91,6 +93,7 @@ export default function InAppBrowserModal({
             exit={{ opacity: 0 }}
             className="fixed inset-0 z-[10002] bg-black/70"
             onClick={onClose}
+            aria-hidden
           />
           <motion.div
             initial={{ y: "100%", opacity: 0.8 }}
@@ -98,6 +101,11 @@ export default function InAppBrowserModal({
             exit={{ y: "100%", opacity: 0.8 }}
             transition={{ type: "spring", damping: 26, stiffness: 320 }}
             className="fixed bottom-0 left-0 right-0 z-[10003] mx-auto max-w-lg rounded-t-3xl bg-bg-secondary p-5 pb-safe"
+            role="dialog"
+            aria-modal="true"
+            aria-label="외부 브라우저로 로그인 안내"
+            ref={dialogRef}
+            tabIndex={-1}
           >
             <div className="flex items-center justify-between mb-5">
               <h2 className="text-lg font-bold text-text-primary">

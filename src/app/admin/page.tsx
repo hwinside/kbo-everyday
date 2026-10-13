@@ -30,6 +30,8 @@ import {
   Image as ImageIcon,
 } from "lucide-react";
 import type { FeedbackItem } from "@/lib/admin/types";
+import type { GaDauResponse } from "@/lib/admin/ga4-dau";
+import type { GaActiveWindowsResponse } from "@/lib/admin/ga4-active-windows";
 import { getTeamById } from "@/lib/constants/teams";
 
 /* ── helpers ─────────────────────────────────────────── */
@@ -62,6 +64,8 @@ interface ContentResponse {
     photos: number;
     chats: number;
     likes: number;
+    gameReviewCount?: number;
+    gameReviewUserCount?: number;
     postUserCount?: number;
     generalPostUserCount?: number;
     commentUserCount?: number;
@@ -107,6 +111,8 @@ interface OverviewData {
   feedback: FeedbackResponse;
   jobs: JobsResponse;
   activeUsers: ActiveUsersResponse | null;
+  gaDau: GaDauResponse | null;
+  gaWindows: GaActiveWindowsResponse | null;
   ga4Pages: PagesResponse | null;
   ga4Cohort: CohortResponse | null;
 }
@@ -151,7 +157,7 @@ function KpiCard({ label, value, icon, onClick }: KpiDef & { onClick?: () => voi
 
 /* ── DAU / PV trend card (self-contained period toggle) ── */
 
-type TrendPeriod = "today" | "7d" | "30d" | "90d" | "180d" | "cumulative";
+type TrendPeriod = "today" | "7d" | "30d" | "90d" | "180d" | "all" | "cumulative";
 
 const TREND_TABS: { key: TrendPeriod; label: string }[] = [
   { key: "today", label: "당일" },
@@ -159,25 +165,28 @@ const TREND_TABS: { key: TrendPeriod; label: string }[] = [
   { key: "30d", label: "30일" },
   { key: "90d", label: "90일" },
   { key: "180d", label: "180일" },
+  { key: "all", label: "전체(일별)" },
   { key: "cumulative", label: "누적" },
 ];
 
 interface TrendResponse {
   period: string;
-  series: { label: string; users: number; pv: number }[];
+  series: { label: string; users: number | null; pv: number }[];
   cumulative: boolean;
 }
 
 function TrafficTrendCard({ metric }: { metric: "dau" | "pv" }) {
   const [period, setPeriod] = useState<TrendPeriod>("7d");
-  const title = metric === "dau" ? "DAU 추이 (앱+웹)" : "PV 추이 (앱+웹)";
+  const title = metric === "dau"
+    ? period === "cumulative" ? "누적 방문자 (앱+웹)" : "DAU 추이 (GA4)"
+    : "PV 추이 (앱+웹)";
 
   return (
     <div className="glass-card p-5">
       <div className="flex items-center justify-between gap-3 mb-1 flex-wrap">
         <h2 className="text-lg font-semibold">{title}</h2>
-        <div className="flex gap-1 p-1 rounded-xl bg-white/5">
-          {TREND_TABS.map((t) => (
+        <div className="flex flex-wrap gap-1 p-1 rounded-xl bg-white/5">
+          {TREND_TABS.filter(t => metric === "dau" || t.key !== "all").map((t) => (
             <button
               key={t.key}
               onClick={() => setPeriod(t.key)}
@@ -201,14 +210,25 @@ function TrendChartBody({ metric, period }: { metric: "dau" | "pv"; period: Tren
   const [series, setSeries] = useState<TrendResponse["series"] | null>(null);
   const [loading, setLoading] = useState(true);
   const [failed, setFailed] = useState(false);
+  const [missing, setMissing] = useState(false);
 
   useEffect(() => {
     let alive = true;
-    // 자체 집계(앱+웹) 추이 — GA4가 아닌 우리 텔레메트리 기준. 조회 실패는 빈
-    // 데이터("수집 전")와 구분되는 실패 상태로 표기한다 (fail-close, GA4 대체 금지).
-    apiFetch<TrendResponse>(`/api/admin/active-users?period=${period}`)
+    // Owner scope: daily DAU is GA; PV/cumulative retain their existing source.
+    // Source failures are visible and must not silently switch definitions.
+    const gaDaily = metric === "dau" && period !== "cumulative" && period !== "today";
+    const endpoint = gaDaily
+      ? `/api/admin/analytics?type=daily-active-users&period=${period}`
+      : metric === "dau" && period === "today"
+        ? "/api/admin/analytics?type=trend&period=today"
+        : `/api/admin/active-users?period=${period}`;
+    apiFetch<TrendResponse | GaDauResponse>(endpoint)
       .then((r) => {
-        if (alive) setSeries(r.series);
+        if (!alive) return;
+        if ("daily" in r) {
+          setSeries(r.daily.map(d => ({ label: period === "all" ? d.date : d.date.slice(5).replace("-", "/"), users: d.activeUsers, pv: 0 })));
+          setMissing(r.missingDates.length > 0);
+        } else setSeries(r.series);
       })
       .catch(() => {
         if (alive) {
@@ -222,13 +242,13 @@ function TrendChartBody({ metric, period }: { metric: "dau" | "pv"; period: Tren
     return () => {
       alive = false;
     };
-  }, [period]);
+  }, [metric, period]);
 
   const isDau = metric === "dau";
   const isCumulative = period === "cumulative";
   // Long daily windows (90d/180d) pack many points — widen tick spacing like
   // the cumulative view so the X축 labels don't overlap.
-  const isLongDaily = period === "90d" || period === "180d";
+  const isLongDaily = period === "90d" || period === "180d" || period === "all";
   const color = isDau ? "#6366F1" : "#30D158";
   const lineName = isDau ? (isCumulative ? "누적 방문자" : "DAU") : isCumulative ? "누적 PV" : "PV";
   const caption = isCumulative
@@ -240,7 +260,7 @@ function TrendChartBody({ metric, period }: { metric: "dau" | "pv"; period: Tren
         ? "오늘 시간대별 활성 사용자"
         : "오늘 시간대별 페이지뷰"
       : isDau
-        ? "일별 활성 사용자 (DAU)"
+        ? "GA4 일별 활성 사용자 · 최근 수치는 집계 지연으로 갱신될 수 있습니다"
         : "일별 페이지뷰";
 
   const chartData = (series ?? []).map((s) => ({
@@ -251,6 +271,7 @@ function TrendChartBody({ metric, period }: { metric: "dau" | "pv"; period: Tren
   return (
     <>
       <p className="text-xs text-[#8E8E93] mb-4">{caption}</p>
+      {missing && <p className="text-xs text-[#FFD60A] mb-3">GA에서 확인되지 않은 날짜는 0으로 채우지 않고 비워 표시합니다.</p>}
       {loading ? (
         <div className="flex justify-center py-16">
           <Loader2 className="w-5 h-5 animate-spin text-[#636366]" />
@@ -258,7 +279,7 @@ function TrendChartBody({ metric, period }: { metric: "dau" | "pv"; period: Tren
       ) : failed ? (
         <div className="flex flex-col items-center justify-center py-16 gap-3 text-[#FF453A]">
           <AlertTriangle className="w-8 h-8" />
-          <p className="text-sm">자체 집계 조회 실패 — GA4로 대체하지 않습니다</p>
+          <p className="text-sm">{isDau && !isCumulative ? "GA4 DAU 조회 실패 — 트래픽 수치로 대체하지 않습니다" : "자체 집계 조회 실패 — GA4로 대체하지 않습니다"}</p>
         </div>
       ) : chartData.length === 0 ? (
         <div className="flex flex-col items-center justify-center py-16 gap-3 text-[#636366]">
@@ -284,6 +305,7 @@ function TrendChartBody({ metric, period }: { metric: "dau" | "pv"; period: Tren
               stroke={color}
               strokeWidth={2}
               dot={false}
+              connectNulls={false}
             />
           </LineChart>
         </ResponsiveContainer>
@@ -340,6 +362,9 @@ function DetailModal({
           <button onClick={onClose} className="text-[#8E8E93] hover:text-white text-xl">✕</button>
         </div>
         <div className="overflow-y-auto flex-1 p-5">
+          {type === "game_reviews" && (
+            <p className="mb-3 text-xs text-[#8E8E93]">한국시간 오늘 작성 · 삭제 제외 · 숨김 포함 · 최신 100건</p>
+          )}
           {loading ? (
             <div className="flex justify-center py-10">
               <Loader2 className="w-6 h-6 animate-spin text-[#636366]" />
@@ -457,11 +482,13 @@ export default function AdminOverviewPage() {
       apiFetch<JobsResponse>("/api/admin/jobs?status=error&today=1"),
       fetchGA4<PagesResponse>("pages"),
       fetchGA4<CohortResponse>("cohort"),
-      // 자체 집계 실패 시 null → fail-close 표시. GA4로 대체하지 않는다(지표 정의가 다름).
+      // 누적 방문자는 자체 원장 유지. GA4 활성 사용자로 대체하지 않는다.
       apiFetch<ActiveUsersResponse>("/api/admin/active-users").catch(() => null),
+      fetchGA4<GaDauResponse>("daily-active-users&period=today"),
+      fetchGA4<GaActiveWindowsResponse>("active-user-windows"),
     ])
-      .then(([users, content, stats, feedback, jobs, ga4Pages, ga4Cohort, activeUsers]) => {
-        setData({ users, content, stats, feedback, jobs, ga4Pages, ga4Cohort, activeUsers });
+      .then(([users, content, stats, feedback, jobs, ga4Pages, ga4Cohort, activeUsers, gaDau, gaWindows]) => {
+        setData({ users, content, stats, feedback, jobs, ga4Pages, ga4Cohort, activeUsers, gaDau, gaWindows });
       })
       .catch(() => {})
       .finally(() => setLoading(false));
@@ -488,6 +515,8 @@ export default function AdminOverviewPage() {
   const todayPhotos_ = todayEntry?.photos ?? 0;
   const todayPosts = todayPostsAll - todayPhotos_; // 일반글만
   const todayComments = todayEntry?.comments ?? 0;
+  const todayGameReviews = todayEntry?.gameReviewCount ?? 0;
+  const gameReviewUserCount = todayEntry?.gameReviewUserCount ?? 0;
   const todayPhotos = todayPhotos_;
   const todayChats = todayEntry?.chats ?? 0;
   const todayLikes = todayEntry?.likes ?? 0;
@@ -533,6 +562,7 @@ export default function AdminOverviewPage() {
   const kpis: KpiDef[] = [
     { label: "오늘 가입자", value: todaySignups, icon: <Users className="w-4 h-4 text-[#6366F1]" /> },
     { label: "오늘 일반글", value: withUsers(todayPosts, generalPostUserCount), icon: <FileText className="w-4 h-4 text-[#30D158]" />, detailType: "posts" },
+    { label: "오늘 한줄평", value: withUsers(todayGameReviews, gameReviewUserCount), icon: <MessageSquare className="w-4 h-4 text-[#BF5AF2]" />, detailType: "game_reviews" },
     { label: "오늘 댓글", value: withUsers(todayComments, commentUserCount), icon: <MessageSquare className="w-4 h-4 text-[#FFD60A]" />, detailType: "comments" },
     { label: "오늘 사진", value: withUsers(todayPhotos, photoUserCount), icon: <Camera className="w-4 h-4 text-[#FF9F0A]" />, detailType: "photos" },
     { label: "오늘 채팅(크관)", value: withUsers(todayChats, chatUserCount), icon: <MessagesSquare className="w-4 h-4 text-[#32D4EB]" />, detailType: "chats" },
@@ -543,16 +573,16 @@ export default function AdminOverviewPage() {
     { label: "크롤러 실패", value: crawlerErrors, icon: <Bot className="w-4 h-4 text-[#FF453A]" /> },
   ];
 
-  /* ── DAU/WAU/MAU/누적 KPI — 자체 집계(앱+웹) 단일 소스. 조회 실패 시 GA4 폴백
-     없이 실패로 표기한다(fail-close) — 소스가 바뀌면 지표 정의가 바뀌기 때문 ── */
-  const activeKpis: KpiDef[] = data?.activeUsers
-    ? [
-        { label: "DAU (오늘·앱+웹)", value: data.activeUsers.dau, icon: <TrendingUp className="w-4 h-4 text-[#6366F1]" /> },
-        { label: "WAU (7일·앱+웹)", value: data.activeUsers.wau, icon: <TrendingUp className="w-4 h-4 text-[#30D158]" /> },
-        { label: "MAU (30일·앱+웹)", value: data.activeUsers.mau, icon: <TrendingUp className="w-4 h-4 text-[#FF9F0A]" /> },
+  /* GA4 window uniques are not daily sums. The cumulative internal ledger
+     remains separate, and neither source is a fallback for the other. */
+  const activeKpis: KpiDef[] = [
+    { label: "DAU (오늘·GA4)", value: data?.gaDau ? data.gaDau.dau ?? "집계 대기" : "조회 실패", icon: <TrendingUp className="w-4 h-4 text-[#6366F1]" /> },
+    { label: "WAU (7일·GA4)", value: data?.gaWindows ? data.gaWindows.windows.wau.activeUsers ?? "집계 대기" : "조회 실패", icon: <TrendingUp className="w-4 h-4 text-[#30D158]" /> },
+    { label: "MAU (30일·GA4)", value: data?.gaWindows ? data.gaWindows.windows.mau.activeUsers ?? "집계 대기" : "조회 실패", icon: <TrendingUp className="w-4 h-4 text-[#FF9F0A]" /> },
+    ...(data?.activeUsers ? [
         { label: "누적 방문자 (앱+웹)", value: data.activeUsers.total, icon: <TrendingUp className="w-4 h-4 text-[#BF5AF2]" /> },
-      ]
-    : [];
+      ] : []),
+  ];
 
   return (
     <div className="space-y-6">
@@ -569,21 +599,21 @@ export default function AdminOverviewPage() {
         ))}
       </div>
 
-      {/* DAU/WAU/MAU/누적 — 자체 집계(앱+웹). 실패 시 fail-close (GA4 폴백 금지) */}
-      {activeKpis.length > 0 ? (
+      {/* DAU/WAU/MAU are GA4; cumulative visitors retain the internal ledger. */}
         <div className="grid grid-cols-2 md:grid-cols-4 gap-3">
           {activeKpis.map((k) => (
             <KpiCard key={k.label} {...k} />
           ))}
         </div>
-      ) : (
+      <p className="text-xs text-[#8E8E93]">DAU·WAU·MAU는 GA4 활성 사용자입니다. WAU·MAU는 GA4 시간대 기준 오늘 포함 7일·30일의 중복 제거 값이며, 당일 반영 지연으로 다음 조회에서 갱신될 수 있습니다. 누적 방문자와 트래픽의 로그인 지표는 기존 자체 집계입니다.</p>
+      {!data?.activeUsers && (
         <div className="glass-card p-4 flex items-center gap-2 text-sm text-[#FF453A]">
           <AlertTriangle className="w-4 h-4 shrink-0" />
-          <span>자체 집계 DAU/WAU/MAU 조회 실패 — GA4로 대체하지 않습니다 (지표 정의 상이). 새로고침하거나 /api/admin/active-users 오류를 확인하세요.</span>
+          <span>자체 집계 누적 방문자 조회 실패 — GA4로 대체하지 않습니다 (지표 정의 상이).</span>
         </div>
       )}
 
-      {/* DAU / PV trend — 자체 집계, 카드별 기간 토글(당일/7일/30일/누적) */}
+      {/* GA4 DAU / existing PV and cumulative series. */}
       <div className="grid grid-cols-1 lg:grid-cols-2 gap-4">
         <TrafficTrendCard metric="dau" />
         <TrafficTrendCard metric="pv" />
@@ -669,7 +699,7 @@ export default function AdminOverviewPage() {
                   <div className="min-w-0">
                     <p className="text-sm font-medium truncate">{fb.title}</p>
                     <p className="text-xs text-[#8E8E93]">
-                      {new Date((fb as any).created_at ?? fb.createdAt).toLocaleDateString("ko-KR")}
+                      {new Date((fb as FeedbackItem & { created_at?: string }).created_at ?? fb.createdAt).toLocaleDateString("ko-KR")}
                     </p>
                   </div>
                 </li>

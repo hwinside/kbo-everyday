@@ -53,6 +53,14 @@ const MIGRATION = path.join(
   process.cwd(),
   "supabase/migrations/20260816140000_genius_question_logs_rag_discard_reason.sql",
 );
+/**
+ * 서빙 근거 top1 거리 관측 칸 (2026-08-27 추가). 별도 migration 이라 별도 상수다 —
+ * 위 파일에 끼워 넣으면 이미 적용된 migration 을 사후 수정하는 셈이라 멱등성이 깨진다.
+ */
+const DISTANCE_MIGRATION = path.join(
+  process.cwd(),
+  "supabase/migrations/20260827130000_genius_question_logs_rag_evidence_distance.sql",
+);
 
 let passed = 0;
 const ok = (label: string) => { passed += 1; console.log(`PASS ${label}`); };
@@ -111,7 +119,7 @@ const OFFICIAL_EVIDENCE: RagEvidence = {
 const NEWS_EVIDENCE: RagEvidence = {
   content:
     "천성호→송찬의→문정빈 홈런 합작…FA 김현수 떠난 자리는\n" +
-    "지난해 LG 트윈스는 프로야구 통합 우승을 차지했다. 떠난 주전 외야수 자리를 젊은 타자들이 메우고 있다.",
+    "8월 15일 LG 트윈스의 젊은 타자들이 경기에서 승리했어요.",
   pageTitle: "천성호→송찬의→문정빈 홈런 합작…FA 김현수 떠난 자리는",
   canonicalUrl: "https://m.sports.naver.com/kbaseball/article/109/0005585034",
   revision: "article:2b1c9f",
@@ -181,7 +189,7 @@ function makeDeps(answers: {
     searchOfficialRag: async () => [OFFICIAL_EVIDENCE],
     callOfficialRagLlm: async () => ({
       text: JSON.stringify({
-        status: answers.officialStatus ?? RAG_GROUNDED_SENTINEL,
+        calendarClaims: [], status: answers.officialStatus ?? RAG_GROUNDED_SENTINEL,
         answer: answers.official ?? "인필드 플라이 상황에서 타구가 주자에게 닿으면 둘 다 아웃이에요.",
       }),
       inputTokens: 10,
@@ -191,7 +199,7 @@ function makeDeps(answers: {
     callNewsRagLlm: async () => ({
       text: JSON.stringify({
         status: RAG_GROUNDED_SENTINEL,
-        answer: answers.news ?? "젊은 타자들이 떠난 주전 외야수 자리를 메우고 있어요.",
+        answer: answers.news ?? "LG 트윈스의 젊은 타자들이 경기에서 승리했어요.",
       }),
       inputTokens: 10,
       outputTokens: 5,
@@ -256,7 +264,7 @@ const PATH_PROBES: {
     attemptPath: "news",
     question: "어제 LG 무슨 일 있었어?",
     numericAnswer: "어제 LG 는 3점을 뽑으며 분위기를 바꿨어요.",
-    cleanAnswer: "젊은 타자들이 떠난 주전 외야수 자리를 메우고 있어요.",
+    cleanAnswer: "LG 트윈스의 젊은 타자들이 경기에서 승리했어요.",
     discardMatchPath: "unsure",
     servedMatchPath: "news_rag",
     key: "news",
@@ -289,7 +297,8 @@ async function run(): Promise<void> {
       assert.ok(new RegExp(nullable, "i").test(sql), `CHECK 가 ${nullable} 을 허용하지 않는다`);
     }
 
-    const reasonClause = sql.match(/rag_discard_reason in \(([^)]*)\)/i)?.[1];
+    const reasonSql = readFileSync(path.join(process.cwd(), "supabase/migrations/20260929112000_genius_event_date_discard_reason.sql"), "utf8");
+    const reasonClause = reasonSql.match(/rag_discard_reason in \(([^)]*)\)/i)?.[1];
     assert.ok(reasonClause, "폐기 사유 CHECK 의 허용 목록을 파싱하지 못했다");
     assert.deepEqual(
       [...reasonClause.matchAll(/'([^']+)'/g)].map((m) => m[1]).sort(),
@@ -306,7 +315,36 @@ async function run(): Promise<void> {
     );
 
     assert.ok(/rag_discard_numeric_count >= 0/.test(sql), "숫자 개수 음수 가드가 없다");
-    ok(`① 폐쇄집합 ↔ CHECK 일치 (사유 ${RAG_DISCARD_REASONS.length}종 · 경로 ${RAG_ATTEMPT_PATHS.length}종)`);
+
+    // 🔴 거리 관측 칸 (2026-08-27, 삼순 #1313 재GO ③) — 같은 계약을 SQL 에서도 강제하는가.
+    //   임계를 값으로 두면서 그 값이 무엇을 자르는지 관측하지 않으면 재보정이 감이 된다.
+    const distanceSql = readFileSync(DISTANCE_MIGRATION, "utf8");
+    assert.ok(
+      /add column if not exists rag_evidence_top_distance double precision/i.test(distanceSql),
+      "migration 이 rag_evidence_top_distance 컬럼을 추가하지 않는다",
+    );
+    // null 허용이 빠지면 거리 개념이 없는 경로(선수·구단·뉴스) 로그가 전부 INSERT 실패한다.
+    assert.ok(
+      /rag_evidence_top_distance is null/i.test(distanceSql),
+      "CHECK 가 rag_evidence_top_distance is null 을 허용하지 않는다 — 거리 없는 경로가 죽는다",
+    );
+    // 🔴 정의역 [0,2] 양방향. 상한이 없으면 유사도를 거리 칸에 넣는 오적재를 DB 가 못 잡는다
+    //   (연속값 계약은 양방향으로 건다 — 한쪽만 걸면 반대쪽이 뚫린다).
+    assert.ok(
+      /rag_evidence_top_distance >= 0/.test(distanceSql),
+      "거리 하한(>= 0) 가드가 없다",
+    );
+    assert.ok(
+      /rag_evidence_top_distance <= 2/.test(distanceSql),
+      "거리 상한(<= 2) 가드가 없다 — 유사도를 거리 칸에 넣는 오적재를 DB 가 못 잡는다",
+    );
+    // 🔴 기본값 금지: 부재를 0 으로 채우면 "완전 일치" 로 읽혀 분포가 왼쪽으로 오염되고
+    //   임계 재보정이 정확히 반대로 간다. null 과 0 을 섞지 않는 것이 이 칸의 계약이다.
+    assert.ok(
+      !/rag_evidence_top_distance[^;]*default/i.test(distanceSql),
+      "거리 칸에 default 가 걸려 있다 — 부재와 0 을 섞으면 임계 재보정이 반대로 간다",
+    );
+    ok(`① 폐쇄집합 ↔ CHECK 일치 (사유 ${RAG_DISCARD_REASONS.length}종 · 경로 ${RAG_ATTEMPT_PATHS.length}종 · 거리칸 [0,2]·default 없음)`);
   }
 
   // ── ② validateRagResponse 가 각 사유·숫자개수를 실제로 돌려주는가 ────────
@@ -559,7 +597,7 @@ async function run(): Promise<void> {
     // 실제 재생: `getLlmState` 가 저장된 envelope 를 돌려주는 상태에서 재실행한다.
     const beforeReplay = logs.length;
     const replayDeps = {
-      ...(makeDeps().deps as Record<string, unknown>),
+      ...makeDeps().deps,
       getLlmState: async () => ({ started: true, result: stored.value, ownerActive: false }),
       // ⚠️ 하니스가 수집하지 않는 칸은 게이트가 **영원히 못 본다**. 재생 로그도
       //   production 이 넘기는 관측 4칸을 그대로 담는다(수집 누락 = 구조적 false-green).
@@ -581,6 +619,7 @@ async function run(): Promise<void> {
     } as unknown as QaDeps;
     await answerQuestion("u-crash-1", "LG 트윈스 역사 알려줘", replayDeps);
     const replayed = logs.at(-1);
+    assert.ok(replayed, "replay must emit a log entry");
     assert.ok(logs.length > beforeReplay, "재생이 로그를 쓰지 않았다");
     assert.equal(
       replayed.ragDiscardReason, "numeric_claim_ungrounded",
@@ -613,7 +652,7 @@ async function run(): Promise<void> {
     );
 
     const replayDeps = {
-      ...(makeDeps().deps as Record<string, unknown>),
+      ...makeDeps().deps,
       getLlmState: async () => ({ started: true, result: stored.value, ownerActive: false }),
       log: async (entry: {
         matchPath: string;
@@ -653,11 +692,19 @@ async function run(): Promise<void> {
         ragDiscardReason: "totally_new_reason" as RagDiscardReason,
         ragQuestionNumericCount: 1.5,
         ragDiscardNumericCount: -3,
+        // 🔴 거리는 코사인 정의역 `[0, 2]` 다. 2 초과 값(유사도를 거리 칸에 넣은 오적재·
+        //   구버전 오염)이 복원되면 DB CHECK 에서 23514 로 **로그 INSERT 자체가 죽는다**
+        //   (삼순 2026-08-27 ②). 앱이 DB 와 같은 정의역을 봐야 한다.
+        ragEvidenceTopDistance: 7.5,
       },
       { text: "", inputTokens: 1, outputTokens: 1 },
     );
     const restored = unpackStoredQaFinal(poisoned.text);
     assert.ok(restored, "오염 envelope 복원 실패");
+    assert.ok(
+      restored.ragEvidenceTopDistance === undefined,
+      `정의역 [0,2] 밖 거리가 살아남았다: ${restored.ragEvidenceTopDistance} — DB CHECK 에서 23514 로 로그가 죽는다`,
+    );
     assert.ok(restored.ragAttemptPath === undefined, `폐쇄집합 밖 경로가 살아남았다: ${restored.ragAttemptPath}`);
     assert.ok(restored.ragDiscardReason === undefined, `폐쇄집합 밖 사유가 살아남았다: ${restored.ragDiscardReason}`);
     assert.ok(restored.ragDiscardNumericCount === undefined, `음수 개수가 살아남았다: ${restored.ragDiscardNumericCount}`);
@@ -665,7 +712,20 @@ async function run(): Promise<void> {
       restored.ragQuestionNumericCount === undefined,
       `소수 질문 개수가 살아남았다: ${restored.ragQuestionNumericCount}`,
     );
-    ok("④-c 오염 envelope 폐쇄집합 밖 값 폐기 (23514 차단)");
+    // 하한·비유한도 같은 축이다 — 연속값 계약은 **양방향**으로 건다(한쪽만 걸면 반대쪽이 뚫린다).
+    for (const bad of [-0.5, Number.POSITIVE_INFINITY, Number.NaN]) {
+      const p2 = packStoredQaFinal(
+        { answer: "테스트 답변이에요.", source: "team_rag", ragEvidenceTopDistance: bad },
+        { text: "", inputTokens: 1, outputTokens: 1 },
+      );
+      const r2 = unpackStoredQaFinal(p2.text);
+      assert.ok(r2, "오염 envelope 복원 실패");
+      assert.ok(
+        r2.ragEvidenceTopDistance === undefined,
+        `정의역 밖 거리(${bad})가 살아남았다: ${r2.ragEvidenceTopDistance}`,
+      );
+    }
+    ok("④-c 오염 envelope 폐쇄집합 밖 값 폐기 (23514 차단 · 거리 [0,2] 양방향)");
   }
 
   // ── ⑤ log-row SSOT 가 그 값을 실제 컬럼으로 옮기는가 ────────────────────
@@ -681,6 +741,7 @@ async function run(): Promise<void> {
         ragAttemptPath: "news",
         ragQuestionNumericCount: 1,
         ragDiscardNumericCount: 2,
+        ragEvidenceTopDistance: 0.3374,
       } as Parameters<typeof buildQuestionLogRow>[0],
       4242,
     );
@@ -688,6 +749,9 @@ async function run(): Promise<void> {
     assert.equal(row.rag_attempt_path, "news", "INSERT 행에 경로가 없다");
     assert.equal(row.rag_question_numeric_count, 1, "INSERT 행에 질문 숫자 개수가 없다");
     assert.equal(row.rag_discard_numeric_count, 2, "INSERT 행에 답변 숫자 개수가 없다");
+    // 🔴 거리 칸도 같은 단절을 겪을 수 있다 — pipeline 이 값을 넘겨도 INSERT 행에 칸이
+    //   없으면 프로덕션은 계속 null 이고, 약속한 72시간 분포 재측정이 원천 불가해진다.
+    assert.equal(row.rag_evidence_top_distance, 0.3374, "INSERT 행에 근거 top1 거리가 없다");
 
     const nullRow = buildQuestionLogRow(
       {
@@ -700,6 +764,10 @@ async function run(): Promise<void> {
     assert.equal(nullRow.rag_attempt_path, null, "비RAG 행의 경로가 null 이 아니다");
     assert.equal(nullRow.rag_question_numeric_count, null, "비RAG 행의 질문 개수가 null 이 아니다");
     assert.equal(nullRow.rag_discard_numeric_count, null, "비RAG 행의 답변 개수가 null 이 아니다");
+    // 🔴 부재는 **null 이지 0 이 아니다.** 0 은 "완전 일치" 라서 부재를 0 으로 적으면
+    //   분포가 왼쪽으로 오염되고 임계 재보정이 정확히 반대로 간다.
+    assert.equal(nullRow.rag_evidence_top_distance, null, "비RAG 행의 거리가 null 이 아니다");
+    assert.notEqual(nullRow.rag_evidence_top_distance, 0, "부재를 0 으로 적었다 — null 과 0 을 섞지 않는다");
     ok("⑤ log-row SSOT 컬럼 매핑");
   }
 

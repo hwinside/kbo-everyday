@@ -63,13 +63,13 @@ const MUTATIONS = [
   {
     name: "m4e(종단) 선수 결속 route override 제거 — 지원 지표 구조화 실답이 hold 로 죽는다",
     file: PIPELINE,
-    from: '  const route = enabledPlayerCandidate\n    ? "baseball_rule_term"\n    : routeQuestion(question, glossary, players, context !== null);',
-    to: "  const route = routeQuestion(question, glossary, players, context !== null);",
+    from: "  const route = (statDefinition || enabledPlayerCandidate || (reportedTermUsage && baseRoute !== \"blocked\"))",
+    to: "  const route = (statDefinition || (reportedTermUsage && baseRoute !== \"blocked\"))",
   },
   {
     name: "m4f(종단) 순위형 가드 제거 — 통산/연도/현재 전부 개인값 오답 변환(431·28·현재값)",
     file: PIPELINE,
-    from: "  if (\n    hasCareerMetricTerm(question)\n    && isRankAsk(question)\n    && resolveCareerMetricIntent(question) === null\n  ) {\n    await deps.log({\n      userId, question, questionNorm, matchPath: \"history_hold\", answer: HISTORY_HOLD_ANSWER,\n      inputTokens: null, outputTokens: null,\n    });\n    return { status: 200, answer: HISTORY_HOLD_ANSWER, source: \"history_hold\", remaining };\n  }",
+    from: "  if (\n    hasCareerMetricTerm(question)\n    && isRankAsk(question)\n    && resolveCareerMetricIntent(question) === null\n  ) {\n    if (baseRoute === \"history_hold\" && deps.searchOfficialRag && deps.callOfficialRagLlm) {\n      const historical = await answerOfficialDocumentQuestion(\n        userId, question, questionNorm, remaining, deps, null, context, true,\n      );\n      if (historical) return historical;\n    }\n    await deps.log({\n      userId, question, questionNorm, matchPath: \"history_hold\", answer: HISTORY_HOLD_ANSWER,\n      inputTokens: null, outputTokens: null,\n    });\n    return { status: 200, answer: HISTORY_HOLD_ANSWER, source: \"history_hold\", remaining };\n  }",
     to: "",
   },
   {

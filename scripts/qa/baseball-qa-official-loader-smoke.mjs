@@ -14,8 +14,10 @@
  */
 import { readFileSync } from "node:fs";
 import path from "node:path";
-import { fileURLToPath } from "node:url";
+import { fileURLToPath, pathToFileURL } from "node:url";
+import { bindCalendarSeasons } from "../baseball-qa/rag/official-calendar-seasons.mjs";
 import crypto from "node:crypto";
+import { spawnSync } from "node:child_process";
 
 const HERE = path.dirname(fileURLToPath(import.meta.url));
 const TARGET = path.join(HERE, "..", "baseball-qa", "rag", "load-official-corpus.mjs");
@@ -33,9 +35,19 @@ function pick(name) {
   throw new Error(`${name}: 중괄호 불균형`);
 }
 
+// prepareDocument now depends on the scoped supplement profile as well. Read
+// the real declarations, not a fixture copy, so the legacy atomic checks keep
+// exercising production code with all of its lexical dependencies.
+const profileStart = src.indexOf("const REQUIRED_REVISION =");
+const profileEnd = src.indexOf("const EMBED_MODEL =", profileStart);
+if (profileStart < 0 || profileEnd <= profileStart) throw new Error("required profile declarations missing");
 const prelude = `
 import crypto from "node:crypto";
 const MIN_CHUNK_CHARS = 40, MAX_CHUNK_CHARS = 900, LIMIT_CHUNKS = 0;
+import { bindCalendarSeasons } from ${JSON.stringify(pathToFileURL(path.join(HERE, "../baseball-qa/rag/official-calendar-seasons.mjs")).href)};
+const calendarProfiles = ${readFileSync(path.join(HERE, "../baseball-qa/rag/official-calendar-seasons.json"), "utf8")};
+const APPLY = false, PROTECTED_EGRESS = false;
+${src.slice(profileStart, profileEnd)}
 function sha256(t){return crypto.createHash("sha256").update(t,"utf8").digest("hex");}
 function slugify(s){return String(s).trim().toLowerCase().replace(/[^a-z0-9가-힣]+/g,"-").replace(/^-+|-+$/g,"");}
 `;
@@ -56,6 +68,23 @@ const doc = (pages, title = "규칙") => ({
   canonicalUrl: "https://example.test", canonicalUrlVerified: false, pages,
 });
 
+t("일정 시즌은 원문 해시·머리글·페이지 해시 일치에서만 결속", () => {
+  const text = "2025 KBO 일지\n9일 준플레이오프 개최";
+  const pageHash = crypto.createHash("sha256").update(text).digest("hex");
+  const profile = { documents: [{ documentContentHash: "verified-document", sourcePdfSha256: "verified-pdf", sections: [{
+    calendarSeason: 2025, headingPage: 23, heading: "2025 KBO 일지", pages: [{ page: 23, textSha256: pageHash }],
+  }] }] };
+  const input = doc([{ page: 23, text }], "2026 KBO 연감");
+  const bound = bindCalendarSeasons(input, "verified-document", profile);
+  if (bound.get(23)?.season !== 2025 || bound.get(24) !== undefined) throw new Error("wrong season or propagated outside verified section");
+  if (bindCalendarSeasons(input, "changed-document", profile).size) throw new Error("title-year fallback must not bind");
+  for (const changed of [text.replace("2025", "2026"), text + " changed"]) {
+    let rejected = false;
+    try { bindCalendarSeasons(doc([{ page: 23, text: changed }]), "verified-document", profile); } catch { rejected = true; }
+    if (!rejected) throw new Error("changed heading/page must be rejected");
+  }
+});
+
 t("사고 재현 — 같은 페이지의 조문 3개가 각각 살아남는다", () => {
   const p = prepareDocument(doc([
     { page: 10, section: "5.09 아 웃", text: body(300) },
@@ -72,6 +101,36 @@ t("페이지 단위 입력은 종전 규칙 유지 (회귀 방지)", () => {
   const p = prepareDocument(doc([{ page: 7, text: body(300) }, { page: 8, text: body(300) }], "연감"));
   if (p.chunks.length !== 2) throw new Error(`2건이어야 하는데 ${p.chunks.length}`);
   if (p.chunks[0].sectionPath !== "연감#p7") throw new Error(`페이지 규칙 깨짐: ${p.chunks[0].sectionPath}`);
+});
+
+t("v3 원본 PDF 조각 — 페이지/조항/서빙 경계", () => {
+  const check = spawnSync("python3", [path.join(HERE, "kbo-rulebook-boundaries-smoke.py")], { encoding: "utf8" });
+  if (check.status !== 0) throw new Error(`rulebook boundaries failed: ${check.stderr}`);
+});
+
+t("v3 atomic 조각은 재분할 없이 서빙 행과 1:1", () => {
+  const text = "보칙 — 방해 시 귀루 기준\n" + body(350) + "\n\n" + body(350);
+  const page = { page: 92, pageEnd: 93, section: "보칙", text, atomic: true, extractorRevision: "kbo-rulebook-boundaries-v3" };
+  const input = { ...doc([page], "2026 공식야구규칙"), file: "2026_야구규칙.pdf", pagesTotal: 220 };
+  const p = prepareDocument(input);
+  if (p.chunks.length !== 1 || p.chunks[0].content !== text) throw new Error("atomic chunk was split or changed");
+  if (p.chunks[0].pageEnd !== 93) throw new Error("physical page range lost");
+  const current = prepareDocument({ ...input, pages: [{ ...page, extractorRevision: "kbo-rulebook-boundaries-v3.1" }] });
+  if (current.chunks.length !== 1 || current.chunks[0].content !== text || current.chunks[0].pageEnd !== 93) {
+    throw new Error("v3.1 atomic content/provenance changed");
+  }
+  if (current.revision === p.revision) throw new Error("producer revision did not invalidate the document");
+  for (const change of [{ text: body(801) }, { pageEnd: 91 }, { extractorRevision: "unknown" }]) {
+    let rejected = false;
+    try { prepareDocument({ ...input, pages: [{ ...page, ...change }] }); } catch { rejected = true; }
+    if (!rejected) throw new Error("invalid atomic input accepted");
+  }
+  let mixedRejected = false;
+  try { prepareDocument({ ...input, pages: [page, { page: 1, section: "기존", text: body(100) }] }); } catch { mixedRejected = true; }
+  if (!mixedRejected) throw new Error("mixed atomic/legacy source accepted");
+  let mixedRevisionRejected = false;
+  try { prepareDocument({ ...input, pages: [page, { ...page, extractorRevision: "kbo-rulebook-boundaries-v3.1" }] }); } catch { mixedRevisionRejected = true; }
+  if (!mixedRevisionRejected) throw new Error("mixed producer revisions accepted");
 });
 
 t("긴 조문이 분할돼도 키가 충돌하지 않는다", () => {
@@ -179,6 +238,7 @@ t("source ensure가 APPLY 경로에서 claim보다 먼저 실행된다", () => {
     if (!/genius_rag_sources|genius_rag_chunks|complete_baseball_genius_rag/.test(sql)) continue;
     await db.exec(sql);
   }
+  await db.exec(readFileSync(path.join(migDir, "20260930060000_official_calendar_season_evidence.sql"), "utf8"));
 
   const KEY = "kbo:ebook:test-0";
   const vec = () => JSON.stringify(Array.from({ length: 768 }, () => 0.01));
@@ -261,9 +321,10 @@ t("source ensure가 APPLY 경로에서 claim보다 먼저 실행된다", () => {
     for (let i = 0; i < n; i++) {
       await db.query(
         `SELECT public.upsert_baseball_genius_rag_chunk($1,$2,$3,'document','doc-0','규칙 0','https://example.test/0',
-           $4,$5,$6,$7,$8,$9,'tier1',$11::timestamptz,current_date,$10::vector,'{}'::jsonb)`,
+           $4,$5,$6,$7,$8,$9,'tier1',$11::timestamptz,current_date,$10::vector,$12::jsonb)`,
         [KEY, c.claim_token, c.claim_generation, revision, `sec-${i}`, 0,
-         `본문 ${i} `.repeat(20), `dochash-${revision}`, `chunkhash-${revision}-${i}`, vec(), CRAWLED_AT],
+         `본문 ${i} `.repeat(20), `dochash-${revision}`, `chunkhash-${revision}-${i}`, vec(), CRAWLED_AT,
+         JSON.stringify(i === 0 ? { calendarSeason: { axis: "calendar_event", season: 2025 } } : {})],
       );
     }
     return c;
@@ -334,6 +395,16 @@ t("source ensure가 APPLY 경로에서 claim보다 먼저 실행된다", () => {
   });
 
   const afterMeta = await db.query("SELECT metadata FROM public.genius_rag_sources WHERE source_key=$1", [KEY]);
+  const retrieved = await db.query("SELECT calendar_season FROM public.search_baseball_genius_official_chunks($1,12,0.42)", [vec()]);
+  t("검색 RPC는 결속 시즌과 미상 NULL을 보존", () => {
+    if (retrieved.rows.length !== 3) throw new Error("snapshot result count changed");
+    if (retrieved.rows.filter(row => row.calendar_season?.season === 2025).length !== 1) throw new Error("calendar metadata lost");
+    if (retrieved.rows.filter(row => row.calendar_season === null).length !== 2) throw new Error("unknown calendar inferred");
+  });
+  const permissions = await db.query("SELECT has_function_privilege('anon','public.search_baseball_genius_official_chunks(text,integer,double precision)','EXECUTE') AS anon, has_function_privilege('authenticated','public.search_baseball_genius_official_chunks(text,integer,double precision)','EXECUTE') AS authenticated");
+  t("시즌 메타데이터 RPC는 일반 계정에 노출하지 않는다", () => {
+    if (permissions.rows[0].anon || permissions.rows[0].authenticated) throw new Error("official RPC privileges broadened");
+  });
   t("complete가 pending loaderRevision을 원자 승격", () => {
     if (afterMeta.rows[0].metadata.loaderRevision !== "kbo-ebook-sections-v2") throw new Error("loaderRevision 승격 안 됨");
     if ("pendingLoaderRevision" in afterMeta.rows[0].metadata) throw new Error("pendingLoaderRevision 잔존");

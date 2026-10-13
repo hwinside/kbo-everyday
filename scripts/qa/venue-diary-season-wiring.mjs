@@ -355,7 +355,7 @@ try {
   await page.getByRole("button", { name: /지난 경기 추가하기/ }).click();
   await page.waitForSelector(SHEET, { timeout: 10000 });
   await page.waitForFunction(
-    (sel) => /종료 경기/.test(document.querySelector(sel)?.innerText || ""),
+    (sel) => /종료[·취소]* 경기/.test(document.querySelector(sel)?.innerText || ""),
     SHEET,
     { timeout: 10000 },
   );

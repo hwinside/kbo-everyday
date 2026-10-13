@@ -36,6 +36,10 @@ export interface ChannelRow {
   last_state_hash: string | null;
   /** 마지막 성공 p10 broadcast 시각 — ≤2분 heartbeat 판정 재료(삼순 ②, 성공 시에만 전진). */
   last_p10_at: string | null;
+  /** 마지막 성공 발송 시각(p10/p5 불문) — p5 코얼레싱 기준(삼순 2026-08-27 조건②). */
+  last_send_at: string | null;
+  /** 마지막 성공 발송 콘텐츠 — retreat 중 heartbeat 재전송 재료(삼순 2026-08-27 조건①). */
+  last_content_state: Record<string, unknown> | null;
   attempt_count: number;
   next_retry_at: string | null;
   created_at: string;
@@ -221,7 +225,9 @@ export async function pushLiveActivityChannelBroadcasts(
   },
 ): Promise<ChannelBroadcastStats | { error: string }> {
   const zero: ChannelBroadcastStats = {
-    updates: 0, heartbeats: 0, catchups: 0, skipped: 0, ends: 0, deleted: 0,
+    updates: 0, heartbeats: 0, catchups: 0, skipped: 0,
+    retreatSkipped: 0, coalescedSkipped: 0, noChangeSkipped: 0, retreatHeartbeats: 0,
+    ends: 0, deleted: 0,
     failedGameIds: [], deadlineSkipped: 0,
   };
   if (!apnsConfigured()) return zero;
@@ -241,7 +247,7 @@ export async function pushLiveActivityChannelBroadcasts(
   // 채널 순회/판정/발송 루프는 io 주입형 pass로 분리(삼순 R4 blocker② 회귀 대상) —
   // qa:la-broadcast가 fake clock/실패 send로 *동일 루프*의 deadline 유계 종료·재-arm을
   // 검증한다. 실구현 io: APNs send/DELETE + generation fence 적용 supabase update.
-  return runChannelBroadcastPass(
+  const stats = await runChannelBroadcastPass(
     channels,
     games,
     lastPlayByGame,
@@ -267,4 +273,14 @@ export async function pushLiveActivityChannelBroadcasts(
       },
     },
   );
+  // skip 사유 관측(삼순 2026-08-27 게이트 ⓐ) — retreat/코얼레싱은 카드 정지 진단의 1차
+  // 재료라 발생 시 반드시 로그를 남긴다(과거 "발송 안 된 틱"이 무기록이던 생존자 편향 폐쇄).
+  if (stats.retreatSkipped > 0 || stats.coalescedSkipped > 0 || stats.retreatHeartbeats > 0) {
+    console.log(
+      `[la-broadcast] skips retreat=${stats.retreatSkipped} coalesced=${stats.coalescedSkipped}` +
+      ` noChange=${stats.noChangeSkipped} retreatHeartbeats=${stats.retreatHeartbeats}` +
+      ` updates=${stats.updates}`,
+    );
+  }
+  return stats;
 }

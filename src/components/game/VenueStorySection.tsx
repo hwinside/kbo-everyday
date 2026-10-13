@@ -3,6 +3,7 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { Plus, Play, Loader2 } from "lucide-react";
 import { useAuth } from "@/lib/supabase/AuthContext";
+import { createAutomaticStoryRequest } from "@/lib/venue-stories/automatic-request";
 import { getSafeSession } from "@/lib/supabase/client";
 import { getTeamById, getTeamBgColor } from "@/lib/constants/teams";
 import { isNativeRuntime } from "@/lib/capacitor/platform";
@@ -105,9 +106,13 @@ export default function VenueStorySection({ gameId }: Props) {
   // 앞서 진행 중인 자동 요청은 응답 commit 시점에 세대가 어긋나 폐기된다(삼순 왕복2 blocker).
   // 이렇게 하면 '자동 A 시작 → 열림 → 수동 M 적용 → 닫힘 → 늦은 A 도착'에서 A가 M을 덮지 못한다.
   const autoRefreshRequestRef = useRef(0);
+  const automaticRequestRef = useRef(createAutomaticStoryRequest());
   // 뷰어/컴포저가 열리는 순간 진행 중인 자동 요청 세대를 무효화(수동 갱신 보호).
   useEffect(() => {
-    if (autoRefreshBlocked) autoRefreshRequestRef.current++;
+    if (autoRefreshBlocked) {
+      autoRefreshRequestRef.current++;
+      automaticRequestRef.current.invalidate();
+    }
   }, [autoRefreshBlocked]);
 
   const fetchStories = useCallback(async (automatic = false) => {
@@ -118,6 +123,9 @@ export default function VenueStorySection({ gameId }: Props) {
     }
     // 자동/수동 모두 공용 세대를 올리고 자기 세대를 보존한다. 응답 commit 시 더 최신 요청이
     // 시작됐으면 종류와 무관하게 폐기해 구 수동응답도 최신 목록을 덮지 못하게 한다.
+    const transportEpoch = automatic
+      ? automaticRequestRef.current.epoch()
+      : automaticRequestRef.current.invalidate();
     const generation = ++autoRefreshRequestRef.current;
     const requestId = generation;
     try {
@@ -127,9 +135,12 @@ export default function VenueStorySection({ gameId }: Props) {
       const statusIds = [...pendingIdsRef.current];
       const statusQuery =
         statusIds.length > 0 ? `&statusIds=${encodeURIComponent(statusIds.join(","))}` : "";
-      const res = await fetch(`/api/venue-stories?gameId=${encodeURIComponent(gameId)}${statusQuery}`, {
-        headers: token ? { Authorization: `Bearer ${token}` } : undefined,
-      });
+      const url = `/api/venue-stories?gameId=${encodeURIComponent(gameId)}${statusQuery}`;
+      // Only overlapping automatic reads share transport. Mutation/manual refreshes always
+      // start a fresh request and invalidate the automatic sharing epoch before auth awaits.
+      const res = automatic
+        ? await automaticRequestRef.current.load(url, token, transportEpoch)
+        : await fetch(url, { headers: token ? { Authorization: `Bearer ${token}` } : undefined });
       // 비정상 응답(401/500 등)은 마지막 정상 목록을 보존해야 한다 — throw 로 catch 진입,
       // setStories 미호출(기존 목록 유지). 25초 반복 호출에서 일시 오류 1회가 트레이 소실로
       // 노출되던 문제(삼순 blocker 2)를 막는다.

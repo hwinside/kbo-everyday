@@ -326,7 +326,7 @@ body.kbd-open .postdetail-chat-container {
  * with no JS. Idle: clear the global TabBar (--global-tabbar-h + safe-area).
  * On body.kbd-open (composer focused): TabBar hides and everything snaps to
  * the viewport bottom.
- * The reply chip + GIF picker ride 3.75rem (~composer height) above the input.
+ * The reply chip + GIF picker ride above the measured composer height.
  */
 [data-composer="postdetail"] {
   bottom: calc(var(--global-tabbar-h) + var(--safe-area-inset-bottom, env(safe-area-inset-bottom, 0px)));
@@ -334,21 +334,21 @@ body.kbd-open .postdetail-chat-container {
 }
 [data-postdetail-reply],
 [data-postdetail-gif] {
-  bottom: calc(var(--global-tabbar-h) + var(--safe-area-inset-bottom, env(safe-area-inset-bottom, 0px)) + 3.75rem);
+  bottom: calc(var(--global-tabbar-h) + var(--safe-area-inset-bottom, env(safe-area-inset-bottom, 0px)) + var(--postdetail-composer-h, 64px));
   transition: bottom 80ms ease-out;
 }
 [data-postdetail-scroll] {
-  padding-bottom: calc(64px + var(--global-tabbar-h) + var(--safe-area-inset-bottom, env(safe-area-inset-bottom, 0px)));
+  padding-bottom: calc(var(--postdetail-composer-h, 64px) + var(--global-tabbar-h) + var(--safe-area-inset-bottom, env(safe-area-inset-bottom, 0px)));
 }
 body.kbd-open [data-composer="postdetail"] {
   bottom: 0;
 }
 body.kbd-open [data-postdetail-reply],
 body.kbd-open [data-postdetail-gif] {
-  bottom: 3.75rem;
+  bottom: var(--postdetail-composer-h, 64px);
 }
 body.kbd-open [data-postdetail-scroll] {
-  padding-bottom: 64px;
+  padding-bottom: var(--postdetail-composer-h, 64px);
 }
 
 /*

@@ -6,6 +6,7 @@ import ts from "typescript";
 import {
   BASEBALL_GENIUS_FALLBACK_ANSWER,
   BASEBALL_GENIUS_NAME_SUGGEST_ANSWER,
+  BASEBALL_GENIUS_NAME_CANDIDATES_ANSWER,
   BASEBALL_GENIUS_NAME_UNKNOWN_ANSWER,
   BASEBALL_GENIUS_SYSTEM_ERROR_ANSWER,
   BASEBALL_GENIUS_UNCLEAR_ANSWER,
@@ -45,6 +46,7 @@ import { renderDraftAnswer, renderDraftUnavailable } from "../../src/lib/basebal
 import {
   RECORD_MISSING_ANSWER,
   UNSUPPORTED_SEASON_ANSWER,
+  UNSUPPORTED_SPLIT_ANSWER,
   UNTRUSTED_METRIC_ANSWER,
 } from "../../src/lib/baseball-qa/stats/season-record";
 import { composeTeamRecordAnswer } from "../../src/lib/baseball-qa/stats/team-record";
@@ -61,7 +63,7 @@ assert.equal(BASEBALL_GENIUS_TONE_SSOT.revision, "rev1");
 assert.match(BASEBALL_GENIUS_TONE_PROMPT, /정중하지만 야구에 미쳐 있는 해설위원/);
 assert.match(BASEBALL_GENIUS_TONE_PROMPT, /모든 답변은 합니다체/);
 assert.match(BASEBALL_GENIUS_TONE_PROMPT, /정중함, 야구 과몰입, 팀 중립, 사람에 대한 선의/);
-assert.match(BASEBALL_GENIUS_TONE_PROMPT, /지적 감사합니다\. 제가 실책했습니다\. 정확히 다시 확인하겠습니다\./);
+assert.doesNotMatch(BASEBALL_GENIUS_TONE_PROMPT, /지적 감사합니다\. 제가 실책했습니다\./);
 assert.match(BASEBALL_GENIUS_TONE_PROMPT, /승인된 언어 시그니처 '승리를 위하여!'는 smalltalk 종료에만/);
 assert.match(BASEBALL_GENIUS_TONE_PROMPT, /최근 positive ending 5회/);
 
@@ -95,6 +97,7 @@ const staticAnswers = [
   TODAY_NO_GAMES_ANSWER,
   UNTRUSTED_METRIC_ANSWER,
   UNSUPPORTED_SEASON_ANSWER,
+  UNSUPPORTED_SPLIT_ANSWER,
   RECORD_MISSING_ANSWER,
   renderTodayStartersAnswer([], "LG"),
   renderDraftAnswer("홍길동", { year: 2020, team: "LG", detail: "1차 지명" }),
@@ -165,24 +168,58 @@ for (const nonFormal of [
 ]) {
   assert.equal(isBaseballGeniusToneCompliant(nonFormal), false, `비합니다체를 통과시키면 안 된다: ${nonFormal}`);
 }
+// 🔴 2026-08-26 하린아빠 결정 — LLM 경로도 RAG 와 동일하게 **톤은 관측만** 한다.
+//    종전엔 `{ kind: "unsure" }` 로 버렸고, 그 런은 유저에게 "질문을 정확히 이해하지
+//    못했습니다" 를 보냈다 — 48h 원장 실측 127런. 그건 사실이 아니었다.
 assert.deepEqual(
   validateLlmResponse(JSON.stringify({ status: "BASEBALL_RULE_TERM", answer: "야구에서 보크는 반칙 동작이에요." }), "보크가 뭐야?"),
-  { kind: "unsure" },
+  { kind: "answer", answer: "야구에서 보크는 반칙 동작이에요.", toneCompliant: false },
+  "generic LLM 생성답의 해요체도 서빙하되 toneCompliant=false 로 관측한다",
+);
+// 해요체가 아닌 정상답은 `toneCompliant: true` — 관측값이 항상 false 로 고정되면
+// 분모가 무너져 "프롬프트 준수율" 을 재는 의미가 없어진다(양방향 고정).
+assert.deepEqual(
+  validateLlmResponse(JSON.stringify({ status: "BASEBALL_RULE_TERM", answer: "야구에서 보크는 반칙 동작입니다." }), "보크가 뭐야?"),
+  { kind: "answer", answer: "야구에서 보크는 반칙 동작입니다.", toneCompliant: true },
+  "합니다체 generic LLM 답변은 toneCompliant=true 관측",
 );
 assert.deepEqual(
   validateRagResponse(JSON.stringify({ status: "GROUNDED", answer: "야구에서 보크는 반칙 동작이에요." }), { numericEvidence: true, evidence: [] }),
   { kind: "grounded", answer: "야구에서 보크는 반칙 동작이에요.", toneCompliant: false },
   "RAG 생성답의 해요체는 서빙하되 toneCompliant=false 로 관측한다",
 );
+// 🔴 톤과 **범위(scope)** 를 섞지 않는다 — 이번 변경은 톤만 관측으로 내린다.
+//    `알겠어.`·`맞아.` 처럼 답변에 야구 앵커가 없는 것은 여전히 `answerInQuestionScope`
+//    가 fail-close 한다(톤 때문이 아니라 범위 때문이다). 둘을 한 배열에 섮으면
+//    무엇이 어떤 이유로 폐기되는지를 게이트가 증명하지 못한다.
+for (const toneOnly of [
+  "보크는 반칙이야.", "“보크는 반칙이야.”", "정식 답변입니다.\n보크는 반칙이야",
+]) {
+  assert.deepEqual(
+    validateLlmResponse(JSON.stringify({ status: "BASEBALL_RULE_TERM", answer: toneOnly }), "보크가 뭐야?"),
+    { kind: "answer", answer: toneOnly, toneCompliant: false },
+    `generic LLM 톤 단일결함은 서빙+관측: ${toneOnly}`,
+  );
+}
+// 범위밖은 톤과 무관하게 여전히 폐기된다 — 이번 변경이 범위 가드를 같이 느슬하지 않았음을 고정.
+for (const outOfScope of ["알겠어.", "그렇다.", "맞아.", "좋아.", "몰라.", "반칙이야.다음은 정식 답변입니다."]) {
+  assert.deepEqual(
+    validateLlmResponse(JSON.stringify({ status: "BASEBALL_RULE_TERM", answer: outOfScope }), "보크가 뭐야?"),
+    { kind: "unsure" },
+    `범위밖 답변은 톤과 무관하게 fail-close: ${outOfScope}`,
+  );
+}
+// 출처 라인은 안전 계약(unsafe_or_length) 으로 폐기 — 이것도 톤 이야기가 아니다.
+assert.deepEqual(
+  validateLlmResponse(JSON.stringify({ status: "BASEBALL_RULE_TERM", answer: "정식 답변입니다.\n출처: 나무위키" }), "보크가 뭐야?"),
+  { kind: "unsure" },
+  "출처 라인 답변은 여전히 fail-close",
+);
+// RAG 는 종전 계약 그대로 — 이번 변경으로 회귀하지 않았음을 고정한다.
 for (const nonFormal of [
   "보크는 반칙이야.", "알겠어.", "그렇다.", "맞아.", "좋아.", "몰라.", "“보크는 반칙이야.”",
   "정식 답변입니다.\n보크는 반칙이야", "반칙이야.다음은 정식 답변입니다.", "정식 답변입니다.\n출처: 나무위키",
 ]) {
-  assert.deepEqual(
-    validateLlmResponse(JSON.stringify({ status: "BASEBALL_RULE_TERM", answer: nonFormal }), "보크가 뭐야?"),
-    { kind: "unsure" },
-    `generic LLM 비합니다체 fail-close: ${nonFormal}`,
-  );
   assert.deepEqual(
     validateRagResponse(JSON.stringify({ status: "GROUNDED", answer: nonFormal }), { numericEvidence: true, evidence: [] }),
     { kind: "grounded", answer: nonFormal, toneCompliant: false },
@@ -248,6 +285,7 @@ const outputFiles = [
   "src/lib/baseball-qa/roster/draft.ts",
   "src/lib/baseball-qa/awards/series-prize.ts",
   "src/lib/baseball-qa/stats/season-record.ts",
+  "src/lib/baseball-qa/stats/question-operation.ts",
   "src/lib/baseball-qa/stats/team-record.ts",
   "src/lib/baseball-qa/stats/career-series.ts",
   "src/lib/baseball-qa/stats/career-metric-leaderboard.ts",
@@ -304,3 +342,5 @@ assert.equal(
 assert.equal(staticAnswers.some((answer) => answer.includes("⚾")), false, "⚾를 승인 언어 시그니처로 오인하지 않는다");
 
 console.log(`PASS baseball genius tone SSOT: ${staticAnswers.length} static outputs, 5 prompts, 136 dictionary answers, generated-output fail-close`);
+
+assert.equal(isBaseballGeniusToneCompliant(BASEBALL_GENIUS_NAME_CANDIDATES_ANSWER(["김영웅(삼성)", "정영웅(KT)"])), true);

@@ -367,8 +367,9 @@ const keepAlive = setInterval(() => {}, 1000);
   // 순수 window 판정 경계값
   assert.equal(isWithinRegularSeasonWindow("20260327"), false); // 개막 전일(시범 이불)
   assert.equal(isWithinRegularSeasonWindow("20260328"), true);  // 개막일
-  assert.equal(isWithinRegularSeasonWindow("20260930"), true);  // 보수 상한 마지막 날
-  assert.equal(isWithinRegularSeasonWindow("20261001"), false); // 포스트시즌 경계
+  assert.equal(isWithinRegularSeasonWindow("20261002"), true);
+  assert.equal(isWithinRegularSeasonWindow("20261012"), true);  // 보수 상한 마지막 날
+  assert.equal(isWithinRegularSeasonWindow("20261013"), false); // 포스트시즌 경계
   assert.equal(isWithinRegularSeasonWindow("20270601"), false); // 미등록 연도 fail-close
   // fetchNaverGames: window 밖 srId=0 은 Naver 가 경기를 줘도 fail-close(throw)
   stubFetch(() => jsonResponse({ code: 200, success: true, result: { games: [naverGame()] } }));
@@ -478,11 +479,11 @@ const keepAlive = setInterval(() => {}, 1000);
     if (url.includes("GetKboGameList")) return jsonResponse({ game: [] });
     if (url.includes("schedule/games")) {
       naverCalled = true;
-      return jsonResponse({ code: 200, success: true, result: { games: [naverGame({ gameId: "20261001HTSS02026" })] } });
+      return jsonResponse({ code: 200, success: true, result: { games: [naverGame({ gameId: "20261013HTSS02026" })] } });
     }
     throw new Error(`unexpected url ${url}`);
   });
-  await assert.rejects(fetchGames("20261001", "0"), /미검증|window|fail-close/);
+  await assert.rejects(fetchGames("20261013", "0"), /미검증|window|fail-close/);
   assert.equal(naverCalled, false);
   restoreFetch();
 }
@@ -491,10 +492,10 @@ const keepAlive = setInterval(() => {}, 1000);
 {
   stubFetch((url) => {
     if (url.includes("GetKboGameList")) throw new Error("KBO down");
-    if (url.includes("schedule/games")) return jsonResponse({ code: 200, success: true, result: { games: [naverGame({ gameId: "20261001HTSS02026" })] } });
+    if (url.includes("schedule/games")) return jsonResponse({ code: 200, success: true, result: { games: [naverGame({ gameId: "20261013HTSS02026" })] } });
     throw new Error(`unexpected url ${url}`);
   });
-  await assert.rejects(fetchGames("20261001", "0"), /KBO down/);
+  await assert.rejects(fetchGames("20261013", "0"), /KBO down/);
   restoreFetch();
 }
 

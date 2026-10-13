@@ -1,5 +1,7 @@
+import { TERM_KNOWLEDGE_PROMPT } from "./term-knowledge";
 import { BASEBALL_GENIUS_DEPTH_PROMPT, BASEBALL_GENIUS_TONE_PROMPT } from "./tone";
 import { BASEBALL_GENIUS_ANSWER_MAX_CHARS, BASEBALL_GENIUS_MAX_OUTPUT_TOKENS } from "./answer-budget";
+import { STAT_DEFINITION_PROMPT, statDefinitionData, definitionWithEvidence, type StatDefinitionFrame } from "./stats/definition-intent";
 
 export const BASEBALL_QA_GEMINI_MODEL = "gemini-flash-lite-latest";
 
@@ -20,6 +22,7 @@ export const BASEBALL_QA_SYSTEM_PROMPT = [
   "답변 범위는 ①야구 룰·용어 ②KBO 구단(역사·연고지·창단·별명·감독/주장 같은 구단 인물·구단 이야기)",
   "③KBO 선수 ④야구 기록의 의미다. 이 범위면 BASEBALL_RULE_TERM 으로 판정하고 쉽고 정확한 한국어 존댓말로 답한다.",
   "여러 용어를 붙여 물어보거나(예: 잔루만루) 오탈자·구어체여도 범위 안이면 BASEBALL_RULE_TERM이다.",
+  "구어체 서술어를 비슷한 전문 명사로 바꾸어 질문을 재해석하지 않는다. 평가·유불리를 묻는 질문에는 누구의 관점인지 구분해 답하고, 모호하면 관점을 확인한다. 이를 용어 정의 질문으로 바꾸지 않는다.",
   "야구와 관계없는 질문(음식·맛집·상품·과자·주식·영화·날씨 등)과 서비스 문의는",
   "답하지 않고 NOT_BASEBALL로 판정한다. 야구 단어가 상품명에 들어있을 뿐이면(예: 홈런볼 과자) NOT_BASEBALL이다.",
   // 근거없음 계약 (삼순 #1100 2차 P0-2). 라우터가 수치 구단 질문을 fail-close 로 막지만,
@@ -49,7 +52,7 @@ export const BASEBALL_QA_SYSTEM_PROMPT = [
   "<현재 로스터> 블록이 함께 주어지면 그것이 선수의 현재 소속 구단에 대한 유일한 정본이다.",
   "네 기억이나 문서 근거가 로스터와 다르면 로스터를 따른다. 문서 기준 과거 소속을 현재 소속처럼 말하지 않는다.",
   // 정정 발화 (2026-08-10 00:53 "잘못을 지적하니 모르겠다고 나오는건 더 문제").
-  "유저가 직전 답의 오류를 지적하거나 정정하면(예: '최형우는 현재 삼성 소속인데??') 모르겠다고 하지 않는다.",
+  "유저가 직전 답의 오류를 지적하거나 정정하면 확인된 사실은 회피하지 말고 바로잡는다. 확인되지 않은 용어는 모른다고 밝히고 이전 단정을 철회한다.",
   "지적이 로스터·자료로 확인되면 BASEBALL_RULE_TERM 으로 판정하고, 승인된 실책 인정 문장으로 시작한 뒤 정정한 사실을 답한다.",
   // ⚠️ 2026-08-08 (삼순). 출력측 안전판(`answerInQuestionScope`)은 답변 본문에 야구 신호가
   // 있어야 통과시킨다. 그런데 모델은 질문 맥락을 아는 상태라 답을 짧게 줄여 보낸다:
@@ -60,8 +63,9 @@ export const BASEBALL_QA_SYSTEM_PROMPT = [
   // **답변이 자기 맥락을 담게** 만든다.
   "답변 첫 문장에는 이 답이 야구 이야기임이 드러나야 한다. 야구·KBO·구단명·포지션 같은 말을",
   "최소 한 번 넣어 문장만 떼어 읽어도 야구 답변임을 알 수 있게 쓴다(예: '야구에서 와이어 투 와이어는 …').",
+  TERM_KNOWLEDGE_PROMPT,
   BASEBALL_GENIUS_DEPTH_PROMPT,
-  `반드시 JSON 하나만 출력한다: {"status":"BASEBALL_RULE_TERM|NOT_BASEBALL|UNSURE","answer":"BASEBALL_RULE_TERM일 때만 ${BASEBALL_GENIUS_ANSWER_MAX_CHARS}자 이하 답변"}`,
+  `반드시 JSON 하나만 출력한다: {"status":"BASEBALL_RULE_TERM|NOT_BASEBALL|UNSURE|TERM_UNVERIFIED|TERM_CONTEXTUAL","answer":"BASEBALL_RULE_TERM일 때만 ${BASEBALL_GENIUS_ANSWER_MAX_CHARS}자 이하 답변", "correctsPrevious":false,"contextMeaning":""}`,
   // ⚠️ 2026-08-08 계약 불일치 수정. 이 줄은 위에서 범위를 ①～④로 선언해 놓고도
   // 판정 기준을 **"룰/용어"만**으로 좁혀 모델에게 지시했다. 즉 구단·선수·기록 질문은
   // 선언상 범위 안인데 마지막 줄이 "룰/용어가 아니면 UNSURE" 로 닫으라고 말하는 꼴이다.
@@ -94,13 +98,18 @@ export const BASEBALL_QA_SYSTEM_PROMPT = [
 export const GLOSSARY_MAPPER_SYSTEM_PROMPT = [
   "너는 KBO 야구 용어 사전의 질문 분류기다.",
   "아래 후보 용어 목록 중, 사용자의 질문이 **그 용어 자체의 뜻·정의**를 묻는 것일 때만 그 용어를 고른다.",
+  "질문에 사전 약어가 있고 주변 구어체나 어미에 오타가 있어도, 그 약어의 뜻을 묻는 의도가 명확하면 해당 용어를 고른다. 약어가 다른 분야·단위·이름을 가리키거나 뜻이 모호하면 null이다.",
+  "후보의 aliases는 검수 사전의 별칭이다. 별칭의 뜻을 요청하는 문장은 정본 term의 정의 요청과 같다. 의문형뿐 아니라 설명을 부탁하는 청유·명령형도 정의 요청이다. 다른 분야의 명시적 문맥은 이 대응보다 우선한다.",
+  "후보를 고르기 전에 질문 대상의 분야(scope)를 baseball|other|unclear로 판정한다. 명시된 분야·대상을 후보 별칭보다 우선한다. 문자 자체의 뜻·언어·타 종목을 묻는 대상은 other이며, 질문에 야구 사전 별칭이 등장해도 바꾸지 않는다. 분야가 모호하면 unclear다. 야구 문맥에서 용어 정의를 요청할 때만 baseball이다.",
   "다음은 정의 질문이 아니므로 반드시 null 이다:",
+  "· 용어의 유래·어원·명명 이유 질문 (예: 적시타 단어 유래, 홈런은 왜 홈런이라고 불러?)",
   "· 용어를 적용한 결과·규칙 질문 (예: 보크하면 주자 몇 루 가? — 보크의 뜻이 아니라 결과를 묻는다)",
   "· 두 용어의 비교·차이 질문 (예: 유격수와 2루수 차이가 뭐야? — 한 용어의 정의문으로 답할 수 없다)",
   "· 특정 선수·구단의 기록 수치나 오늘·특정 경기의 조회 질문 (예: 오늘 유격수 누구야?)",
   "· 용어가 문장에 스쳐 지나갈 뿐인 질문",
+  "· 좋고 나쁨·유불리·선호·감상을 묻는 평가 질문. 서술어에 구어체나 오타가 있어도 질문 기능은 평가이며, 정의문으로 대신 답하지 않는다.",
   "확실하지 않으면 null 을 고른다 — 정의문을 잘못 주는 쪽이 안 주는 쪽보다 나쁘다.",
-  '반드시 JSON 하나만 출력한다: {"term":"후보 목록에 있는 용어 그대로"} 또는 {"term":null}',
+  '반드시 JSON 하나만 출력한다: {"scope":"baseball|other|unclear","term":"후보 목록에 있는 용어 그대로 또는 null"}. scope가 baseball이 아니면 term은 반드시 null이다.',
 ].join("\n");
 
 export const STAT_INTENT_PROMPT = [
@@ -124,6 +133,7 @@ export function buildBaseballQaGeminiRequest(
   context?: { question: string; answer: string },
   rosterBlock?: string,
   statIntentMode = false,
+  definition?: StatDefinitionFrame,
 ) {
   // 로스터 블록은 **데이터**로 user turn 안에 구획해 넣는다 — 지시는 systemInstruction에만.
   const finalQuestion = rosterBlock
@@ -134,16 +144,18 @@ export function buildBaseballQaGeminiRequest(
         question,
       ].join("\n")
     : question;
+  const userQuestion = definition ? `${statDefinitionData(definitionWithEvidence(definition, false))}\n${finalQuestion}` : finalQuestion;
   const contents = context
     ? [
         { role: "user", parts: [{ text: context.question }] },
         { role: "model", parts: [{ text: context.answer }] },
-        { role: "user", parts: [{ text: finalQuestion }] },
+        { role: "user", parts: [{ text: userQuestion }] },
       ]
-    : [{ role: "user", parts: [{ text: finalQuestion }] }];
+    : [{ role: "user", parts: [{ text: userQuestion }] }];
+  const intentPrompt = statIntentMode ? `${systemPrompt}\n${STAT_INTENT_PROMPT}` : systemPrompt;
   return {
     systemInstruction: {
-      parts: [{ text: statIntentMode ? `${systemPrompt}\n${STAT_INTENT_PROMPT}` : systemPrompt }],
+      parts: [{ text: definition ? `${intentPrompt}\n${STAT_DEFINITION_PROMPT}` : intentPrompt }],
     },
     contents,
     generationConfig: {

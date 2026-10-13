@@ -63,6 +63,49 @@ export function applyChannelHeartbeat(
   return decision;
 }
 
+const STATUS_PROGRESS: Record<string, number> = { scheduled: 1, live: 2, final: 3 };
+
+/**
+ * 직전 발송(lastScoreState) 대비 현재 스냅샷이 "뒤로 감기"인가 (#1311 삼순 B②).
+ * Naver-primary fallback 으로 소스가 잠깐 KBO(stale)로 바뀌면 점수/이닝이 후퇴할 수
+ * 있는데, broadcast/catch-up 이 그 옛 값을 덮어 카드가 8→5로 되감기는 P0 을 막는다.
+ * 경기 진행은 단조(점수·이닝·상태는 증가만) — 후퇴는 소스 불일치의 신호. 주자·볼카운트는
+ * 정상적으로 양방향 변하므로 판정에서 제외한다(scoreStateOf 측 0·1·2·3·7만 사용).
+ */
+export function isScoreStateRetreat(
+  lastScoreState: string | null,
+  scoreState: string,
+): boolean {
+  if (lastScoreState === null) return false;
+  const prev = lastScoreState.split("|");
+  const next = scoreState.split("|");
+  if (prev.length < 8 || next.length < 8) return false;
+  const pAway = Number(prev[0]);
+  const pHome = Number(prev[1]);
+  const pInn = Number(prev[2]);
+  const nAway = Number(next[0]);
+  const nHome = Number(next[1]);
+  const nInn = Number(next[2]);
+  if ([pAway, pHome, pInn, nAway, nHome, nInn].some((v) => !Number.isFinite(v))) {
+    return false; // 파싱 불가 → 오탐 방지(후퇴 아님으로)
+  }
+  const pStatus = STATUS_PROGRESS[prev[7]] ?? 0;
+  const nStatus = STATUS_PROGRESS[next[7]] ?? 0;
+  // 알려진 상태(scheduled/live/final)끼리만 판정 — 취소/기타는 개입 안 함.
+  if (pStatus === 0 || nStatus === 0) return false;
+  // 점수 후퇴는 이닝과 무관하게 무조건 되감김이다(야구 점수는 단조) — #1311 삼순 B①.
+  // 이닝교대 lag 로 KBO fallback 이 half-inning 만 먼저 넘어가면(7말→8초) nRank>pRank 가
+  // 되어 rank 동일 구간 검사로는 점수 후퇴(8→5)를 놓친다. rank 이전에 선검사한다.
+  if (nAway < pAway || nHome < pHome) return true;
+  if (nStatus < pStatus) return true; // final→live, live→scheduled = 후퇴
+  if (nStatus > pStatus) return false; // live→final 등 전진
+  // 이닝 순위(회*2 + 말이면 1). 초=0, 말=1. 점수가 같을 때의 이닝 후퇴만 남음.
+  const pRank = pInn * 2 + (prev[3] === "true" ? 0 : 1);
+  const nRank = nInn * 2 + (next[3] === "true" ? 0 : 1);
+  if (nRank < pRank) return true; // 이닝 후퇴
+  return false; // 이닝 전진·동일 + 점수 비후퇴 → 후퇴 아님
+}
+
 /** 채널 update 최종 판정 입력 — base diff + heartbeat + 지명 catch-up 합성. */
 export interface ChannelUpdateResolutionInput extends ChannelPushDecisionInput {
   /** 마지막 성공 p10 broadcast 시각(ms). null = 미기록. */
@@ -70,7 +113,27 @@ export interface ChannelUpdateResolutionInput extends ChannelPushDecisionInput {
   nowMs: number;
   /** fast-path 유실 catch-up 지명 경기 여부 (forceCurrentStateGameIds). */
   forceCatchup: boolean;
+  /**
+   * 마지막 *성공* 발송 시각(ms, p10/p5 불문) — p5 코얼레싱 기준. null = 미기록(구 행
+   * backfill 전) → 코얼레싱 미적용(기존 동작 유지, fail-open이 아니라 diet 미적용일 뿐).
+   */
+  lastSendAtMs: number | null;
+  /**
+   * 마지막 성공 발송 콘텐츠 보존 여부(row.last_content_state 존재) — retreat 중
+   * heartbeat 를 "마지막 성공값 재발송"으로 살릴 수 있는지. false 면 기존대로 skip.
+   */
+  hasLastContent: boolean;
+  /**
+   * p5 코얼레싱 자격(삼순 2026-08-27 재리뷰 P1·재리뷰2 Blocker③) — *볼/스트라이크만*
+   * 바뀐 틱만 true. lastPlay(중계 한 줄)·타자·투수·아웃 변화는 즉시성 유지라 false.
+   * 호출측(pass)이 isBallStrikeOnlyChange(직전 발송 last_state_hash, 이번 fullHash)로
+   * 계산 — last_content_state(복구 재료, 득점 시에만 갱신) 기준이 아님에 주의.
+   */
+  p5CoalesceEligible?: boolean;
 }
+
+/** 스킵 사유 — 관제/원장 로깅용 (삼순 2026-08-27 게이트 ⓐ). */
+export type ChannelSkipReason = "retreat" | "p5_coalesced" | "no_change";
 
 export interface ChannelUpdateResolution {
   decision: ChannelPushDecision;
@@ -78,7 +141,25 @@ export interface ChannelUpdateResolution {
   isHeartbeat: boolean;
   /** 지명 catch-up으로 p10 승격된 발송(관제 catchups 카운터용). */
   isForcedCatchup: boolean;
+  /** send=false 일 때의 사유. send=true 면 undefined. */
+  skipReason?: ChannelSkipReason;
+  /**
+   * true = 현재 스냅샷 대신 *마지막 성공 발송 콘텐츠*(row.last_content_state)를 p10
+   * 재발송하라(retreat 중 heartbeat 복구 — 삼순 2026-08-27 조건①). 후퇴 스냅샷을 보내는
+   * 게 아니라 이미 성공한 더 높은 값을 재전송하므로 되감김이 아니다. 유실 단말 복구용.
+   */
+  resendLastContent: boolean;
 }
+
+/**
+ * p5 코얼레싱 간격 — 마지막 성공 발송 후 이 간격이 지나기 전의 *볼/스트라이크-only*
+ * p5 는 스킵한다(발사율 다이어트, 삼순 2026-08-27 조건②).
+ * 범위(삼순 재리뷰 P1 반영): p5CoalesceEligible=true(볼/스트라이크만 변화)일 때만 —
+ * lastPlay(중계 한 줄)·타자·투수·아웃 변화 p5 는 코얼레싱 비대상으로 즉시 발송 유지.
+ * 트레이드오프(명시): 볼/스트라이크 카드 반영 지연 상한이 기존 ~20s(서브틱)에서
+ * 최대 60s+서브틱 = ~80s. 점수/이닝/주자/상태(p10)·heartbeat·지명 catch-up 은 그대로.
+ */
+export const P5_COALESCE_MS = 60 * 1000;
 
 /**
  * 채널 update 최종 판정 — base diff → heartbeat → 지명 catch-up 순 합성 (순수 함수,
@@ -94,21 +175,68 @@ export interface ChannelUpdateResolution {
 export function resolveChannelUpdateDecision(
   i: ChannelUpdateResolutionInput,
 ): ChannelUpdateResolution {
+  // 되감기 가드(#1311 삼순 Blocker②): 직전 발송보다 점수/이닝/상태가 뒤로 가는
+  // 스냅샷은 broadcast·지명 catch-up 모두 스킵한다. Naver-primary 소스가 한 틱 실패해
+  // KBO(stale)로 fallback 되면 카드가 8→5로 되감을 수 있는데(forced catch-up 은 hash-skip
+  // 을 우회해 옥 값을 강제로 덮음), 경기 진행은 단조라 후퇴 = 소스 불일치 신호다.
+  // ⚠️ P1 트레이드오프(삼순 명시): 후퇴 지속 중에는 2분 heartbeat 도 같이 스킵된다.
+  // 이는 의도된 것 — 후퇴 스냅샷을 heartbeat 로 보내면 그게 곧 되감기다. 카드는 마지막
+  // 성공발송(더 높은 값)에 머물고, Naver 회복·실제 전진(점수 ↑) 시 갱신된다. 유실 단말은
+  // 다음 실제 변화에서 복구(이미 높은 값을 1회 성공발송한 뒤 후퇴 구간에 진입한 것).
+  if (isScoreStateRetreat(i.lastScoreState, i.scoreState)) {
+    // retreat 중 heartbeat 복구(삼순 2026-08-27 조건①): 후퇴 지속이 heartbeat 간격을
+    // 넘기면 *마지막 성공 발송 콘텐츠*를 p10 재발송해 "카드 수 분 정지"의 안전망을 건다.
+    // 후퇴 스냅샷 전송이 아니므로 되감김 없음. 보존 콘텐츠가 없으면(구 행) 기존대로 skip.
+    const heartbeatDue =
+      i.lastP10AtMs === null || i.nowMs - i.lastP10AtMs >= CHANNEL_HEARTBEAT_INTERVAL_MS;
+    if (heartbeatDue && i.hasLastContent) {
+      return {
+        decision: { send: true, priority: "10" },
+        isHeartbeat: true,
+        isForcedCatchup: false,
+        resendLastContent: true,
+      };
+    }
+    return {
+      decision: { send: false },
+      isHeartbeat: false,
+      isForcedCatchup: false,
+      skipReason: "retreat",
+      resendLastContent: false,
+    };
+  }
   const base = decideChannelPush(i);
   const heartbeat = applyChannelHeartbeat(base, i.lastP10AtMs, i.nowMs);
   const naturalP10 = heartbeat.send && heartbeat.priority === "10";
   const isForcedCatchup = i.forceCatchup && !naturalP10;
-  const decision: ChannelPushDecision = isForcedCatchup
+  let decision: ChannelPushDecision = isForcedCatchup
     ? { send: true, priority: "10" }
     : heartbeat;
+  let skipReason: ChannelSkipReason | undefined;
+  // p5 코얼레싱(삼순 2026-08-27 조건②): heartbeat 승격도 catch-up 승격도 아닌 순수 p5
+  // (볼카운트/타자/lastPlay-only 변화)는 마지막 성공 발송 후 P5_COALESCE_MS 이내면 스킵.
+  // last_send_at 미기록(구 행)은 코얼레싱 미적용 — diet 는 opt-in 관측 후 좁힌다.
+  if (
+    decision.send &&
+    decision.priority === "5" &&
+    i.p5CoalesceEligible === true &&
+    i.lastSendAtMs !== null &&
+    i.nowMs - i.lastSendAtMs < P5_COALESCE_MS
+  ) {
+    decision = { send: false };
+    skipReason = "p5_coalesced";
+  }
+  if (!decision.send && skipReason === undefined) skipReason = "no_change";
   const isHeartbeat = naturalP10 && !(base.send && base.priority === "10");
-  return { decision, isHeartbeat, isForcedCatchup };
+  return { decision, isHeartbeat, isForcedCatchup, skipReason, resendLastContent: false };
 }
 
 /** 레거시 per-토큰 update 발송 판정 입력 (#664 catch-up). */
 export interface LegacyTokenUpdateInput {
   /** 경기 단위 skip/priority 판정(decideChannelPush 결과). null = 판정 재료 없음. */
   decision: ChannelPushDecision | null;
+  /** 되감김 스냅샷 여부(#1311 삼순 B②) — true 면 catch-up 보다 우선해 무조건 skip. */
+  isRetreat?: boolean;
   /** 토큰 등록/갱신 시각(ms). null = updated_at 미기록(레거시 행). */
   tokenUpdatedAtMs: number | null;
   /** 직전 상태 기록 시각(ms) — 상태 행 updated_at. null = 상태 행 없음. */
@@ -141,6 +269,9 @@ export type LegacyTokenUpdateDecision =
  * 과다 발송은 경기당 bootstrap 틱 1회로 유계(cursor 생성 전 = 기존 매분 p10과 동일 동작).
  */
 export function decideLegacyTokenUpdate(input: LegacyTokenUpdateInput): LegacyTokenUpdateDecision {
+  // 되감김은 catch-up(늦은 토큰/bootstrap)보다 우선한다 — 후퇴 스냅샷은 어떤 경로로도 발송하지
+  // 않는다(#1311 삼순 B①: broadcast forceCatchup 우회와 동일 클래스, 여기선 catch-up 이 못 뚫게).
+  if (input.isRetreat === true) return { send: false };
   const isCatchUp =
     input.lastWriteAtMs === null
       // bootstrap 미완료 — 비교 기준(cursor)이 없어 늦은 토큰을 구분할 수 없다. 전 토큰
@@ -268,6 +399,36 @@ export function fullStateHashOf(cs: Record<string, unknown>): string {
     scoreStateOf(cs),
     cs.balls, cs.strikes, cs.outs, cs.pitcherName, cs.batterName, cs.lastPlay ?? "",
   ].join("|");
+}
+
+/**
+ * 직전 발송 fullStateHash 대비 이번 스냅샷이 *볼/스트라이크만* 바뀐 변화인지
+ * (p5 코얼레싱 자격 — 삼순 2026-08-27 재리뷰2 Blocker③).
+ *
+ * 기준을 last_content_state(점수 전진 시에만 갱신 — 복구 재료)가 아니라 *매 성공 발송마다
+ * 전진하는* last_state_hash 로 잡는다. 복구 재료와 코얼레싱 커서는 용도가 달라 분리해야
+ * 득점 후에도 코얼레싱이 살아있다(content 기준이면 타자 한 번 바뀌는 순간 다음 득점까지
+ * 영구 비활성 = diet 무력화).
+ *
+ * 필드 인덱스는 fullStateHashOf 의 join 순서에 결속: [0..7]=scoreStateOf 8필드,
+ * [8]=balls, [9]=strikes, [10]=outs, [11]=pitcherName, [12]=batterName, [13..]=lastPlay
+ * (중계 텍스트에 "|" 가 있으면 뒤로 밀리므로 slice(13).join 으로 원문 복원 비교).
+ * score축 동일(=base p5)은 호출측 판정이 보장하므로 여기선 [10..] 만 본다.
+ */
+export function isBallStrikeOnlyChange(
+  prevFullHash: string | null,
+  nextFullHash: string,
+): boolean {
+  if (prevFullHash === null) return false;
+  const prev = prevFullHash.split("|");
+  const next = nextFullHash.split("|");
+  if (prev.length < 14 || next.length < 14) return false; // 구 포맷/파싱 불가 → 비대상(fail-open)
+  return (
+    prev[10] === next[10] && // outs
+    prev[11] === next[11] && // pitcherName
+    prev[12] === next[12] && // batterName
+    prev.slice(13).join("|") === next.slice(13).join("|") // lastPlay 원문
+  );
 }
 
 /**
@@ -447,13 +608,8 @@ export function isLiveBornChannel(row: ChannelBornRef, activeKeys: Set<string>):
   );
 }
 
-/**
- * '갱신 수신(updatable)' 유저 수 — started ∩ (update토큰 ∪ 유효 채널ACK ∪ 유효 채널출생).
- * 채널출생(p2s payload에 channelId 내장 발송 성공 서버 기록)은 네이티브 ACK가 아직/영영
- * 안 와도 broadcast로 갱신을 받으므로 updatable — ACK만 인정하면 gap 과대계상(2026-07-23
- * 실측). ⚠️ channelBornUsers는 반드시 isLiveBornChannel(세대 일치) 통과 유저만 담아야
- * 한다 — 출생 채널이 재생성으로 교체된 행을 그대로 세면 갱신 못 받는 카드를 수신으로
- * 오인한다(삼순 라운드2 blocker). 과거 행은 세대 기록이 없어(backfill 불가) 종전과 동일 집계.
+/** Device evidence only. APNs acceptance/channel_born is not a device receipt.
+ * Kept channelBornUsers in the input contract for existing callers; it is diagnostic only.
  */
 export function countUpdatableUsers(i: {
   started: Iterable<string>;
@@ -463,16 +619,13 @@ export function countUpdatableUsers(i: {
 }): number {
   let n = 0;
   for (const u of i.started) {
-    if (i.tokenUsers.has(u) || i.channelAckUsers.has(u) || i.channelBornUsers.has(u)) n += 1;
+    if (i.tokenUsers.has(u) || i.channelAckUsers.has(u)) n += 1;
   }
   return n;
 }
 
-// ── 무음 wake 대상 선별 (③ wake 오염 제거, 삼순 재리뷰 2026-07-23) ──────
-// 유효 채널출생 카드는 broadcast로 갱신을 받아 wake가 불필요한데, 이를 wake 대상에
-// 넣으면 FCM 무음 wake가 낭비될 뿐 아니라 wake_attempted_at이 기록돼 어드민의
-// wake 구제 성공률 분모가 오염된다(시도할 필요가 없던 카드가 분모에 섞임).
-// gap 판정과 attempted 기록이 같은 행 집합에서 나오도록 순수 함수로 고정한다.
+// ACK-less accepted starts must remain visible to bounded recovery.
+export const START_ACK_GRACE_MS = 2 * 60 * 1000;
 
 export interface WakeGapRow extends ChannelBornRef {
   user_id: string;
@@ -480,14 +633,9 @@ export interface WakeGapRow extends ChannelBornRef {
   created_at: string | null;
 }
 
-/**
- * 무음 wake 대상 gap 행 선별 — wake 발송 대상과 wake_attempted_at 기록이 모두
- * 이 반환값에서만 파생돼야 한다(분모 오염 방지 계약).
- * - 유효 채널출생 행 제외(isLiveBornChannel — 어드민 updatable 합산과 동일 기준):
- *   출생 채널이 지금도 active면 토큰/ACK 없이도 broadcast 수신 — wake 불필요·attempted
- *   기록 금지. 출생 채널이 교체됐으면(세대 불일치) gap으로 복귀 = wake 대상(삼순 라운드2).
- * - updatableKeys(`user|game` — update 토큰 or 유효 채널 ACK) 보유 행 제외.
- * - scheduled 경기 행은 카드 발급(created_at) 후 wakeWindowMs 이내만(그 뒤는 live 전환 창이 백스톱).
+/** Select unconfirmed starts, not confirmed display failures. Give APNs starts
+ * two minutes for native registration before attempting a silent rescan.
+ * The caller atomically claims newly included channel-born recovery rows.
  */
 export function selectWakeGapRows<T extends WakeGapRow>(
   rows: T[],
@@ -498,7 +646,10 @@ export function selectWakeGapRows<T extends WakeGapRow>(
   wakeWindowMs: number,
 ): T[] {
   return rows.filter((r) => {
-    if (isLiveBornChannel(r, activeChannelKeys)) return false;
+    if (isLiveBornChannel(r, activeChannelKeys)) {
+      const age = nowMs - Date.parse(r.created_at ?? "");
+      if (!Number.isFinite(age) || age < START_ACK_GRACE_MS) return false;
+    }
     if (updatableKeys.has(`${r.user_id}|${r.game_id}`)) return false;
     if (scheduledGameIds.has(r.game_id)) {
       return r.created_at !== null && nowMs - new Date(r.created_at).getTime() <= wakeWindowMs;
@@ -695,17 +846,33 @@ export async function markChannelBornGroups(params: {
 
 /** start p2s 발송 chunk 크기 — chunk당 APNs 동시 발송 + 마킹 1배치(≤200) 내구 저장. */
 export const START_SEND_CHUNK_SIZE = 100;
+/** 선점 왕복은 기존 200명 단위 유지. 종료 시 미발송 선점 잔존 상한도 200명. */
+export const START_CLAIM_CHUNK_SIZE = 200;
 
 export async function runStartSendChunks<T>(params: {
   items: readonly T[];
   chunkSize: number;
+  claimChunkSize?: number;
+  /** 발송 직전 유계 배치만 선점. 충돌 항목은 제외하며 null이면 이후 chunk도 중단한다. */
+  prepareChunk?: (items: readonly T[]) => Promise<readonly T[] | null>;
   /** 항목 1건 발송 — 실패는 내부에서 집계(throw 금지 계약, 실배선은 자체 catch). */
   sendOne: (item: T) => Promise<void>;
   /** 직전 chunk 성공분 내구 저장 — 다음 chunk 발송 시작 전에 반드시 완료. */
   persistChunk: () => Promise<void>;
 }): Promise<void> {
-  for (let i = 0; i < params.items.length; i += params.chunkSize) {
-    await Promise.all(params.items.slice(i, i + params.chunkSize).map(params.sendOne));
-    await params.persistChunk();
+  const claimSize = params.claimChunkSize ?? params.chunkSize;
+  if (!Number.isInteger(claimSize) || claimSize <= 0 ||
+      !Number.isInteger(params.chunkSize) || params.chunkSize <= 0) {
+    throw new RangeError("chunk sizes must be positive integers");
+  }
+  for (let i = 0; i < params.items.length; i += claimSize) {
+    const candidates = params.items.slice(i, i + claimSize);
+    const chunk = params.prepareChunk ? await params.prepareChunk(candidates) : candidates;
+    if (chunk === null) return;
+    // 충돌만 있는 배치 뒤에도 미선점 대상이 있을 수 있으므로 조기 break하지 않는다.
+    for (let j = 0; j < chunk.length; j += params.chunkSize) {
+      await Promise.all(chunk.slice(j, j + params.chunkSize).map(params.sendOne));
+      await params.persistChunk();
+    }
   }
 }

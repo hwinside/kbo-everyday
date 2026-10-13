@@ -53,6 +53,12 @@ export function resolveStadiumByName(sNm: string | null | undefined): StadiumCoo
   return null;
 }
 
+/** 사용자 원문에 등장한 모든 구장을 동일 alias SSOT로 해석한다. */
+export function resolveStadiumsInText(text: string): StadiumCoord[] {
+  return STADIUMS.filter((s) => s.tokens.some((token) => text.includes(token)))
+    .map(({ lat, lng, name, radiusM }) => ({ lat, lng, name, radiusM }));
+}
+
 /** 하버사인 거리(m) */
 export function haversineMeters(
   lat1: number,

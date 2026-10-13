@@ -27,6 +27,7 @@ import {
 import { UNSUPPORTED_SEASON_ANSWER } from "../../src/lib/baseball-qa/stats/season-record";
 
 const glossary: GlossaryEntry[] = [
+  { term: "삼진", aliases: ["k", "strikeout"], answer: "타자가 스트라이크 세 개를 당하는 것입니다." },
   { term: "유격수", aliases: ["ss", "숏스탑", "shortstop"], answer: "2루와 3루 사이를 지키는 내야 수비의 핵심입니다." },
   { term: "도루", aliases: ["stolen base", "sb"], answer: "주자가 투구 사이에 다음 베이스를 훔치는 플레이입니다." },
   { term: "40-40 클럽", aliases: ["40-40", "40-40클럽", "포티포티클럽"], answer: "한 시즌에 홈런 40개와 도루 40개를 동시에 달성하는 기록입니다." },
@@ -85,10 +86,14 @@ async function main() {
     const c = glossaryCandidatesIn(glossary, "40-40 클럽이 뭐야?");
     assert.equal(c[0]?.term, "40-40 클럽");
   }
-  // 한 글자 alias(`r`)는 우연 포함이 너무 쉬워 후보가 되지 않는다 (삼순: tautology 제거 — 직접 단정).
+  // Closed one-letter Latin aliases require a complete Latin token; the mapper owns meaning.
   {
     const c = glossaryCandidatesIn(glossary, "r 이 뭐야?");
-    assert.ok(!c.some((e) => e.term === "득점"), "한 글자 alias가 후보로 잡혔다");
+    assert.ok(c.some((e) => e.term === "득점"));
+    assert.deepEqual(glossaryCandidatesIn(glossary, "K가 뭐어").map(e => e.term), ["삼진"]);
+    for (const question of ["AK가 뭐야", "K9이 뭐야", "skate 설명", "work 뜻"]) {
+      assert.deepEqual(glossaryCandidatesIn(glossary, question), [], question);
+    }
     const single = glossaryCandidatesIn(glossary, "리그가 뭐야?");
     assert.deepEqual(single.map((e) => e.term), []);
   }
@@ -103,12 +108,26 @@ async function main() {
     assert.deepEqual(six, [], "후보 초과 질문이 빈 배열이 아니다");
   }
 
+  // End-to-end: abbreviation candidate goes through the existing semantic seam.
+  {
+    const state = freshState({ reply: "삼진" });
+    const result = await answerQuestion("u1", "K가 뭐어", makeDeps(state));
+    assert.equal(result.source, "dictionary");
+    assert.equal(result.answer, glossary.find(e => e.term === "삼진")!.answer);
+    assert.deepEqual(state.calls[0]?.candidates, ["삼진"]);
+  }
+  {
+    const state = freshState({ reply: null });
+    const result = await answerQuestion("u1", "온도 단위 K가 뭐야", makeDeps(state));
+    assert.notEqual(result.source, "dictionary");
+  }
+
   // ── 매핑 성공: 검수 답변이 그대로 서빙된다 ─────────────────────────
   {
     const state = freshState({ reply: "유격수" });
     const result = await answerQuestion("u1", "유격수 포지션이 뭐야?", makeDeps(state));
     assert.equal(result.source, "dictionary");
-    assert.equal(result.answer, glossary[0].answer); // 생성문이 아니라 검수 원문
+    assert.equal(result.answer, glossary.find(entry => entry.term === "유격수")!.answer); // 생성문이 아니라 검수 원문
     assert.equal(state.calls.length, 1);
     assert.deepEqual(state.calls[0].candidates, ["유격수"]);
     assert.equal(state.llmCalls, 0); // generic LLM 미경유

@@ -53,6 +53,11 @@ async function loadSchema(): Promise<Db> {
       rag_attempt_path text,
       rag_question_numeric_count integer,
       rag_discard_numeric_count integer,
+      -- 근거 top1 거리 관측 칸 (migration 20260827130000) — 위 칸들과 같은 이유로 여기
+      -- 없으면 실 INSERT 가 42703 으로 죽는다. buildQuestionLogRow 가 항상 보낸다.
+      -- 🔴 이 게이트가 baseline RED 를 내며 실제로 잡아준 축이다: 컬럼을 추가하면서
+      --   fixture 스키마를 같이 안 옮기면, 프로덕션에서 로그 INSERT 가 통째로 죽는다.
+      rag_evidence_top_distance double precision,
       match_path text,
       answer text,
       input_tokens integer,
@@ -94,6 +99,11 @@ async function loadSchema(): Promise<Db> {
     "supabase/migrations/20260813203000_baseball_genius_question_correction_picker.sql", "utf8",
   ).replaceAll("public.", "");
   await db.exec(stripRoleStatements(ours));
+  // buildQuestionLogRow 가 항상 보내는 관측 칸은 실제 migration 으로 적용한다.
+  const observation = readFileSync(
+    "supabase/migrations/20260922030000_classifier_observation.sql", "utf8",
+  );
+  await db.exec(observation);
   return db;
 }
 

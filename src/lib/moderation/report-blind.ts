@@ -6,11 +6,15 @@
 /** 서로 다른 신고자 수가 이 값 이상이면 자동 블라인드 대상이 된다. (참고 상수) */
 export const REPORT_BLIND_THRESHOLD = 3;
 
-export type ReportTargetType = "post" | "comment" | "chat";
+export type ReportTargetType = "post" | "comment" | "chat" | "game_review" | "game_review_comment";
 
 /** 안내 쪽지에 들어갈 대상 유형 한글 라벨. */
 export function blindTargetLabel(targetType: string): string {
   switch (targetType) {
+    case "game_review":
+      return "경기 한줄평";
+    case "game_review_comment":
+      return "경기 한줄평 댓글";
     case "chat":
       return "채팅 메시지";
     case "post":

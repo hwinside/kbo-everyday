@@ -1,3 +1,4 @@
+import { summarizeRegularSeasonResults } from "@/lib/crawler/game-series";
 import { NextRequest, NextResponse } from "next/server";
 import { getMonthGames } from "@/lib/crawler/season-games-cache";
 import { TEAMS } from "@/lib/constants/teams";
@@ -27,8 +28,6 @@ export async function GET(req: NextRequest) {
       (g) => g.awayTeamId === team.id || g.homeTeamId === team.id
     );
 
-    let wins = 0, losses = 0, draws = 0;
-
     const days = teamGames.map((g) => {
       const isHome = g.homeTeamId === team.id;
       const oppId = isHome ? g.awayTeamId : g.homeTeamId;
@@ -39,9 +38,9 @@ export async function GET(req: NextRequest) {
         const myScore = isHome ? g.homeScore : g.awayScore;
         const oppScore = isHome ? g.awayScore : g.homeScore;
         if (myScore !== null && oppScore !== null) {
-          if (myScore > oppScore) { result = "W"; wins++; }
-          else if (myScore < oppScore) { result = "L"; losses++; }
-          else { result = "D"; draws++; }
+          if (myScore > oppScore) { result = "W"; }
+          else if (myScore < oppScore) { result = "L"; }
+          else { result = "D"; }
         }
       }
 
@@ -52,6 +51,8 @@ export async function GET(req: NextRequest) {
         day,
         date: g.date,
         gameId: g.gameId,
+        srId: g.srId,
+        gameLabel: g.gameLabel,
         opponent: oppTeam
           ? { id: oppTeam.id, slug: oppTeam.slug, shortName: oppTeam.shortName, name: oppTeam.name }
           : { id: oppId, slug: "", shortName: "", name: "" },
@@ -70,11 +71,10 @@ export async function GET(req: NextRequest) {
       };
     });
 
-    const total = wins + losses + draws;
-    const winRate = total > 0 ? wins / total : 0;
+    const summary = summarizeRegularSeasonResults(days);
 
     return NextResponse.json(
-      { team: teamSlug, month, summary: { wins, losses, draws, winRate }, days },
+      { team: teamSlug, month, summary, days },
       { headers: { "Cache-Control": "public, s-maxage=300, stale-while-revalidate=600" } }
     );
   } catch (e: unknown) {

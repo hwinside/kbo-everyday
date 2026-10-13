@@ -18,6 +18,8 @@ export interface Post {
   video_urls?: string[];
   like_count: number;
   comment_count: number;
+  /** 하트+댓글 생성 컬럼(20260905 migration). 구 select 경로엔 없을 수 있어 optional. */
+  popularity?: number | null;
   created_at: string;
   updated_at?: string | null;
   // 조회수(관리자 전용 노출) — 2026-07-21

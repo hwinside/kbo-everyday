@@ -1,14 +1,17 @@
 "use client";
 
+import { fetchLeagueStats } from "@/lib/stats/client-league-stats";
+
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import Link from "next/link";
 import Image from "next/image";
+import dynamic from "next/dynamic";
 
 import { useVisibilityAwareInterval } from "@/lib/hooks/useVisibilityAwareInterval";
+import { fetchTodayGameBatch } from "@/lib/player-today-game-batch";
 
 import PlayerAvatar from "@/components/ui/PlayerAvatar";
 import SectionHeader from "@/components/ui/SectionHeader";
-import MiniTrendSparkline from "@/components/home/MiniTrendSparkline";
 import { getPlayerPhotoUrl } from "@/lib/constants/player-photos";
 import { getTeamById } from "@/lib/constants/teams";
 import { getTeamColor } from "@/lib/utils/team";
@@ -27,6 +30,13 @@ import type { FavoritePlayer } from "@/lib/store/favorites";
 import batterStats from "@/lib/constants/stats-2026-batters.json";
 import pitcherStats from "@/lib/constants/stats-2026-pitchers.json";
 import rosterData from "@/lib/constants/players-roster.json";
+
+// Only load recharts when a favorite has enough weekly data to render a chart.
+// Reserve its height while loading so the surrounding card does not shift.
+const MiniTrendSparkline = dynamic(() => import("@/components/home/MiniTrendSparkline"), {
+  ssr: false,
+  loading: () => <div className="h-[34px] w-full" aria-hidden="true" />,
+});
 
 interface RosterEntry {
   name: string;
@@ -169,9 +179,8 @@ export default function FavoritePlayersSection({ favPlayers, refreshNonce = 0 }:
     const needPitcher = favPlayers.some((p) => classifyIsPitcher(p));
     // 부문 랭킹(타이틀 라벨)은 랭킹 페이지와 동일한 /api/stats 리그 전체에서 산출
     const fetchLeague = (type: "batter" | "pitcher") =>
-      fetch(`/api/stats?type=${type}&season=2026`)
-        .then((res) => (res.ok ? res.json() : { stats: [] }))
-        .then((data) => (Array.isArray(data?.stats) ? (data.stats as StatLike[]) : []))
+      fetchLeagueStats(type, 2026)
+        .then((data) => (!Array.isArray(data) && Array.isArray(data?.stats) ? (data.stats as StatLike[]) : []))
         .catch(() => [] as StatLike[]);
     (async () => {
       const [results, batterLeague, pitcherLeague] = await Promise.all([
@@ -234,21 +243,16 @@ export default function FavoritePlayersSection({ favPlayers, refreshNonce = 0 }:
   const loadTodayGames = useCallback(async () => {
     if (favPlayers.length === 0) return;
     const gen = todayGamesGenRef.current;
-    const entries = await Promise.all(
-      favPlayers.map(async (p) => {
-        const pos = classifyIsPitcher(p) ? "투수" : "타자";
-        const r: TodayGame | null = await fetch(
-          `/api/player-today-game?team=${p.teamId}&name=${encodeURIComponent(p.name)}&pos=${encodeURIComponent(pos)}`,
-        )
-          .then((res) => (res.ok ? res.json() : null))
-          .catch(() => null);
-        return [p.playerId, r] as const;
-      }),
-    );
+    const items = await fetchTodayGameBatch(favPlayers.map((p) => ({
+      playerId: p.playerId,
+      teamId: p.teamId,
+      name: p.name,
+      pos: classifyIsPitcher(p) ? "투수" : "타자",
+    })));
     // 더 최신 로드(favKey 전환 등)가 시작했으면 late 응답 폐기 — A(old)→B(new) 덮어쓰기 방지.
     if (gen !== todayGamesGenRef.current) return;
     const m: Record<string, TodayGame> = {};
-    for (const [id, r] of entries) if (r && r.show) m[id] = r;
+    for (const [id, r] of Object.entries(items)) if (r && r.show) m[id] = r;
     setTodayGames(m);
     // favKey로 최애선수 변경만 감지 (favPlayers 배열 identity 변동에 따른 재요청 방지)
     // eslint-disable-next-line react-hooks/exhaustive-deps

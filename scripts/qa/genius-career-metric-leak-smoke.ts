@@ -494,7 +494,7 @@ function e2eDeps(): QaDeps {
 const FORBIDDEN_CALLS = [
   "llm",
   "rag.search", "rag.llm",
-  "rag.official", "rag.official.llm",
+  "rag.official.llm", // #1504: bounded official search allowed; this non-recordbook fixture must never reach generation.
   "rag.team.llm",
   "rag.news", "rag.news.llm",
   "glossary.map",
@@ -545,11 +545,12 @@ checkAsync("P0(종단): #1159 지원 intent 는 hold 보다 먼저 — 통산 �
   }
 });
 
-checkAsync("P0(종단): 순위형은 시점 무관 exact history_hold + 조회 호출 0", async () => {
+checkAsync("P0(종단): 순위형은 시점 무관 exact history_hold + 공식 검색 최대 1회/기타 호출 0", async () => {
   // ⚠️ 삼순 #1164 6차 P0. 5차에는 career span 만 막아 **연도·현재가 비켜갔다**:
   //   `최형우 2020년 홈런 1위였어?` -> 개인값 28 / `올해 홈런 1위야?` -> 현재값.
   // 계약: 통산·연도·현재 어느 시점이든 순위형은 **exact history_hold**,
-  //   그리고 LLM·RAG·cache·dictionary·기록조회 **호출 0**(숨은 호출 후 hold 도 실패).
+  //   #1504 공식 기록집 검색만 최대 1회 허용. 비기록집 fixture는 탈락해야 하며
+  //   LLM·기타 RAG·cache·개인 기록조회는 여전히 호출 0이다.
   for (const question of [
     "최형우 2020년 홈런 1위였어?",   // 삼순 6차 exact (year)
     "최형우 올해 홈런 1위야?",       // 삼순 6차 exact (current)
@@ -565,6 +566,7 @@ checkAsync("P0(종단): 순위형은 시점 무관 exact history_hold + 조회 �
       result.source, "history_hold",
       `순위형이 exact history_hold 가 아니다: ${question} -> ${result.source} :: ${result.answer}`,
     );
+    assert.ok((calls["rag.official"] ?? 0) <= 1, "official recordbook lookup must remain bounded");
     const called = FORBIDDEN_CALLS.filter((k) => (calls[k] ?? 0) > 0);
     assert.deepEqual(
       called, [],
@@ -573,10 +575,10 @@ checkAsync("P0(종단): 순위형은 시점 무관 exact history_hold + 조회 �
   }
 });
 
-checkAsync("P0(종단): 순위형 4축 × 공식 어휘 전수 — exact history_hold + 호출 0", async () => {
+checkAsync("P0(종단): 순위형 4축 × 공식 어휘 전수 — exact history_hold + 공식 검색 최대 1회/기타 호출 0", async () => {
   // ⚠️ 종전 이 전수는 ①지원 지표 9개를 제외해 false-green 이었고(5차) ②`blocked/error/
   //   unsure` 도 통과시켰다(6차). 지금은 전 어휘를 태우고 **exact history_hold** 만 통과,
-  //   그리고 매 질문마다 조회·생성 경로 호출 0 을 함께 확인한다.
+  //   공식 기록집 검색 최대 1회 외 생성·개인값 조회 호출 0을 확인한다.
   const forms: Array<(term: string) => string> = [
     (term) => `통산 ${term} 1위 누구야?`,
     (term) => `최형우 통산 ${term} 1위야?`,
@@ -603,6 +605,7 @@ checkAsync("P0(종단): 순위형 4축 × 공식 어휘 전수 — exact history
         continue;
       }
       if (result.source !== "history_hold") bad.push(`${question} -> source=${result.source}`);
+      assert.ok((calls["rag.official"] ?? 0) <= 1, "official recordbook lookup must remain bounded");
       const called = FORBIDDEN_CALLS.filter((k) => (calls[k] ?? 0) > 0);
       if (called.length > 0) bad.push(`${question} -> calls=${called.join(",")}`);
     }
@@ -612,7 +615,7 @@ checkAsync("P0(종단): 순위형 4축 × 공식 어휘 전수 — exact history
   assert.equal(checked, forms.length * KBO_OFFICIAL_METRIC_TERMS.length);
   assert.deepEqual(
     bad, [],
-    `순위형 ${bad.length}건이 계약 위반(exact history_hold + 호출 0):\n  ${bad.slice(0, 12).join("\n  ")}`,
+    `순위형 ${bad.length}건이 계약 위반(exact history_hold + 공식 검색 최대 1회/기타 호출 0):\n  ${bad.slice(0, 12).join("\n  ")}`,
   );
 });
 

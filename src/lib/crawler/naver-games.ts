@@ -1,3 +1,6 @@
+import { REGULAR_SEASON_WINDOWS, isWithinRegularSeasonWindow } from "@/lib/constants/season";
+import { seriesIdFromNaverId } from "./game-series";
+import { rememberGameSeries } from "./resolve-game-series";
 // Naver schedule/games 기반 경기목록 fallback — fetchGames(KBO GetKboGameList)가
 // 실패(throw/timeout/스키마 열화)할 때 동일한 KboGame[] 형태로 일정+라이브 스코어를
 // 대체 공급한다.
@@ -36,30 +39,18 @@ const NAVER_SERVICEABLE_SR_IDS = new Set<string>([DEFAULT_ALL_SR_ID, REGULAR_SEA
  *
  * 2026 근거(KBO 공식 정규시즌 일정 발표 2025-12-19, 스포츠경향 202512191538003 보도):
  * - 개막 2026-03-28(토), 팀당 144경기·총 720경기.
- * - 9/6 까지 팀당 135경기 우선 편성, 잔여 45경기(우천 취소분 포함)는 추후 편성 → 공식 '정규
- *   종료일' 은 유동. 9/30 이후는 무경기로 단정하지 않고 fail-close 한다. 잔여 일정이 확정되면
- *   검증된 정규 경기 날짜를 별도 허용해야 한다.
+ * - 2026-09-30 KBO 2차 잔여 일정: 10/12까지 정규경기·예비일 편성.
+ *   https://www.koreabaseball.com/MediaNews/Notice/View.aspx?bdSe=12172
+ *   첨부 일정표의 10/2는 무경기, 10/8은 예비일이다. 빈 날도 양 소스 검증은 유지한다.
+ *   추가 우천 순연 가능성이 명시돼 실제 종료 확정(finalized)은 하지 않는다.
  * 미등록 연도는 fail-close(정규 일정 미확정 상태에서 추측 서빙 금지). 시즌이 바뀌면 갱신
  * (src/app/api/roster-moves/route.ts 의 SEASON_START 상수와 동일한 연 1회 운영).
  */
-export interface RegularSeasonWindow {
-  start: string;
-  /** 현재 공식 일정으로 확인된 마지막 날짜. finalized=true일 때만 실제 시즌 종료일이다. */
-  end: string;
-  /** KBO가 우천 순연분까지 포함한 실제 종료일을 확정했는가. */
-  finalized: boolean;
-}
+export { REGULAR_SEASON_WINDOWS, isWithinRegularSeasonWindow, type RegularSeasonWindow } from "@/lib/constants/season";
 
-export const REGULAR_SEASON_WINDOWS: Readonly<Record<string, RegularSeasonWindow>> = {
-  // 9/30은 우선 편성분의 경계일 뿐 실제 종료일이 아니다. 잔여 45경기 확정 전에는
-  // 이 날짜 뒤를 잘라 complete로 열지 않는다.
-  "2026": { start: "20260328", end: "20260930", finalized: false },
-};
-
-/** date(YYYYMMDD)가 검증된 정규시즌 window 안인가. 미등록 연도는 false(fail-close). */
-export function isWithinRegularSeasonWindow(date: string): boolean {
+export function isOutsideConfirmedRegularSeason(date: string): boolean {
   const w = REGULAR_SEASON_WINDOWS[date.slice(0, 4)];
-  return !!w && date >= w.start && date <= w.end;
+  return !!w && (date < w.start || (w.finalized && date > w.end));
 }
 
 /**
@@ -72,6 +63,8 @@ export function isRegularSeasonSrIdOutsideWindow(srId: string, date: string): bo
 
 interface NaverScheduleGame {
   gameId?: string;
+  roundCode?: string;
+  seriesGameNo?: number;
   gameDateTime?: string;
   stadium?: string;
   homeTeamCode?: string;
@@ -161,6 +154,8 @@ export function mapNaverGameToKbo(g: NaverScheduleGame, date: string, now: Date 
   const broadcastChannels = decodeBroadcast(g.broadChannel);
   return {
     gameId: `${date}${awayCode}${homeCode}${seq}`,
+    srId: rememberGameSeries(`${date}${awayCode}${homeCode}${seq}`, seriesIdFromNaverId(g.gameId ?? "") ?? (isWithinRegularSeasonWindow(date) ? "0" : undefined)),
+    gameLabel: g.seriesGameNo ? `${g.roundCode ?? ""} ${g.seriesGameNo}` : undefined,
     date,
     time: g.gameDateTime ? g.gameDateTime.slice(11, 16) : "",
     stadium: g.stadium ?? "",
@@ -246,7 +241,7 @@ function isSaneGame(g: KboGame): boolean {
 export async function fetchNaverGames(
   date: string,
   srId: string = DEFAULT_ALL_SR_ID,
-  opts?: { timeoutMs?: number; signal?: AbortSignal },
+  opts?: { timeoutMs?: number; signal?: AbortSignal; toDate?: string },
 ): Promise<KboGame[]> {
   if (!NAVER_SERVICEABLE_SR_IDS.has(srId)) {
     // 시범/포스트/올스타 '전용' srId — Naver 로는 series 보존 불가 → 오염 방지 위해 fail-close.
@@ -258,9 +253,12 @@ export async function fetchNaverGames(
     throw new Error(`Naver fallback: srId=0 인데 ${date} 는 정규시즌 window 밖 — 시범/포스트 오염 방지 fail-close`);
   }
   const naverDate = toNaverDate(date);
+  const endDate = opts?.toDate ?? date;
+  const span = Date.parse(toNaverDate(endDate)) - Date.parse(naverDate);
+  if (!Number.isFinite(span) || span < 0 || span > 62 * 86400000 || (endDate !== date && srId !== DEFAULT_ALL_SR_ID)) throw new Error("Unsupported schedule range");
   const url =
     `${NAVER_SCHEDULE_API}?fields=basic,superCategoryId,categoryName,stadium,statusInfo,broadChannel` +
-    `&upperCategoryId=kbaseball&categoryId=kbo&fromDate=${naverDate}&toDate=${naverDate}&size=20`;
+    `&upperCategoryId=kbaseball&categoryId=kbo&fromDate=${naverDate}&toDate=${toNaverDate(endDate)}&size=${endDate === date ? 20 : 500}`;
   const res = await fetch(url, {
     headers: {
       "Referer": "https://sports.news.naver.com/",
@@ -281,7 +279,11 @@ export async function fetchNaverGames(
   if (rawGames.some((g) => !isRawNaverGameSane(g))) {
     throw new Error("Naver schedule per-game sanity 실패(원본 필수 필드/상태/스코어 결측)");
   }
-  const games = rawGames.map((g) => mapNaverGameToKbo(g, date));
+  if (endDate !== date && rawGames.some(g => {
+    const actual = g.gameDateTime!.slice(0,10).replaceAll("-", "");
+    return !/^\d{8}$/.test(actual) || actual < date || actual > endDate || g.gameId!.slice(4,8) !== actual.slice(4);
+  })) throw new Error("Naver schedule range/date identity mismatch");
+  const games = rawGames.map((g) => mapNaverGameToKbo(g, endDate === date ? date : g.gameDateTime!.slice(0, 10).replaceAll("-", "")));
   // 매핑 gameId 유일성(회차 보존 실패로 DH 가 합쳐지면 상세/캐시/알림 키 충돌) — fail-close.
   if (new Set(games.map((g) => g.gameId)).size !== games.length) {
     throw new Error("Naver schedule gameId 중복(회차 보존 실패)");

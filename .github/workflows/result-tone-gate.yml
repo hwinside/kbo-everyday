@@ -56,6 +56,11 @@ on:
       - "src/app/(main)/page.tsx"
       - "src/components/home/**"
       - "scripts/qa/rsc-gate-trigger-contract.mjs"
+      - "scripts/qa/fixtures/home-popular-feed.mjs"
+      - "supabase/migrations/20260905043000_posts_popularity.sql"
+      - "scripts/qa/home-popular-posts-rpc-pg17.sh"
+      - "scripts/qa/home-popular-posts-rpc-pglite-gate.ts"
+      - "src/lib/supabase/useHomePopularFeed.ts"
   push:
     branches:
       - main
@@ -100,6 +105,11 @@ on:
       - "src/app/(main)/page.tsx"
       - "src/components/home/**"
       - "scripts/qa/rsc-gate-trigger-contract.mjs"
+      - "scripts/qa/fixtures/home-popular-feed.mjs"
+      - "supabase/migrations/20260905043000_posts_popularity.sql"
+      - "scripts/qa/home-popular-posts-rpc-pg17.sh"
+      - "scripts/qa/home-popular-posts-rpc-pglite-gate.ts"
+      - "src/lib/supabase/useHomePopularFeed.ts"
 
 jobs:
   result-tone:
@@ -127,6 +137,15 @@ jobs:
           docker cp scripts/qa/baseball-genius-positive-ending-concurrency-pg17.sh "$PG17_CONTAINER":/tmp/genius-positive-ending/scripts/qa/
           docker cp supabase/migrations/20260814154000_baseball_genius_positive_ending_ledger.sql "$PG17_CONTAINER":/tmp/genius-positive-ending/supabase/migrations/
           docker exec -u postgres -w /tmp/genius-positive-ending "$PG17_CONTAINER" bash scripts/qa/baseball-genius-positive-ending-concurrency-pg17.sh
+
+      - name: Run home-popular-posts RPC gate (PostgreSQL 17, fail-closed)
+        env:
+          PG17_CONTAINER: ${{ job.services.postgres17.id }}
+        run: |
+          docker exec "$PG17_CONTAINER" mkdir -p /tmp/home-popular-rpc/scripts/qa /tmp/home-popular-rpc/supabase/migrations
+          docker cp scripts/qa/home-popular-posts-rpc-pg17.sh "$PG17_CONTAINER":/tmp/home-popular-rpc/scripts/qa/
+          docker cp supabase/migrations/20260905043000_posts_popularity.sql "$PG17_CONTAINER":/tmp/home-popular-rpc/supabase/migrations/
+          docker exec -u postgres -w /tmp/home-popular-rpc "$PG17_CONTAINER" bash scripts/qa/home-popular-posts-rpc-pg17.sh
 
       - name: Setup Node
         uses: actions/setup-node@v4
@@ -257,6 +276,23 @@ jobs:
         # 안 띄우고도 baseline 0 / dirty mutation nonzero 로 통과한다(#1085 와 같은 축).
         # 스크립트 경로를 직접 호출해 alias 를 신뢰 경계에서 제거한다.
         run: node scripts/qa/rsc-prefetch-budget-gate.mjs --require-browser
+
+      - name: Prove missing community rows invalidate RSC measurement
+        env:
+          RSC_GATE_PORT: "3971"
+          NEXT_PUBLIC_SUPABASE_URL: ${{ secrets.NEXT_PUBLIC_SUPABASE_URL }}
+          NEXT_PUBLIC_SUPABASE_ANON_KEY: ${{ secrets.NEXT_PUBLIC_SUPABASE_ANON_KEY }}
+          SUPABASE_SERVICE_ROLE_KEY: ${{ secrets.SUPABASE_SERVICE_ROLE_KEY }}
+          NAVER_CLIENT_ID: ${{ secrets.NAVER_CLIENT_ID }}
+          NAVER_CLIENT_SECRET: ${{ secrets.NAVER_CLIENT_SECRET }}
+        run: |
+          set +e
+          RSC_GATE_FORCE_NO_COMMUNITY=1 node scripts/qa/rsc-prefetch-budget-gate.mjs --require-browser > "$RUNNER_TEMP/rsc-no-community.log" 2>&1
+          code=$?
+          set -e
+          cat "$RUNNER_TEMP/rsc-no-community.log"
+          test "$code" -eq 30
+          grep -q 'HARNESS-FAIL\[RSC_NO_COMMUNITY_POSTS\]' "$RUNNER_TEMP/rsc-no-community.log"
 
       - name: Prove incomplete render maps to harness failure (self-protect RED)
         # 삼순 NO-GO 4차 지적①: `navLinks<4 → exit 30` 경계가 회귀하면 잡아야 한다.

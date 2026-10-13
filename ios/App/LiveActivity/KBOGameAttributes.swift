@@ -89,4 +89,6 @@ struct KBOGameAttributes: ActivityAttributes {
     /// per-activity update 토큰 등록을 스킵한다. 레거시 start(payload에 부재)는 nil.
     /// 옵셔널+기본 nil — 구빌드 payload/기존 호출과 Codable 하위호환(keyNotFound 방지).
     var channelId: String? = nil
+    /// Non-nil only on the single server-authorized retry for this channel generation.
+    var recoveryAttempt: String? = nil
 }

@@ -1,0 +1,3700 @@
+[
+  {
+    "canonicalUrl": "https://www.koreabaseball.com/kbo/board/ebook/ebookpublication.aspx",
+    "contentSha256": "3319ae9ee8260e8f3704e6520b865d9afcf5442ab371c5a3cc1b33953b67c0ca",
+    "sourceRevision": "sha256:ea7d1aa559c06a0c",
+    "sourceKey": "kbo:ebook:2021-클린베이스볼-가이드북",
+    "chunkId": 4346,
+    "claimGeneration": 1,
+    "note": "괄호 직전 원문(적용 범위는 원문 전체로 판단): 금지된 연루\n단서 원문(분해하지 않음): (도핑방지규정을 위반하여 징계 중이거나 자격 정지된 선수\n또는 기타관계자와 연루된 경우)",
+    "structure": {
+      "version": "official-parenthetical-v2",
+      "sourceRevision": "sha256:ea7d1aa559c06a0c",
+      "contentSha256": "b4883d3e96f7e0408658bad4012493cab9459bf163fb31ed07b3a156987c1b2e",
+      "relations": [
+        {
+          "kind": "qualifier-quote",
+          "parenthetical": {
+            "start": 247,
+            "end": 296,
+            "quote": "(도핑방지규정을 위반하여 징계 중이거나 자격 정지된 선수\n또는 기타관계자와 연루된 경우)"
+          },
+          "context": {
+            "start": 241,
+            "end": 247,
+            "quote": "금지된 연루"
+          },
+          "coordination": "unsplit",
+          "items": [
+            {
+              "start": 248,
+              "end": 295,
+              "quote": "도핑방지규정을 위반하여 징계 중이거나 자격 정지된 선수\n또는 기타관계자와 연루된 경우"
+            }
+          ]
+        }
+      ],
+      "unresolved": []
+    },
+    "section": "2021 클린베이스볼 가이드북#p87"
+  },
+  {
+    "canonicalUrl": "https://www.koreabaseball.com/kbo/board/ebook/ebookpublication.aspx",
+    "contentSha256": "81b40d14d033eb7bcaf1a07d2eff465fca71728774fff842d745ff18f8cc3aa8",
+    "sourceRevision": "sha256:ea7d1aa559c06a0c",
+    "sourceKey": "kbo:ebook:2021-클린베이스볼-가이드북",
+    "chunkId": 4380,
+    "claimGeneration": 1,
+    "note": "괄호 직전 원문(적용 범위는 원문 전체로 판단): ① 위원회는 징계할 사유가 발생한 날로부터 3년\n단서 원문(분해하지 않음): (제34조 제5항 각 호의 경우에는 5년)",
+    "structure": {
+      "version": "official-parenthetical-v2",
+      "sourceRevision": "sha256:ea7d1aa559c06a0c",
+      "contentSha256": "07c52816b9dcb24ce0fda2715872cc0a2a9041ac101cbd241237a5f750ae350d",
+      "relations": [
+        {
+          "kind": "qualifier-quote",
+          "parenthetical": {
+            "start": 503,
+            "end": 526,
+            "quote": "(제34조 제5항 각 호의 경우에는 5년)"
+          },
+          "context": {
+            "start": 477,
+            "end": 503,
+            "quote": "① 위원회는 징계할 사유가 발생한 날로부터 3년"
+          },
+          "coordination": "unsplit",
+          "items": [
+            {
+              "start": 504,
+              "end": 525,
+              "quote": "제34조 제5항 각 호의 경우에는 5년"
+            }
+          ]
+        }
+      ],
+      "unresolved": []
+    },
+    "section": "2021 클린베이스볼 가이드북#p125"
+  },
+  {
+    "canonicalUrl": "https://www.koreabaseball.com/kbo/board/ebook/ebookpublication.aspx",
+    "contentSha256": "e219ed6051afa7b7c541b2a357f04ddb3c67e7f640e3803a79bda9159dca745a",
+    "sourceRevision": "sha256:ea7d1aa559c06a0c",
+    "sourceKey": "kbo:ebook:2021-클린베이스볼-가이드북",
+    "chunkId": 4381,
+    "claimGeneration": 1,
+    "note": "괄호 직전 원문(적용 범위는 원문 전체로 판단): \n단서 원문(분해하지 않음): (시· 도체육회, 회원종목단체의 경우 대한체육회, 시· 도종목단체, 시·군·구체육회의 경우\n시도체육회)",
+    "structure": {
+      "version": "official-parenthetical-v2",
+      "sourceRevision": "sha256:ea7d1aa559c06a0c",
+      "contentSha256": "4e37529ae274f96b64f8ab52d7b80928fc353e82c386081d4d1e80f0ecab0a69",
+      "relations": [
+        {
+          "kind": "qualifier-quote",
+          "parenthetical": {
+            "start": 75,
+            "end": 132,
+            "quote": "(시· 도체육회, 회원종목단체의 경우 대한체육회, 시· 도종목단체, 시·군·구체육회의 경우\n시도체육회)"
+          },
+          "context": {
+            "start": 75,
+            "end": 75,
+            "quote": ""
+          },
+          "coordination": "unsplit",
+          "items": [
+            {
+              "start": 76,
+              "end": 131,
+              "quote": "시· 도체육회, 회원종목단체의 경우 대한체육회, 시· 도종목단체, 시·군·구체육회의 경우\n시도체육회"
+            }
+          ]
+        }
+      ],
+      "unresolved": []
+    },
+    "section": "2021 클린베이스볼 가이드북#p125"
+  },
+  {
+    "canonicalUrl": "https://www.koreabaseball.com/kbo/board/ebook/ebookpublication.aspx",
+    "contentSha256": "78ba7fbee5b97dd5e1f5ca8383fbdd51c4593f26097bb749ea2c043609798bc6",
+    "sourceRevision": "sha256:ea7d1aa559c06a0c",
+    "sourceKey": "kbo:ebook:2021-클린베이스볼-가이드북",
+    "chunkId": 4390,
+    "claimGeneration": 1,
+    "note": "괄호 직전 원문(적용 범위는 원문 전체로 판단): 유용으로 다른 법률에 따라 형사처벌을 받거나 변상책임 등을 이행\n단서 원문(분해하지 않음): (몰수나 추징을 당\n한 경우를 포함한다)",
+    "structure": {
+      "version": "official-parenthetical-v2",
+      "sourceRevision": "sha256:ea7d1aa559c06a0c",
+      "contentSha256": "f91ad1dec186c753152a2fedd3c197c5af41282e8789d892e3cd5a81be8eeca3",
+      "relations": [
+        {
+          "kind": "qualifier-quote",
+          "parenthetical": {
+            "start": 409,
+            "end": 431,
+            "quote": "(몰수나 추징을 당\n한 경우를 포함한다)"
+          },
+          "context": {
+            "start": 374,
+            "end": 409,
+            "quote": "유용으로 다른 법률에 따라 형사처벌을 받거나 변상책임 등을 이행"
+          },
+          "coordination": "unsplit",
+          "items": [
+            {
+              "start": 410,
+              "end": 430,
+              "quote": "몰수나 추징을 당\n한 경우를 포함한다"
+            }
+          ]
+        }
+      ],
+      "unresolved": []
+    },
+    "section": "2021 클린베이스볼 가이드북#p132"
+  },
+  {
+    "canonicalUrl": "https://www.koreabaseball.com/kbo/board/ebook/ebookpublication.aspx",
+    "contentSha256": "4e7e3b5b9149b7f4109e7c4a02b2b52363be41e86bf0ee464cae0f4325d0b77d",
+    "sourceRevision": "sha256:ea7d1aa559c06a0c",
+    "sourceKey": "kbo:ebook:2021-클린베이스볼-가이드북",
+    "chunkId": 4391,
+    "claimGeneration": 1,
+    "note": "괄호 직전 원문(적용 범위는 원문 전체로 판단): ⑥ 징계혐의자 또는 징계부가금 부과 의결을 받은 사람이 벌금 외의 형\n단서 원문(분해하지 않음): (벌금형이 병과 되는\n경우를 포함한다)",
+    "structure": {
+      "version": "official-parenthetical-v2",
+      "sourceRevision": "sha256:ea7d1aa559c06a0c",
+      "contentSha256": "677f86aa234afcec980774b38cc949839330d4854fb96b6c5374bde94bad75ae",
+      "relations": [
+        {
+          "kind": "qualifier-quote",
+          "parenthetical": {
+            "start": 168,
+            "end": 189,
+            "quote": "(벌금형이 병과 되는\n경우를 포함한다)"
+          },
+          "context": {
+            "start": 130,
+            "end": 168,
+            "quote": "⑥ 징계혐의자 또는 징계부가금 부과 의결을 받은 사람이 벌금 외의 형"
+          },
+          "coordination": "unsplit",
+          "items": [
+            {
+              "start": 169,
+              "end": 188,
+              "quote": "벌금형이 병과 되는\n경우를 포함한다"
+            }
+          ]
+        }
+      ],
+      "unresolved": []
+    },
+    "section": "2021 클린베이스볼 가이드북#p132"
+  },
+  {
+    "canonicalUrl": "https://www.koreabaseball.com/kbo/board/ebook/ebookpublication.aspx",
+    "contentSha256": "126174dfe4d5a2a47c131554395abdceee75746ea3c1c00c456458f043b8793b",
+    "sourceRevision": "sha256:ea7d1aa559c06a0c",
+    "sourceKey": "kbo:ebook:2021-클린베이스볼-가이드북",
+    "chunkId": 4393,
+    "claimGeneration": 1,
+    "note": "괄호 직전 원문(적용 범위는 원문 전체로 판단): 는 시· 도교체육회, 시· 도교육청 및 피해자\n단서 원문(분해하지 않음): (선수 권 익 침해 경우)",
+    "structure": {
+      "version": "official-parenthetical-v2",
+      "sourceRevision": "sha256:ea7d1aa559c06a0c",
+      "contentSha256": "da283d75fc07e18c0604e7682c966485bfdae8fb9d9535e08181a6b3d8e7abd7",
+      "relations": [
+        {
+          "kind": "qualifier-quote",
+          "parenthetical": {
+            "start": 258,
+            "end": 272,
+            "quote": "(선수 권 익 침해 경우)"
+          },
+          "context": {
+            "start": 233,
+            "end": 258,
+            "quote": "는 시· 도교체육회, 시· 도교육청 및 피해자"
+          },
+          "coordination": "unsplit",
+          "items": [
+            {
+              "start": 259,
+              "end": 271,
+              "quote": "선수 권 익 침해 경우"
+            }
+          ]
+        }
+      ],
+      "unresolved": []
+    },
+    "section": "2021 클린베이스볼 가이드북#p133"
+  },
+  {
+    "canonicalUrl": "https://www.koreabaseball.com/kbo/board/ebook/ebookpublication.aspx",
+    "contentSha256": "510beeb4e1d082a1a2a0aa0d59a49dfe146a014f3429d1e754f471f345c083de",
+    "sourceRevision": "sha256:ea7d1aa559c06a0c",
+    "sourceKey": "kbo:ebook:2021-클린베이스볼-가이드북",
+    "chunkId": 4395,
+    "claimGeneration": 1,
+    "note": "괄호 직전 원문(적용 범위는 원문 전체로 판단): 년자인 경우, 성적 수치심을 일으키는 일체의 행위\n단서 원문(분해하지 않음): (사진이나\n동영상을 본인의 의사에 반하여 유출·유포한 경우 포함)",
+    "structure": {
+      "version": "official-parenthetical-v2",
+      "sourceRevision": "sha256:ea7d1aa559c06a0c",
+      "contentSha256": "b041065e213ca00783b861072350b2de868c81b6c729926128402c6c073794e1",
+      "relations": [
+        {
+          "kind": "qualifier-quote",
+          "parenthetical": {
+            "start": 398,
+            "end": 434,
+            "quote": "(사진이나\n동영상을 본인의 의사에 반하여 유출·유포한 경우 포함)"
+          },
+          "context": {
+            "start": 371,
+            "end": 398,
+            "quote": "년자인 경우, 성적 수치심을 일으키는 일체의 행위"
+          },
+          "coordination": "unsplit",
+          "items": [
+            {
+              "start": 399,
+              "end": 433,
+              "quote": "사진이나\n동영상을 본인의 의사에 반하여 유출·유포한 경우 포함"
+            }
+          ]
+        }
+      ],
+      "unresolved": []
+    },
+    "section": "2021 클린베이스볼 가이드북#p135"
+  },
+  {
+    "canonicalUrl": "https://www.koreabaseball.com/kbo/board/ebook/ebookpublication.aspx",
+    "contentSha256": "3ead4e9d8f06b5e993c7099cc67872d3424f576c5fa34a24e5d0d775ad03c32c",
+    "sourceRevision": "sha256:ea7d1aa559c06a0c",
+    "sourceKey": "kbo:ebook:2021-클린베이스볼-가이드북",
+    "chunkId": 4408,
+    "claimGeneration": 1,
+    "note": "괄호 직전 원문(적용 범위는 원문 전체로 판단): 영구실격, 직무정지\n단서 원문(분해하지 않음): (단, 구단 직원이 연루되었을 경우 : 직무정지 1년 이상, 구단이 연루되었을 경\n우 : 제재금 1억 이상)",
+    "structure": {
+      "version": "official-parenthetical-v2",
+      "sourceRevision": "sha256:ea7d1aa559c06a0c",
+      "contentSha256": "e6b08a6a473a981e6327f701e8ebf655abd4bb4f1a67dd82dbf3c9c17995d9ad",
+      "relations": [
+        {
+          "kind": "qualifier-quote",
+          "parenthetical": {
+            "start": 690,
+            "end": 750,
+            "quote": "(단, 구단 직원이 연루되었을 경우 : 직무정지 1년 이상, 구단이 연루되었을 경\n우 : 제재금 1억 이상)"
+          },
+          "context": {
+            "start": 680,
+            "end": 690,
+            "quote": "영구실격, 직무정지"
+          },
+          "coordination": "unsplit",
+          "items": [
+            {
+              "start": 691,
+              "end": 749,
+              "quote": "단, 구단 직원이 연루되었을 경우 : 직무정지 1년 이상, 구단이 연루되었을 경\n우 : 제재금 1억 이상"
+            }
+          ]
+        }
+      ],
+      "unresolved": []
+    },
+    "section": "2021 클린베이스볼 가이드북#p144"
+  },
+  {
+    "canonicalUrl": "https://www.koreabaseball.com/kbo/board/ebook/ebookpublication.aspx",
+    "contentSha256": "b868f25b8e265c363562dc2935d609e2a4fdfcb29ebbca30f55126cddd1d5482",
+    "sourceRevision": "sha256:ea7d1aa559c06a0c",
+    "sourceKey": "kbo:ebook:2021-클린베이스볼-가이드북",
+    "chunkId": 4416,
+    "claimGeneration": 1,
+    "note": "괄호 직전 원문(적용 범위는 원문 전체로 판단): 전 항에 의해 제재금이 가해진 자는 제재를 받은 날부터 5일\n단서 원문(분해하지 않음): (토, 일, 공휴일 제외)",
+    "structure": {
+      "version": "official-parenthetical-v2",
+      "sourceRevision": "sha256:ea7d1aa559c06a0c",
+      "contentSha256": "9f51bc5e8887d8b01eaa8d6099e60fa5d2e7b49991214e6895eae4ca8e2a7675",
+      "relations": [
+        {
+          "kind": "qualifier-quote",
+          "parenthetical": {
+            "start": 226,
+            "end": 240,
+            "quote": "(토, 일, 공휴일 제외)"
+          },
+          "context": {
+            "start": 191,
+            "end": 226,
+            "quote": " 전 항에 의해 제재금이 가해진 자는 제재를 받은 날부터 5일 "
+          },
+          "coordination": "unsplit",
+          "items": [
+            {
+              "start": 227,
+              "end": 239,
+              "quote": "토, 일, 공휴일 제외"
+            }
+          ]
+        }
+      ],
+      "unresolved": []
+    },
+    "section": "2021 클린베이스볼 가이드북#p149"
+  },
+  {
+    "canonicalUrl": "https://www.koreabaseball.com/kbo/board/ebook/ebookpublication.aspx",
+    "contentSha256": "80a4d2d467b6d40d1a970b2b1663daeabe719c031b798cc261a53683423180c3",
+    "sourceRevision": "sha256:ea7d1aa559c06a0c",
+    "sourceKey": "kbo:ebook:2021-클린베이스볼-가이드북",
+    "chunkId": 4426,
+    "claimGeneration": 1,
+    "note": "괄호 직전 원문(적용 범위는 원문 전체로 판단): 새 공을 제외하고 투수의 새 공 교환은 3개까지로 한다\n단서 원문(분해하지 않음): (단, 우천시 제외)",
+    "structure": {
+      "version": "official-parenthetical-v2",
+      "sourceRevision": "sha256:ea7d1aa559c06a0c",
+      "contentSha256": "3addd2fe595d689cb4613b6ef54a8837cca76933eadfb8c69b934207f5bdbfb7",
+      "relations": [
+        {
+          "kind": "qualifier-quote",
+          "parenthetical": {
+            "start": 797,
+            "end": 808,
+            "quote": "(단, 우천시 제외)"
+          },
+          "context": {
+            "start": 767,
+            "end": 797,
+            "quote": "새 공을 제외하고 투수의 새 공 교환은 3개까지로 한다"
+          },
+          "coordination": "unsplit",
+          "items": [
+            {
+              "start": 798,
+              "end": 807,
+              "quote": "단, 우천시 제외"
+            }
+          ]
+        }
+      ],
+      "unresolved": []
+    },
+    "section": "2021 클린베이스볼 가이드북#p156"
+  },
+  {
+    "canonicalUrl": "https://www.koreabaseball.com/kbo/board/ebook/ebookpublication.aspx",
+    "contentSha256": "ad14e17499787f85b7c518b0c52d6619dba6b26b494b0fa6a513d75e9cdd1365",
+    "sourceRevision": "sha256:ea7d1aa559c06a0c",
+    "sourceKey": "kbo:ebook:2021-클린베이스볼-가이드북",
+    "chunkId": 4434,
+    "claimGeneration": 1,
+    "note": "괄호 직전 원문(적용 범위는 원문 전체로 판단): - 5년 이내\n괄호 안 제외 항목 A: 당해 연도.\n나머지 적용 조건과 효과: 위 원문 그대로.\n괄호 직전 원문(적용 범위는 원문 전체로 판단): - 투수는 30회 이내\n괄호 안 제외 항목 A: 당해 연도.\n나머지 적용 조건과 효과: 위 원문 그대로.\n괄호 직전 원문(적용 범위는 원문 전체로 판단): - 타자는 60타석 이내\n괄호 안 제외 항목 A: 당해 연도.\n나머지 적용 조건과 효과: 위 원문 그대로.",
+    "structure": {
+      "version": "official-parenthetical-v2",
+      "sourceRevision": "sha256:ea7d1aa559c06a0c",
+      "contentSha256": "642f047082230aeadd28d25be11919fa527438dce05f896841eb9dabefbd19b4",
+      "relations": [
+        {
+          "kind": "exclusion",
+          "parenthetical": {
+            "start": 268,
+            "end": 278,
+            "quote": "(당해 연도 제외)"
+          },
+          "context": {
+            "start": 261,
+            "end": 268,
+            "quote": "- 5년 이내"
+          },
+          "coordination": "unsplit",
+          "items": [
+            {
+              "start": 269,
+              "end": 274,
+              "quote": "당해 연도"
+            }
+          ]
+        },
+        {
+          "kind": "exclusion",
+          "parenthetical": {
+            "start": 291,
+            "end": 301,
+            "quote": "(당해 연도 제외)"
+          },
+          "context": {
+            "start": 279,
+            "end": 291,
+            "quote": "- 투수는 30회 이내"
+          },
+          "coordination": "unsplit",
+          "items": [
+            {
+              "start": 292,
+              "end": 297,
+              "quote": "당해 연도"
+            }
+          ]
+        },
+        {
+          "kind": "exclusion",
+          "parenthetical": {
+            "start": 315,
+            "end": 325,
+            "quote": "(당해 연도 제외)"
+          },
+          "context": {
+            "start": 302,
+            "end": 315,
+            "quote": "- 타자는 60타석 이내"
+          },
+          "coordination": "unsplit",
+          "items": [
+            {
+              "start": 316,
+              "end": 321,
+              "quote": "당해 연도"
+            }
+          ]
+        }
+      ],
+      "unresolved": []
+    },
+    "section": "2021 클린베이스볼 가이드북#p161"
+  },
+  {
+    "canonicalUrl": "https://www.koreabaseball.com/kbo/board/ebook/ebookpublication.aspx",
+    "contentSha256": "0cce5f3646a7dd1d0ed728547e030aa61002a7fc8895c6bb5a7b760a236b32cf",
+    "sourceRevision": "sha256:ea7d1aa559c06a0c",
+    "sourceKey": "kbo:ebook:2021-클린베이스볼-가이드북",
+    "chunkId": 4437,
+    "claimGeneration": 1,
+    "note": "괄호 직전 원문(적용 범위는 원문 전체로 판단): • 등록선수 연봉은 시즌 중에 방출돼도 모두 보장받음\n단서 원문(분해하지 않음): (단, 선수가 원해서 하는 방출은 안됨)",
+    "structure": {
+      "version": "official-parenthetical-v2",
+      "sourceRevision": "sha256:ea7d1aa559c06a0c",
+      "contentSha256": "5673789c5739fc10730ef0dcbce521c33224c858425610024a5fccd0acdff485",
+      "relations": [
+        {
+          "kind": "qualifier-quote",
+          "parenthetical": {
+            "start": 368,
+            "end": 390,
+            "quote": "(단, 선수가 원해서 하는 방출은 안됨)"
+          },
+          "context": {
+            "start": 339,
+            "end": 368,
+            "quote": "• 등록선수 연봉은 시즌 중에 방출돼도 모두 보장받음"
+          },
+          "coordination": "unsplit",
+          "items": [
+            {
+              "start": 369,
+              "end": 389,
+              "quote": "단, 선수가 원해서 하는 방출은 안됨"
+            }
+          ]
+        }
+      ],
+      "unresolved": []
+    },
+    "section": "2021 클린베이스볼 가이드북#p164"
+  },
+  {
+    "canonicalUrl": "https://www.koreabaseball.com/kbo/board/ebook/ebookpublication.aspx",
+    "contentSha256": "263bee9cd53985e6928ebd3704c89aa9d357a6c7ff48ad8db7ba59e5c62ef208",
+    "sourceRevision": "sha256:ea7d1aa559c06a0c",
+    "sourceKey": "kbo:ebook:2021-클린베이스볼-가이드북",
+    "chunkId": 4440,
+    "claimGeneration": 1,
+    "note": "괄호 직전 원문(적용 범위는 원문 전체로 판단): 시즌에 현역선수로 1일 이상 등록한 부상선수에 한해 시즌 최대 30일까지 가능하며\n단서 원문(분해하지 않음): (10일 3\n회, 15일 2회, 30일 1회에 한함)",
+    "structure": {
+      "version": "official-parenthetical-v2",
+      "sourceRevision": "sha256:ea7d1aa559c06a0c",
+      "contentSha256": "250675bd5e07ff0787720d2871424746aeab2b018eccea7c96095ed4761617ed",
+      "relations": [
+        {
+          "kind": "qualifier-quote",
+          "parenthetical": {
+            "start": 827,
+            "end": 856,
+            "quote": "(10일 3\n회, 15일 2회, 30일 1회에 한함)"
+          },
+          "context": {
+            "start": 782,
+            "end": 827,
+            "quote": "시즌에 현역선수로 1일 이상 등록한 부상선수에 한해 시즌 최대 30일까지 가능하며"
+          },
+          "coordination": "unsplit",
+          "items": [
+            {
+              "start": 828,
+              "end": 855,
+              "quote": "10일 3\n회, 15일 2회, 30일 1회에 한함"
+            }
+          ]
+        }
+      ],
+      "unresolved": []
+    },
+    "section": "2021 클린베이스볼 가이드북#p166"
+  },
+  {
+    "canonicalUrl": "https://www.koreabaseball.com/kbo/board/ebook/ebookpublication.aspx",
+    "contentSha256": "301222fefb5762fb25443975e3cae4335394a5fb2e745370516660239485c152",
+    "sourceRevision": "sha256:1f7be81a72eb0247",
+    "sourceKey": "kbo:ebook:2026-kbo-가이드북",
+    "chunkId": 4468,
+    "claimGeneration": 1,
+    "note": "괄호 직전 원문(적용 범위는 원문 전체로 판단): ➎ 혈액형 ➏ 입단연도-소속구단\n괄호 안 제외 항목 A: 육성 입단.\n나머지 적용 조건과 효과: 위 원문 그대로.",
+    "structure": {
+      "version": "official-parenthetical-v2",
+      "sourceRevision": "sha256:1f7be81a72eb0247",
+      "contentSha256": "9c328c7fe6591a97906c4fa7507b9028123c6bd3aac0e5b2f4ce8fa4c8f126bc",
+      "relations": [
+        {
+          "kind": "exclusion",
+          "parenthetical": {
+            "start": 100,
+            "end": 110,
+            "quote": "(육성 입단 제외)"
+          },
+          "context": {
+            "start": 83,
+            "end": 100,
+            "quote": "➎ 혈액형 ➏ 입단연도-소속구단"
+          },
+          "coordination": "unsplit",
+          "items": [
+            {
+              "start": 101,
+              "end": 106,
+              "quote": "육성 입단"
+            }
+          ]
+        }
+      ],
+      "unresolved": []
+    },
+    "section": "2026 KBO 가이드북#p12"
+  },
+  {
+    "canonicalUrl": "https://www.koreabaseball.com/kbo/board/ebook/ebookpublication.aspx",
+    "contentSha256": "58dad732d1aa2d9d059b14162fe1bf715ab6a61d3c2e61bda354bc7a09f16804",
+    "sourceRevision": "sha256:1f7be81a72eb0247",
+    "sourceKey": "kbo:ebook:2026-kbo-가이드북",
+    "chunkId": 4518,
+    "claimGeneration": 1,
+    "note": "괄호 직전 원문(적용 범위는 원문 전체로 판단): ➎ 혈액형 ➏ 입단연도-소속구단\n괄호 안 제외 항목 A: 육성 입단.\n나머지 적용 조건과 효과: 위 원문 그대로.",
+    "structure": {
+      "version": "official-parenthetical-v2",
+      "sourceRevision": "sha256:1f7be81a72eb0247",
+      "contentSha256": "325a003756034fb09b04456b8f2dde2f3e57b17a5829fac265f26d959b6b10ed",
+      "relations": [
+        {
+          "kind": "exclusion",
+          "parenthetical": {
+            "start": 131,
+            "end": 141,
+            "quote": "(육성 입단 제외)"
+          },
+          "context": {
+            "start": 114,
+            "end": 131,
+            "quote": "➎ 혈액형 ➏ 입단연도-소속구단"
+          },
+          "coordination": "unsplit",
+          "items": [
+            {
+              "start": 132,
+              "end": 137,
+              "quote": "육성 입단"
+            }
+          ]
+        }
+      ],
+      "unresolved": []
+    },
+    "section": "2026 KBO 가이드북#p38"
+  },
+  {
+    "canonicalUrl": "https://www.koreabaseball.com/kbo/board/ebook/ebookpublication.aspx",
+    "contentSha256": "6ee7cd5b4f68b150554c717f8206de118a78ece696ab7b7d8f48a78407ecad65",
+    "sourceRevision": "sha256:1f7be81a72eb0247",
+    "sourceKey": "kbo:ebook:2026-kbo-가이드북",
+    "chunkId": 4566,
+    "claimGeneration": 1,
+    "note": "괄호 직전 원문(적용 범위는 원문 전체로 판단): ➎ 혈액형 ➏ 입단연도-소속구단\n괄호 안 제외 항목 A: 육성 입단.\n나머지 적용 조건과 효과: 위 원문 그대로.",
+    "structure": {
+      "version": "official-parenthetical-v2",
+      "sourceRevision": "sha256:1f7be81a72eb0247",
+      "contentSha256": "d6cfe7beab29f6040c67743030da0bf52d4cf06e470b457e493038a0e35344a7",
+      "relations": [
+        {
+          "kind": "exclusion",
+          "parenthetical": {
+            "start": 104,
+            "end": 114,
+            "quote": "(육성 입단 제외)"
+          },
+          "context": {
+            "start": 87,
+            "end": 104,
+            "quote": "➎ 혈액형 ➏ 입단연도-소속구단"
+          },
+          "coordination": "unsplit",
+          "items": [
+            {
+              "start": 105,
+              "end": 110,
+              "quote": "육성 입단"
+            }
+          ]
+        }
+      ],
+      "unresolved": []
+    },
+    "section": "2026 KBO 가이드북#p63"
+  },
+  {
+    "canonicalUrl": "https://www.koreabaseball.com/kbo/board/ebook/ebookpublication.aspx",
+    "contentSha256": "ea298478a92b6c06052ce34675f8ee0e49d2b515eaae9f6ac4bd4acab35bc039",
+    "sourceRevision": "sha256:1f7be81a72eb0247",
+    "sourceKey": "kbo:ebook:2026-kbo-가이드북",
+    "chunkId": 4616,
+    "claimGeneration": 1,
+    "note": "괄호 직전 원문(적용 범위는 원문 전체로 판단): ➎ 혈액형 ➏ 입단연도-소속구단\n괄호 안 제외 항목 A: 육성 입단.\n나머지 적용 조건과 효과: 위 원문 그대로.",
+    "structure": {
+      "version": "official-parenthetical-v2",
+      "sourceRevision": "sha256:1f7be81a72eb0247",
+      "contentSha256": "63e40217403760efdda45741e910da9b14a8e97a425da09bbc350012e4648288",
+      "relations": [
+        {
+          "kind": "exclusion",
+          "parenthetical": {
+            "start": 117,
+            "end": 127,
+            "quote": "(육성 입단 제외)"
+          },
+          "context": {
+            "start": 100,
+            "end": 117,
+            "quote": "➎ 혈액형 ➏ 입단연도-소속구단"
+          },
+          "coordination": "unsplit",
+          "items": [
+            {
+              "start": 118,
+              "end": 123,
+              "quote": "육성 입단"
+            }
+          ]
+        }
+      ],
+      "unresolved": []
+    },
+    "section": "2026 KBO 가이드북#p89"
+  },
+  {
+    "canonicalUrl": "https://www.koreabaseball.com/kbo/board/ebook/ebookpublication.aspx",
+    "contentSha256": "b9c47423c4dd0fe28975f4fc2e37a0a4b0bef30f1f25cd8691995c6284d90513",
+    "sourceRevision": "sha256:1f7be81a72eb0247",
+    "sourceKey": "kbo:ebook:2026-kbo-가이드북",
+    "chunkId": 4664,
+    "claimGeneration": 1,
+    "note": "괄호 직전 원문(적용 범위는 원문 전체로 판단): ➎ 혈액형 ➏ 입단연도-소속구단\n괄호 안 제외 항목 A: 육성 입단.\n나머지 적용 조건과 효과: 위 원문 그대로.",
+    "structure": {
+      "version": "official-parenthetical-v2",
+      "sourceRevision": "sha256:1f7be81a72eb0247",
+      "contentSha256": "bf9fca036377951d6d45816b8dcef2f3b10880c5f496748f3b633ec8b6c7986a",
+      "relations": [
+        {
+          "kind": "exclusion",
+          "parenthetical": {
+            "start": 79,
+            "end": 89,
+            "quote": "(육성 입단 제외)"
+          },
+          "context": {
+            "start": 62,
+            "end": 79,
+            "quote": "➎ 혈액형 ➏ 입단연도-소속구단"
+          },
+          "coordination": "unsplit",
+          "items": [
+            {
+              "start": 80,
+              "end": 85,
+              "quote": "육성 입단"
+            }
+          ]
+        }
+      ],
+      "unresolved": []
+    },
+    "section": "2026 KBO 가이드북#p114"
+  },
+  {
+    "canonicalUrl": "https://www.koreabaseball.com/kbo/board/ebook/ebookpublication.aspx",
+    "contentSha256": "61b44e601e3b53f0f511f3deaa6fb7c27661ece54b8b6c395e2f59e7e0a03e13",
+    "sourceRevision": "sha256:1f7be81a72eb0247",
+    "sourceKey": "kbo:ebook:2026-kbo-가이드북",
+    "chunkId": 4712,
+    "claimGeneration": 1,
+    "note": "괄호 직전 원문(적용 범위는 원문 전체로 판단): ➎ 혈액형 ➏ 입단연도-소속구단\n괄호 안 제외 항목 A: 육성 입단.\n나머지 적용 조건과 효과: 위 원문 그대로.",
+    "structure": {
+      "version": "official-parenthetical-v2",
+      "sourceRevision": "sha256:1f7be81a72eb0247",
+      "contentSha256": "9921c40d8da67d733cdd2f4f01e54aae2f61ac9f7abe7b05ee140614f32c6b03",
+      "relations": [
+        {
+          "kind": "exclusion",
+          "parenthetical": {
+            "start": 65,
+            "end": 75,
+            "quote": "(육성 입단 제외)"
+          },
+          "context": {
+            "start": 48,
+            "end": 65,
+            "quote": "➎ 혈액형 ➏ 입단연도-소속구단"
+          },
+          "coordination": "unsplit",
+          "items": [
+            {
+              "start": 66,
+              "end": 71,
+              "quote": "육성 입단"
+            }
+          ]
+        }
+      ],
+      "unresolved": []
+    },
+    "section": "2026 KBO 가이드북#p139"
+  },
+  {
+    "canonicalUrl": "https://www.koreabaseball.com/kbo/board/ebook/ebookpublication.aspx",
+    "contentSha256": "17ee85d5a1c65438dc628826122e2b4fda4fb175187169afe157de9d346aa5ca",
+    "sourceRevision": "sha256:1f7be81a72eb0247",
+    "sourceKey": "kbo:ebook:2026-kbo-가이드북",
+    "chunkId": 4757,
+    "claimGeneration": 1,
+    "note": "괄호 직전 원문(적용 범위는 원문 전체로 판단): ➎ 혈액형 ➏ 입단연도-소속구단\n괄호 안 제외 항목 A: 육성 입단.\n나머지 적용 조건과 효과: 위 원문 그대로.",
+    "structure": {
+      "version": "official-parenthetical-v2",
+      "sourceRevision": "sha256:1f7be81a72eb0247",
+      "contentSha256": "b46cc62f385e5bfebfd9aabd3537f5e1b5f4b6aa31fe58faa969bd6ba0155f27",
+      "relations": [
+        {
+          "kind": "exclusion",
+          "parenthetical": {
+            "start": 106,
+            "end": 116,
+            "quote": "(육성 입단 제외)"
+          },
+          "context": {
+            "start": 89,
+            "end": 106,
+            "quote": "➎ 혈액형 ➏ 입단연도-소속구단"
+          },
+          "coordination": "unsplit",
+          "items": [
+            {
+              "start": 107,
+              "end": 112,
+              "quote": "육성 입단"
+            }
+          ]
+        }
+      ],
+      "unresolved": []
+    },
+    "section": "2026 KBO 가이드북#p162"
+  },
+  {
+    "canonicalUrl": "https://www.koreabaseball.com/kbo/board/ebook/ebookpublication.aspx",
+    "contentSha256": "390083ebc66dca54d7638252569868303d5b158a901ab9c0ae11b36c793dbfd4",
+    "sourceRevision": "sha256:1f7be81a72eb0247",
+    "sourceKey": "kbo:ebook:2026-kbo-가이드북",
+    "chunkId": 4809,
+    "claimGeneration": 1,
+    "note": "괄호 직전 원문(적용 범위는 원문 전체로 판단): ➎ 혈액형 ➏ 입단연도-소속구단\n괄호 안 제외 항목 A: 육성 입단.\n나머지 적용 조건과 효과: 위 원문 그대로.",
+    "structure": {
+      "version": "official-parenthetical-v2",
+      "sourceRevision": "sha256:1f7be81a72eb0247",
+      "contentSha256": "50f9c929563afb64a304afe9e5a865f358b2101cc588ad0d4e321fcf81aa2732",
+      "relations": [
+        {
+          "kind": "exclusion",
+          "parenthetical": {
+            "start": 239,
+            "end": 249,
+            "quote": "(육성 입단 제외)"
+          },
+          "context": {
+            "start": 222,
+            "end": 239,
+            "quote": "➎ 혈액형 ➏ 입단연도-소속구단"
+          },
+          "coordination": "unsplit",
+          "items": [
+            {
+              "start": 240,
+              "end": 245,
+              "quote": "육성 입단"
+            }
+          ]
+        }
+      ],
+      "unresolved": []
+    },
+    "section": "2026 KBO 가이드북#p189"
+  },
+  {
+    "canonicalUrl": "https://www.koreabaseball.com/kbo/board/ebook/ebookpublication.aspx",
+    "contentSha256": "8c1b0ee24973643836eee7071565ad4896fc15c9a0ee96affca058d9f2828503",
+    "sourceRevision": "sha256:1f7be81a72eb0247",
+    "sourceKey": "kbo:ebook:2026-kbo-가이드북",
+    "chunkId": 4860,
+    "claimGeneration": 1,
+    "note": "괄호 직전 원문(적용 범위는 원문 전체로 판단): ➎ 혈액형 ➏ 입단연도-소속구단\n괄호 안 제외 항목 A: 육성 입단.\n나머지 적용 조건과 효과: 위 원문 그대로.",
+    "structure": {
+      "version": "official-parenthetical-v2",
+      "sourceRevision": "sha256:1f7be81a72eb0247",
+      "contentSha256": "d5da3e6422342d60422f49a910c556e870c22bde8f977aeb516d3f868129761b",
+      "relations": [
+        {
+          "kind": "exclusion",
+          "parenthetical": {
+            "start": 111,
+            "end": 121,
+            "quote": "(육성 입단 제외)"
+          },
+          "context": {
+            "start": 94,
+            "end": 111,
+            "quote": "➎ 혈액형 ➏ 입단연도-소속구단"
+          },
+          "coordination": "unsplit",
+          "items": [
+            {
+              "start": 112,
+              "end": 117,
+              "quote": "육성 입단"
+            }
+          ]
+        }
+      ],
+      "unresolved": []
+    },
+    "section": "2026 KBO 가이드북#p217"
+  },
+  {
+    "canonicalUrl": "https://www.koreabaseball.com/kbo/board/ebook/ebookpublication.aspx",
+    "contentSha256": "c4c22ab498aa78ef42646555d194dc1477b60fbb671279efbbf8c02a19f0f9fc",
+    "sourceRevision": "sha256:1f7be81a72eb0247",
+    "sourceKey": "kbo:ebook:2026-kbo-가이드북",
+    "chunkId": 4903,
+    "claimGeneration": 1,
+    "note": "괄호 직전 원문(적용 범위는 원문 전체로 판단): ➎ 혈액형 ➏ 입단연도-소속구단\n괄호 안 제외 항목 A: 육성 입단.\n나머지 적용 조건과 효과: 위 원문 그대로.",
+    "structure": {
+      "version": "official-parenthetical-v2",
+      "sourceRevision": "sha256:1f7be81a72eb0247",
+      "contentSha256": "58369525cc84832ce402708fa89aa7c4c7784a0c54a0f3f64639aa3eb14bd99c",
+      "relations": [
+        {
+          "kind": "exclusion",
+          "parenthetical": {
+            "start": 886,
+            "end": 896,
+            "quote": "(육성 입단 제외)"
+          },
+          "context": {
+            "start": 869,
+            "end": 886,
+            "quote": "➎ 혈액형 ➏ 입단연도-소속구단"
+          },
+          "coordination": "unsplit",
+          "items": [
+            {
+              "start": 887,
+              "end": 892,
+              "quote": "육성 입단"
+            }
+          ]
+        }
+      ],
+      "unresolved": []
+    },
+    "section": "2026 KBO 가이드북#p240"
+  },
+  {
+    "canonicalUrl": "https://www.koreabaseball.com/kbo/board/ebook/ebookpublication.aspx",
+    "contentSha256": "7e3400c0995cb85401844201384253658b9da28f48df0662d6dd6c64d6db5238",
+    "sourceRevision": "sha256:1f7be81a72eb0247",
+    "sourceKey": "kbo:ebook:2026-kbo-가이드북",
+    "chunkId": 4946,
+    "claimGeneration": 1,
+    "note": "괄호 직전 원문(적용 범위는 원문 전체로 판단): - 야간경기 : 울산 평일(서머리그 포함), 마산 월요일 18:30\n괄호 안 제외 항목 A: 공휴일.\n나머지 적용 조건과 효과: 위 원문 그대로.\n괄호 직전 원문(적용 범위는 원문 전체로 판단): • 경기 취소시 다음 날 더블헤더 편성\n단서 원문(분해하지 않음): (4,5월에 한하여 실시)",
+    "structure": {
+      "version": "official-parenthetical-v2",
+      "sourceRevision": "sha256:1f7be81a72eb0247",
+      "contentSha256": "91a3f6d452d6b7c34bb10abb690dcc6871bfdcfc063ccdb003bb0f10f1d7543a",
+      "relations": [
+        {
+          "kind": "exclusion",
+          "parenthetical": {
+            "start": 702,
+            "end": 710,
+            "quote": "(공휴일 제외)"
+          },
+          "context": {
+            "start": 665,
+            "end": 702,
+            "quote": "- 야간경기 : 울산 평일(서머리그 포함), 마산 월요일 18:30"
+          },
+          "coordination": "unsplit",
+          "items": [
+            {
+              "start": 703,
+              "end": 706,
+              "quote": "공휴일"
+            }
+          ]
+        },
+        {
+          "kind": "qualifier-quote",
+          "parenthetical": {
+            "start": 798,
+            "end": 812,
+            "quote": "(4,5월에 한하여 실시)"
+          },
+          "context": {
+            "start": 777,
+            "end": 798,
+            "quote": "• 경기 취소시 다음 날 더블헤더 편성"
+          },
+          "coordination": "unsplit",
+          "items": [
+            {
+              "start": 799,
+              "end": 811,
+              "quote": "4,5월에 한하여 실시"
+            }
+          ]
+        }
+      ],
+      "unresolved": []
+    },
+    "section": "2026 KBO 가이드북#p262"
+  },
+  {
+    "canonicalUrl": "https://www.koreabaseball.com/kbo/board/ebook/ebookpublication.aspx",
+    "contentSha256": "20dea1893b072c9108568f331074c4be5f88e3d278bdbfc3c919a90deffac1f9",
+    "sourceRevision": "sha256:1f7be81a72eb0247",
+    "sourceKey": "kbo:ebook:2026-kbo-가이드북",
+    "chunkId": 4955,
+    "claimGeneration": 1,
+    "note": "괄호 직전 원문(적용 범위는 원문 전체로 판단): ➎ 혈액형 ➏ 입단연도-소속구단\n괄호 안 제외 항목 A: 육성 입단.\n나머지 적용 조건과 효과: 위 원문 그대로.",
+    "structure": {
+      "version": "official-parenthetical-v2",
+      "sourceRevision": "sha256:1f7be81a72eb0247",
+      "contentSha256": "d0007e2e401c71154fce9b954afa169756f10ea00d87e88da06959e58e102e5c",
+      "relations": [
+        {
+          "kind": "exclusion",
+          "parenthetical": {
+            "start": 518,
+            "end": 528,
+            "quote": "(육성 입단 제외)"
+          },
+          "context": {
+            "start": 501,
+            "end": 518,
+            "quote": "➎ 혈액형 ➏ 입단연도-소속구단"
+          },
+          "coordination": "unsplit",
+          "items": [
+            {
+              "start": 519,
+              "end": 524,
+              "quote": "육성 입단"
+            }
+          ]
+        }
+      ],
+      "unresolved": []
+    },
+    "section": "2026 KBO 가이드북#p270"
+  },
+  {
+    "canonicalUrl": "https://www.koreabaseball.com/kbo/board/ebook/ebookpublication.aspx",
+    "contentSha256": "eba7a4f42e1d82493c93b0b7ecd4af3edf41e16a604e60ca9540d8e9a99c06fc",
+    "sourceRevision": "sha256:1f7be81a72eb0247",
+    "sourceKey": "kbo:ebook:2026-kbo-가이드북",
+    "chunkId": 4968,
+    "claimGeneration": 1,
+    "note": "괄호 직전 원문(적용 범위는 원문 전체로 판단): ➎ 혈액형 ➏ 입단연도-소속구단\n괄호 안 제외 항목 A: 육성 입단.\n나머지 적용 조건과 효과: 위 원문 그대로.",
+    "structure": {
+      "version": "official-parenthetical-v2",
+      "sourceRevision": "sha256:1f7be81a72eb0247",
+      "contentSha256": "26b264f8929693ffda5edbd5d53327567b2d44afacd0dab089fd7988f5af1e48",
+      "relations": [
+        {
+          "kind": "exclusion",
+          "parenthetical": {
+            "start": 494,
+            "end": 504,
+            "quote": "(육성 입단 제외)"
+          },
+          "context": {
+            "start": 477,
+            "end": 494,
+            "quote": "➎ 혈액형 ➏ 입단연도-소속구단"
+          },
+          "coordination": "unsplit",
+          "items": [
+            {
+              "start": 495,
+              "end": 500,
+              "quote": "육성 입단"
+            }
+          ]
+        }
+      ],
+      "unresolved": []
+    },
+    "section": "2026 KBO 가이드북#p278"
+  },
+  {
+    "canonicalUrl": "https://www.koreabaseball.com/kbo/board/ebook/ebookpublication.aspx",
+    "contentSha256": "6ce84f3ec9601ec91ef12f4e065eb9ebc38323043202a6407be66448f879e517",
+    "sourceRevision": "sha256:3485ef02840eb47e",
+    "sourceKey": "kbo:ebook:2026-kbo-레코드북",
+    "chunkId": 5144,
+    "claimGeneration": 1,
+    "note": "괄호 직전 원문(적용 범위는 원문 전체로 판단): \n단서 원문(분해하지 않음): (1982 ~ 1988 전후기리그, 1999 ~ 2000 양대리그 제외)",
+    "structure": {
+      "version": "official-parenthetical-v2",
+      "sourceRevision": "sha256:3485ef02840eb47e",
+      "contentSha256": "e45df998e5b54bab4a3fb47d950888e3836fcdc4f4f4ef3f775c2db53a000f87",
+      "relations": [
+        {
+          "kind": "qualifier-quote",
+          "parenthetical": {
+            "start": 731,
+            "end": 771,
+            "quote": "(1982 ~ 1988 전후기리그, 1999 ~ 2000 양대리그 제외)"
+          },
+          "context": {
+            "start": 731,
+            "end": 731,
+            "quote": ""
+          },
+          "coordination": "unsplit",
+          "items": [
+            {
+              "start": 732,
+              "end": 770,
+              "quote": "1982 ~ 1988 전후기리그, 1999 ~ 2000 양대리그 제외"
+            }
+          ]
+        }
+      ],
+      "unresolved": []
+    },
+    "section": "2026 KBO 레코드북#p44"
+  },
+  {
+    "canonicalUrl": "https://www.koreabaseball.com/kbo/board/ebook/ebookpublication.aspx",
+    "contentSha256": "a36b63dcdd4ae904d25a416bc30e36814e2d3c9bc3fe4c6bcebdc6fee02a5c49",
+    "sourceRevision": "sha256:3485ef02840eb47e",
+    "sourceKey": "kbo:ebook:2026-kbo-레코드북",
+    "chunkId": 5148,
+    "claimGeneration": 1,
+    "note": "괄호 직전 원문(적용 범위는 원문 전체로 판단): \n단서 원문(분해하지 않음): (1982 ~ 1988 전후기리그, 1999 ~ 2000 양대리그 제외)",
+    "structure": {
+      "version": "official-parenthetical-v2",
+      "sourceRevision": "sha256:3485ef02840eb47e",
+      "contentSha256": "faf66521e7141cd57c69914a80cc4cc8e481c28451f486048068ece8af827532",
+      "relations": [
+        {
+          "kind": "qualifier-quote",
+          "parenthetical": {
+            "start": 810,
+            "end": 850,
+            "quote": "(1982 ~ 1988 전후기리그, 1999 ~ 2000 양대리그 제외)"
+          },
+          "context": {
+            "start": 810,
+            "end": 810,
+            "quote": ""
+          },
+          "coordination": "unsplit",
+          "items": [
+            {
+              "start": 811,
+              "end": 849,
+              "quote": "1982 ~ 1988 전후기리그, 1999 ~ 2000 양대리그 제외"
+            }
+          ]
+        }
+      ],
+      "unresolved": []
+    },
+    "section": "2026 KBO 레코드북#p46"
+  },
+  {
+    "canonicalUrl": "https://www.koreabaseball.com/kbo/board/ebook/ebookpublication.aspx",
+    "contentSha256": "acc0ec2b147189ec1d042ab4c9bc67c4184dbef8a30ee4bf262c600f3d92fffe",
+    "sourceRevision": "sha256:3485ef02840eb47e",
+    "sourceKey": "kbo:ebook:2026-kbo-레코드북",
+    "chunkId": 5152,
+    "claimGeneration": 1,
+    "note": "괄호 직전 원문(적용 범위는 원문 전체로 판단): \n단서 원문(분해하지 않음): (1982 ~ 1988 전후기리그, 1999 ~ 2000 양대리그 제외)",
+    "structure": {
+      "version": "official-parenthetical-v2",
+      "sourceRevision": "sha256:3485ef02840eb47e",
+      "contentSha256": "058dd4aabb1bcb71033e9e18b633d2ccbed01716bdf73d8a6e8a12e2ea42b2ca",
+      "relations": [
+        {
+          "kind": "qualifier-quote",
+          "parenthetical": {
+            "start": 717,
+            "end": 757,
+            "quote": "(1982 ~ 1988 전후기리그, 1999 ~ 2000 양대리그 제외)"
+          },
+          "context": {
+            "start": 717,
+            "end": 717,
+            "quote": ""
+          },
+          "coordination": "unsplit",
+          "items": [
+            {
+              "start": 718,
+              "end": 756,
+              "quote": "1982 ~ 1988 전후기리그, 1999 ~ 2000 양대리그 제외"
+            }
+          ]
+        }
+      ],
+      "unresolved": []
+    },
+    "section": "2026 KBO 레코드북#p48"
+  },
+  {
+    "canonicalUrl": "https://www.koreabaseball.com/kbo/board/ebook/ebookpublication.aspx",
+    "contentSha256": "006f935c6c401ef194c0ccf8eaf9a5736dfa0320fcaf226c61b1623021148121",
+    "sourceRevision": "sha256:3485ef02840eb47e",
+    "sourceKey": "kbo:ebook:2026-kbo-레코드북",
+    "chunkId": 5156,
+    "claimGeneration": 1,
+    "note": "괄호 직전 원문(적용 범위는 원문 전체로 판단): \n단서 원문(분해하지 않음): (1982 ~ 1988 전후기리그, 1999 ~ 2000 양대리그 제외)",
+    "structure": {
+      "version": "official-parenthetical-v2",
+      "sourceRevision": "sha256:3485ef02840eb47e",
+      "contentSha256": "09013d85bfa9d4b551955eff8da67cb4d404682dbadd8e7e8c642722c09870eb",
+      "relations": [
+        {
+          "kind": "qualifier-quote",
+          "parenthetical": {
+            "start": 639,
+            "end": 679,
+            "quote": "(1982 ~ 1988 전후기리그, 1999 ~ 2000 양대리그 제외)"
+          },
+          "context": {
+            "start": 639,
+            "end": 639,
+            "quote": ""
+          },
+          "coordination": "unsplit",
+          "items": [
+            {
+              "start": 640,
+              "end": 678,
+              "quote": "1982 ~ 1988 전후기리그, 1999 ~ 2000 양대리그 제외"
+            }
+          ]
+        }
+      ],
+      "unresolved": []
+    },
+    "section": "2026 KBO 레코드북#p50"
+  },
+  {
+    "canonicalUrl": "https://www.koreabaseball.com/kbo/board/ebook/ebookpublication.aspx",
+    "contentSha256": "707c4a43a635c6ef88f6384b943e2289277c9205233f7eaf4f2a40591c145508",
+    "sourceRevision": "sha256:3485ef02840eb47e",
+    "sourceKey": "kbo:ebook:2026-kbo-레코드북",
+    "chunkId": 5160,
+    "claimGeneration": 1,
+    "note": "괄호 직전 원문(적용 범위는 원문 전체로 판단): \n단서 원문(분해하지 않음): (1985 ~ 1988 전후기리그, 1999 ~ 2000 양대리그 제외)",
+    "structure": {
+      "version": "official-parenthetical-v2",
+      "sourceRevision": "sha256:3485ef02840eb47e",
+      "contentSha256": "4cdd3c5007ca37edc33c2d55d38c5b4af60a885ff10e0f19278f18875561d082",
+      "relations": [
+        {
+          "kind": "qualifier-quote",
+          "parenthetical": {
+            "start": 160,
+            "end": 200,
+            "quote": "(1985 ~ 1988 전후기리그, 1999 ~ 2000 양대리그 제외)"
+          },
+          "context": {
+            "start": 160,
+            "end": 160,
+            "quote": ""
+          },
+          "coordination": "unsplit",
+          "items": [
+            {
+              "start": 161,
+              "end": 199,
+              "quote": "1985 ~ 1988 전후기리그, 1999 ~ 2000 양대리그 제외"
+            }
+          ]
+        }
+      ],
+      "unresolved": []
+    },
+    "section": "2026 KBO 레코드북#p51"
+  },
+  {
+    "canonicalUrl": "https://www.koreabaseball.com/kbo/board/ebook/ebookpublication.aspx",
+    "contentSha256": "76deac4bcc88fc5b5d7ae04a7426314b5b5db21b6fe5fa0468fbf6e8b569437e",
+    "sourceRevision": "sha256:3485ef02840eb47e",
+    "sourceKey": "kbo:ebook:2026-kbo-레코드북",
+    "chunkId": 5166,
+    "claimGeneration": 1,
+    "note": "괄호 직전 원문(적용 범위는 원문 전체로 판단): \n괄호 안 제외 항목 A: 2000 양대리그.\n나머지 적용 조건과 효과: 위 원문 그대로.",
+    "structure": {
+      "version": "official-parenthetical-v2",
+      "sourceRevision": "sha256:3485ef02840eb47e",
+      "contentSha256": "220e8fcc09e948ac2af97024941f4978f614bd4e3d10a87d336424d8d14ae513",
+      "relations": [
+        {
+          "kind": "exclusion",
+          "parenthetical": {
+            "start": 563,
+            "end": 577,
+            "quote": "(2000 양대리그 제외)"
+          },
+          "context": {
+            "start": 563,
+            "end": 563,
+            "quote": ""
+          },
+          "coordination": "unsplit",
+          "items": [
+            {
+              "start": 564,
+              "end": 573,
+              "quote": "2000 양대리그"
+            }
+          ]
+        }
+      ],
+      "unresolved": []
+    },
+    "section": "2026 KBO 레코드북#p53"
+  },
+  {
+    "canonicalUrl": "https://www.koreabaseball.com/kbo/board/ebook/ebookpublication.aspx",
+    "contentSha256": "e2d65d21da34d0ffb61dcda17dce05bc966233b0e868aaf315c2a4eecfaee339",
+    "sourceRevision": "sha256:3485ef02840eb47e",
+    "sourceKey": "kbo:ebook:2026-kbo-레코드북",
+    "chunkId": 5224,
+    "claimGeneration": 1,
+    "note": "괄호 직전 원문(적용 범위는 원문 전체로 판단): 1 정우람(한) 1005 19시즌 - 2004 ~ 2024\n단서 원문(분해하지 않음): (2013 ~ 2014 제외)\n괄호 직전 원문(적용 범위는 원문 전체로 판단): 2 류택현( L ) 901 20시즌 - 1994 ~ 2014\n괄호 안 제외 항목 A: 2011.\n나머지 적용 조건과 효과: 위 원문 그대로.\n괄호 직전 원문(적용 범위는 원문 전체로 판단): 3 *우규민(KT) 857 20시즌 - 2004 ~ 2025\n단서 원문(분해하지 않음): (2010 ~ 2011 제외)\n괄호 직전 원문(적용 범위는 원문 전체로 판단): 4 진해수(롯) 842 17시즌 - 2006 ~ 2024\n단서 원문(분해하지 않음): (2010 ~ 2011 제외)\n괄호 직전 원문(적용 범위는 원문 전체로 판단): SK) 813 19시즌 - 1990 ~ 2009\n괄호 안 제외 항목 A: 1992.\n나머지 적용 조건과 효과: 위 원문 그대로.\n괄호 직전 원문(적용 범위는 원문 전체로 판단): 7 권 혁(두) 781 18시즌 - 2002 ~ 2020\n괄호 안 제외 항목 A: 2005.\n나머지 적용 조건과 효과: 위 원문 그대로.\n괄호 직전 원문(적용 범위는 원문 전체로 판단): SK) 752 17시즌 - 1996 ~ 2014\n단서 원문(분해하지 않음): (2005 ~ 2006 제외)\n괄호 직전 원문(적용 범위는 원문 전체로 판단): 15 이혜천(N) 706 15시즌 - 1998 ~ 2015\n단서 원문(분해하지 않음): (2007 제외, 2009 ~ 2010 해외진출)\n괄호 직전 원문(적용 범위는 원문 전체로 판단): 16 이동현( L ) 701 15시즌 - 2001 ~ 2019\n단서 원문(분해하지 않음): (2005 ~ 2008 제외)\n괄호 직전 원문(적용 범위는 원문 전체로 판단): 17 *김상수(롯) 700 17시즌 - 2008 ~ 2025\n괄호 안 제외 항목 A: 2014.\n나머지 적용 조건과 효과: 위 원문 그대로.\n괄호 직전 원문(적용 범위는 원문 전체로 판단): 19 박정진(한) 691 16시즌 - 1999 ~ 2017\n단서 원문(분해하지 않음): (2005 ~ 2007 제외)",
+    "structure": {
+      "version": "official-parenthetical-v2",
+      "sourceRevision": "sha256:3485ef02840eb47e",
+      "contentSha256": "bd055a2c6253e70804dd7ac331f314e94bab67e25c6a836a03b70c9b83109929",
+      "relations": [
+        {
+          "kind": "qualifier-quote",
+          "parenthetical": {
+            "start": 79,
+            "end": 95,
+            "quote": "(2013 ~ 2014 제외)"
+          },
+          "context": {
+            "start": 46,
+            "end": 79,
+            "quote": "1 정우람(한) 1005 19시즌 - 2004 ~ 2024 "
+          },
+          "coordination": "unsplit",
+          "items": [
+            {
+              "start": 80,
+              "end": 94,
+              "quote": "2013 ~ 2014 제외"
+            }
+          ]
+        },
+        {
+          "kind": "exclusion",
+          "parenthetical": {
+            "start": 130,
+            "end": 139,
+            "quote": "(2011 제외)"
+          },
+          "context": {
+            "start": 96,
+            "end": 130,
+            "quote": "2 류택현( L ) 901 20시즌 - 1994 ~ 2014 "
+          },
+          "coordination": "unsplit",
+          "items": [
+            {
+              "start": 131,
+              "end": 135,
+              "quote": "2011"
+            }
+          ]
+        },
+        {
+          "kind": "qualifier-quote",
+          "parenthetical": {
+            "start": 174,
+            "end": 190,
+            "quote": "(2010 ~ 2011 제외)"
+          },
+          "context": {
+            "start": 140,
+            "end": 174,
+            "quote": "3 *우규민(KT) 857 20시즌 - 2004 ~ 2025 "
+          },
+          "coordination": "unsplit",
+          "items": [
+            {
+              "start": 175,
+              "end": 189,
+              "quote": "2010 ~ 2011 제외"
+            }
+          ]
+        },
+        {
+          "kind": "qualifier-quote",
+          "parenthetical": {
+            "start": 223,
+            "end": 239,
+            "quote": "(2010 ~ 2011 제외)"
+          },
+          "context": {
+            "start": 191,
+            "end": 223,
+            "quote": "4 진해수(롯) 842 17시즌 - 2006 ~ 2024 "
+          },
+          "coordination": "unsplit",
+          "items": [
+            {
+              "start": 224,
+              "end": 238,
+              "quote": "2010 ~ 2011 제외"
+            }
+          ]
+        },
+        {
+          "kind": "exclusion",
+          "parenthetical": {
+            "start": 274,
+            "end": 283,
+            "quote": "(1992 제외)"
+          },
+          "context": {
+            "start": 247,
+            "end": 274,
+            "quote": "SK) 813 19시즌 - 1990 ~ 2009 "
+          },
+          "coordination": "unsplit",
+          "items": [
+            {
+              "start": 275,
+              "end": 279,
+              "quote": "1992"
+            }
+          ]
+        },
+        {
+          "kind": "exclusion",
+          "parenthetical": {
+            "start": 350,
+            "end": 359,
+            "quote": "(2005 제외)"
+          },
+          "context": {
+            "start": 318,
+            "end": 350,
+            "quote": "7 권 혁(두) 781 18시즌 - 2002 ~ 2020 "
+          },
+          "coordination": "unsplit",
+          "items": [
+            {
+              "start": 351,
+              "end": 355,
+              "quote": "2005"
+            }
+          ]
+        },
+        {
+          "kind": "qualifier-quote",
+          "parenthetical": {
+            "start": 481,
+            "end": 497,
+            "quote": "(2005 ~ 2006 제외)"
+          },
+          "context": {
+            "start": 454,
+            "end": 481,
+            "quote": "SK) 752 17시즌 - 1996 ~ 2014 "
+          },
+          "coordination": "unsplit",
+          "items": [
+            {
+              "start": 482,
+              "end": 496,
+              "quote": "2005 ~ 2006 제외"
+            }
+          ]
+        },
+        {
+          "kind": "qualifier-quote",
+          "parenthetical": {
+            "start": 684,
+            "end": 711,
+            "quote": "(2007 제외, 2009 ~ 2010 해외진출)"
+          },
+          "context": {
+            "start": 651,
+            "end": 684,
+            "quote": "15 이혜천(N) 706 15시즌 - 1998 ~ 2015 "
+          },
+          "coordination": "unsplit",
+          "items": [
+            {
+              "start": 685,
+              "end": 710,
+              "quote": "2007 제외, 2009 ~ 2010 해외진출"
+            }
+          ]
+        },
+        {
+          "kind": "qualifier-quote",
+          "parenthetical": {
+            "start": 747,
+            "end": 763,
+            "quote": "(2005 ~ 2008 제외)"
+          },
+          "context": {
+            "start": 712,
+            "end": 747,
+            "quote": "16 이동현( L ) 701 15시즌 - 2001 ~ 2019 "
+          },
+          "coordination": "unsplit",
+          "items": [
+            {
+              "start": 748,
+              "end": 762,
+              "quote": "2005 ~ 2008 제외"
+            }
+          ]
+        },
+        {
+          "kind": "exclusion",
+          "parenthetical": {
+            "start": 798,
+            "end": 807,
+            "quote": "(2014 제외)"
+          },
+          "context": {
+            "start": 764,
+            "end": 798,
+            "quote": "17 *김상수(롯) 700 17시즌 - 2008 ~ 2025 "
+          },
+          "coordination": "unsplit",
+          "items": [
+            {
+              "start": 799,
+              "end": 803,
+              "quote": "2014"
+            }
+          ]
+        },
+        {
+          "kind": "qualifier-quote",
+          "parenthetical": {
+            "start": 874,
+            "end": 890,
+            "quote": "(2005 ~ 2007 제외)"
+          },
+          "context": {
+            "start": 841,
+            "end": 874,
+            "quote": "19 박정진(한) 691 16시즌 - 1999 ~ 2017 "
+          },
+          "coordination": "unsplit",
+          "items": [
+            {
+              "start": 875,
+              "end": 889,
+              "quote": "2005 ~ 2007 제외"
+            }
+          ]
+        }
+      ],
+      "unresolved": []
+    },
+    "section": "2026 KBO 레코드북#p79"
+  },
+  {
+    "canonicalUrl": "https://www.koreabaseball.com/kbo/board/ebook/ebookpublication.aspx",
+    "contentSha256": "178e865c24a62c7b9f3b837f24aabebf6d0d70b42e06dbaccb7e7f52d33dfc3d",
+    "sourceRevision": "sha256:3485ef02840eb47e",
+    "sourceKey": "kbo:ebook:2026-kbo-레코드북",
+    "chunkId": 5225,
+    "claimGeneration": 1,
+    "note": "괄호 직전 원문(적용 범위는 원문 전체로 판단): 21 이현승(두) 671 15시즌 - 2006 ~ 2022\n단서 원문(분해하지 않음): (2012 ~ 2013 제외)\n괄호 직전 원문(적용 범위는 원문 전체로 판단): 23 고효준(두) 646 21시즌 - 2002 ~ 2025\n단서 원문(분해하지 않음): (2003, 2012 ~ 2013 제외)\n괄호 직전 원문(적용 범위는 원문 전체로 판단): 24 *노경은(S ) 638 20시즌 - 2003 ~ 2025\n단서 원문(분해하지 않음): (2005~2006, 2019 제외)",
+    "structure": {
+      "version": "official-parenthetical-v2",
+      "sourceRevision": "sha256:3485ef02840eb47e",
+      "contentSha256": "327b3d4500132a0173ca89fadb6fcb756ebfe33185117307d304e9ff5fbb0929",
+      "relations": [
+        {
+          "kind": "qualifier-quote",
+          "parenthetical": {
+            "start": 56,
+            "end": 72,
+            "quote": "(2012 ~ 2013 제외)"
+          },
+          "context": {
+            "start": 23,
+            "end": 56,
+            "quote": "21 이현승(두) 671 15시즌 - 2006 ~ 2022 "
+          },
+          "coordination": "unsplit",
+          "items": [
+            {
+              "start": 57,
+              "end": 71,
+              "quote": "2012 ~ 2013 제외"
+            }
+          ]
+        },
+        {
+          "kind": "qualifier-quote",
+          "parenthetical": {
+            "start": 139,
+            "end": 161,
+            "quote": "(2003, 2012 ~ 2013 제외)"
+          },
+          "context": {
+            "start": 106,
+            "end": 139,
+            "quote": "23 고효준(두) 646 21시즌 - 2002 ~ 2025 "
+          },
+          "coordination": "unsplit",
+          "items": [
+            {
+              "start": 140,
+              "end": 160,
+              "quote": "2003, 2012 ~ 2013 제외"
+            }
+          ]
+        },
+        {
+          "kind": "qualifier-quote",
+          "parenthetical": {
+            "start": 197,
+            "end": 217,
+            "quote": "(2005~2006, 2019 제외)"
+          },
+          "context": {
+            "start": 162,
+            "end": 197,
+            "quote": "24 *노경은(S ) 638 20시즌 - 2003 ~ 2025 "
+          },
+          "coordination": "unsplit",
+          "items": [
+            {
+              "start": 198,
+              "end": 216,
+              "quote": "2005~2006, 2019 제외"
+            }
+          ]
+        }
+      ],
+      "unresolved": []
+    },
+    "section": "2026 KBO 레코드북#p79"
+  },
+  {
+    "canonicalUrl": "https://www.koreabaseball.com/kbo/board/ebook/ebookpublication.aspx",
+    "contentSha256": "d5587277c0627b6f491e4833add5534eae10a22a0d2f00f1e038bdfffbd2ef63",
+    "sourceRevision": "sha256:3485ef02840eb47e",
+    "sourceKey": "kbo:ebook:2026-kbo-레코드북",
+    "chunkId": 5335,
+    "claimGeneration": 1,
+    "note": "괄호 직전 원문(적용 범위는 원문 전체로 판단): 1경기 구원 등판\n단서 원문(분해하지 않음): (연속 이닝 선발 등판 무실점 기록에서 제외)\n괄호 직전 원문(적용 범위는 원문 전체로 판단): 2경기 구원 등판\n단서 원문(분해하지 않음): (연속 이닝 선발 등판 무실점 기록에서 제외)\n괄호 직전 원문(적용 범위는 원문 전체로 판단): 1경기 구원 등판\n단서 원문(분해하지 않음): (연속 이닝 선발 등판 무실점 기록에서 제외)\n괄호 직전 원문(적용 범위는 원문 전체로 판단): 3경기 구원 등판\n단서 원문(분해하지 않음): (연속 이닝 선발 등판 무실점 기록에서 제외)\n괄호 직전 원문(적용 범위는 원문 전체로 판단): 1경기 구원 등판\n단서 원문(분해하지 않음): (연속 이닝 선발 등판 무실점 기록에서 제외)",
+    "structure": {
+      "version": "official-parenthetical-v2",
+      "sourceRevision": "sha256:3485ef02840eb47e",
+      "contentSha256": "b5ccff00799f02063df32e2b7072073d6cdd687a32f4ccd5f401e1bebbc1fca1",
+      "relations": [
+        {
+          "kind": "qualifier-quote",
+          "parenthetical": {
+            "start": 105,
+            "end": 130,
+            "quote": "(연속 이닝 선발 등판 무실점 기록에서 제외)"
+          },
+          "context": {
+            "start": 95,
+            "end": 105,
+            "quote": "1경기 구원 등판 "
+          },
+          "coordination": "unsplit",
+          "items": [
+            {
+              "start": 106,
+              "end": 129,
+              "quote": "연속 이닝 선발 등판 무실점 기록에서 제외"
+            }
+          ]
+        },
+        {
+          "kind": "qualifier-quote",
+          "parenthetical": {
+            "start": 361,
+            "end": 386,
+            "quote": "(연속 이닝 선발 등판 무실점 기록에서 제외)"
+          },
+          "context": {
+            "start": 351,
+            "end": 361,
+            "quote": "2경기 구원 등판 "
+          },
+          "coordination": "unsplit",
+          "items": [
+            {
+              "start": 362,
+              "end": 385,
+              "quote": "연속 이닝 선발 등판 무실점 기록에서 제외"
+            }
+          ]
+        },
+        {
+          "kind": "qualifier-quote",
+          "parenthetical": {
+            "start": 471,
+            "end": 496,
+            "quote": "(연속 이닝 선발 등판 무실점 기록에서 제외)"
+          },
+          "context": {
+            "start": 461,
+            "end": 471,
+            "quote": "1경기 구원 등판 "
+          },
+          "coordination": "unsplit",
+          "items": [
+            {
+              "start": 472,
+              "end": 495,
+              "quote": "연속 이닝 선발 등판 무실점 기록에서 제외"
+            }
+          ]
+        },
+        {
+          "kind": "qualifier-quote",
+          "parenthetical": {
+            "start": 672,
+            "end": 697,
+            "quote": "(연속 이닝 선발 등판 무실점 기록에서 제외)"
+          },
+          "context": {
+            "start": 662,
+            "end": 672,
+            "quote": "3경기 구원 등판 "
+          },
+          "coordination": "unsplit",
+          "items": [
+            {
+              "start": 673,
+              "end": 696,
+              "quote": "연속 이닝 선발 등판 무실점 기록에서 제외"
+            }
+          ]
+        },
+        {
+          "kind": "qualifier-quote",
+          "parenthetical": {
+            "start": 793,
+            "end": 818,
+            "quote": "(연속 이닝 선발 등판 무실점 기록에서 제외)"
+          },
+          "context": {
+            "start": 783,
+            "end": 793,
+            "quote": "1경기 구원 등판 "
+          },
+          "coordination": "unsplit",
+          "items": [
+            {
+              "start": 794,
+              "end": 817,
+              "quote": "연속 이닝 선발 등판 무실점 기록에서 제외"
+            }
+          ]
+        }
+      ],
+      "unresolved": []
+    },
+    "section": "2026 KBO 레코드북#p130"
+  },
+  {
+    "canonicalUrl": "https://www.koreabaseball.com/kbo/board/ebook/ebookpublication.aspx",
+    "contentSha256": "5d86786563c422c1488f112c0f50594714671f34c37c8b5e8328cd114d9ceace",
+    "sourceRevision": "sha256:3485ef02840eb47e",
+    "sourceKey": "kbo:ebook:2026-kbo-레코드북",
+    "chunkId": 5336,
+    "claimGeneration": 1,
+    "note": "괄호 직전 원문(적용 범위는 원문 전체로 판단): 4경기 구원 등판\n단서 원문(분해하지 않음): (연속 이닝 선발 등판 무실점 기록에서 제외)",
+    "structure": {
+      "version": "official-parenthetical-v2",
+      "sourceRevision": "sha256:3485ef02840eb47e",
+      "contentSha256": "e25f7631cdd4d3cf962fd23bd48c43f714d6c51d3c742432967aae2f773bc0d8",
+      "relations": [
+        {
+          "kind": "qualifier-quote",
+          "parenthetical": {
+            "start": 125,
+            "end": 150,
+            "quote": "(연속 이닝 선발 등판 무실점 기록에서 제외)"
+          },
+          "context": {
+            "start": 115,
+            "end": 125,
+            "quote": "4경기 구원 등판 "
+          },
+          "coordination": "unsplit",
+          "items": [
+            {
+              "start": 126,
+              "end": 149,
+              "quote": "연속 이닝 선발 등판 무실점 기록에서 제외"
+            }
+          ]
+        }
+      ],
+      "unresolved": []
+    },
+    "section": "2026 KBO 레코드북#p130"
+  },
+  {
+    "canonicalUrl": "https://www.koreabaseball.com/kbo/board/ebook/ebookpublication.aspx",
+    "contentSha256": "a20b7a25c54fdf378e1942fb907e5c4e914662e6dc021c3cee70c0400c62b3bd",
+    "sourceRevision": "sha256:3485ef02840eb47e",
+    "sourceKey": "kbo:ebook:2026-kbo-레코드북",
+    "chunkId": 5955,
+    "claimGeneration": 1,
+    "note": "괄호 직전 원문(적용 범위는 원문 전체로 판단): 부문에서 1위를 달리고 있는 선수는 1999년부터 2006년까지\n괄호 안 제외 항목 A: 2003년.\n나머지 적용 조건과 효과: 위 원문 그대로.",
+    "structure": {
+      "version": "official-parenthetical-v2",
+      "sourceRevision": "sha256:3485ef02840eb47e",
+      "contentSha256": "6812e33dfcfdaa33db6837542aedf58489f58518a8ba77ae743a8a80ffe8a0a2",
+      "relations": [
+        {
+          "kind": "exclusion",
+          "parenthetical": {
+            "start": 127,
+            "end": 137,
+            "quote": "(2003년 제외)"
+          },
+          "context": {
+            "start": 92,
+            "end": 127,
+            "quote": "부문에서 1위를 달리고 있는 선수는 1999년부터 2006년까지"
+          },
+          "coordination": "unsplit",
+          "items": [
+            {
+              "start": 128,
+              "end": 133,
+              "quote": "2003년"
+            }
+          ]
+        }
+      ],
+      "unresolved": []
+    },
+    "section": "2026 KBO 레코드북#p424"
+  },
+  {
+    "canonicalUrl": "https://www.koreabaseball.com/kbo/board/ebook/ebookpublication.aspx",
+    "contentSha256": "111754a1a3eac4d3962d0549a7c1bcc883b41e830eeda610a68ed724bbf00154",
+    "sourceRevision": "sha256:b897b7fa6959c6fe",
+    "sourceKey": "kbo:ebook:야구장-규모용도별-건립-가이드북",
+    "chunkId": 7834,
+    "claimGeneration": 1,
+    "note": "괄호 직전 원문(적용 범위는 원문 전체로 판단): \n단서 원문(분해하지 않음): (단, 프로 및 국제 야구장에 아마추어용 야구장 기준은 적용할수 없다. )",
+    "structure": {
+      "version": "official-parenthetical-v2",
+      "sourceRevision": "sha256:b897b7fa6959c6fe",
+      "contentSha256": "4a3662937f7a85e3e9023baf89d31e791b4b757f25e2ce648e31fb155032d482",
+      "relations": [
+        {
+          "kind": "qualifier-quote",
+          "parenthetical": {
+            "start": 406,
+            "end": 447,
+            "quote": "(단, 프로 및 국제 야구장에 아마추어용 야구장 기준은 적용할수 없다. )"
+          },
+          "context": {
+            "start": 405,
+            "end": 406,
+            "quote": " "
+          },
+          "coordination": "unsplit",
+          "items": [
+            {
+              "start": 407,
+              "end": 446,
+              "quote": "단, 프로 및 국제 야구장에 아마추어용 야구장 기준은 적용할수 없다. "
+            }
+          ]
+        }
+      ],
+      "unresolved": []
+    },
+    "section": "야구장 규모·용도별 건립 가이드북#p74"
+  },
+  {
+    "canonicalUrl": "https://www.koreabaseball.com/kbo/board/ebook/ebookpublication.aspx",
+    "contentSha256": "1af5cb8423b577a29c71b63ffae7e43d95987b1db0343def193d352c7ad2a1b7",
+    "sourceRevision": "sha256:b897b7fa6959c6fe",
+    "sourceKey": "kbo:ebook:야구장-규모용도별-건립-가이드북",
+    "chunkId": 7837,
+    "claimGeneration": 1,
+    "note": "괄호 직전 원문(적용 범위는 원문 전체로 판단): \n단서 원문(분해하지 않음): (단, 프로 및 국제 야구장에 아마추어용 야구장 기준은 적용할수 없다. )",
+    "structure": {
+      "version": "official-parenthetical-v2",
+      "sourceRevision": "sha256:b897b7fa6959c6fe",
+      "contentSha256": "c9d89d496efa8179d86dfb8ab3492dafb81a09bfc0fae2dc9f5f9003020f5dc9",
+      "relations": [
+        {
+          "kind": "qualifier-quote",
+          "parenthetical": {
+            "start": 405,
+            "end": 446,
+            "quote": "(단, 프로 및 국제 야구장에 아마추어용 야구장 기준은 적용할수 없다. )"
+          },
+          "context": {
+            "start": 404,
+            "end": 405,
+            "quote": " "
+          },
+          "coordination": "unsplit",
+          "items": [
+            {
+              "start": 406,
+              "end": 445,
+              "quote": "단, 프로 및 국제 야구장에 아마추어용 야구장 기준은 적용할수 없다. "
+            }
+          ]
+        }
+      ],
+      "unresolved": []
+    },
+    "section": "야구장 규모·용도별 건립 가이드북#p75"
+  },
+  {
+    "canonicalUrl": "https://www.koreabaseball.com/kbo/board/ebook/ebookpublication.aspx",
+    "contentSha256": "a8a0f41290ffb64c60eee481c438e8e3795de03c1931bd8a0778f7728d684254",
+    "sourceRevision": "sha256:b897b7fa6959c6fe",
+    "sourceKey": "kbo:ebook:야구장-규모용도별-건립-가이드북",
+    "chunkId": 7942,
+    "claimGeneration": 1,
+    "note": "괄호 직전 원문(적용 범위는 원문 전체로 판단): 아울러, 지방자치단체를 당사자로 하는 계약에 관한 법률(이하'지방계약법') 시행령] 제43조 제1항에서 지방자치단체의장 또는 계약담당자는 물품\n단서 원문(분해하지 않음): (단순 물품구매는 제외한다)\n괄호 직전 원문(적용 범위는 원문 전체로 판단): · 용역\n단서 원문(분해하지 않음): (청소 등 단순한 노무를 제공하는 용역은 제외한다)\n괄호 직전 원문(적용 범위는 원문 전체로 판단): 경우에는제42조에도 불구하고다수의공급자들로부터 제안서를 제출받아 평가한후 협상 절차를 통하여 추정가격에 부가가치세를 더한 금액\n단서 원문(분해하지 않음): (예정가격을 정한 경우에는 예정가격)",
+    "structure": {
+      "version": "official-parenthetical-v2",
+      "sourceRevision": "sha256:b897b7fa6959c6fe",
+      "contentSha256": "e258ebbecc072771f270db53d6a7fbfd01678342862a751ccd4287834ecbb67d",
+      "relations": [
+        {
+          "kind": "qualifier-quote",
+          "parenthetical": {
+            "start": 116,
+            "end": 131,
+            "quote": "(단순 물품구매는 제외한다)"
+          },
+          "context": {
+            "start": 37,
+            "end": 116,
+            "quote": "아울러, 지방자치단체를 당사자로 하는 계약에 관한 법률(이하'지방계약법') 시행령] 제43조 제1항에서 지방자치단체의장 또는 계약담당자는 물품"
+          },
+          "coordination": "unsplit",
+          "items": [
+            {
+              "start": 117,
+              "end": 130,
+              "quote": "단순 물품구매는 제외한다"
+            }
+          ]
+        },
+        {
+          "kind": "qualifier-quote",
+          "parenthetical": {
+            "start": 136,
+            "end": 164,
+            "quote": "(청소 등 단순한 노무를 제공하는 용역은 제외한다)"
+          },
+          "context": {
+            "start": 132,
+            "end": 136,
+            "quote": "· 용역"
+          },
+          "coordination": "unsplit",
+          "items": [
+            {
+              "start": 137,
+              "end": 163,
+              "quote": "청소 등 단순한 노무를 제공하는 용역은 제외한다"
+            }
+          ]
+        },
+        {
+          "kind": "qualifier-quote",
+          "parenthetical": {
+            "start": 301,
+            "end": 321,
+            "quote": "(예정가격을 정한 경우에는 예정가격)"
+          },
+          "context": {
+            "start": 231,
+            "end": 301,
+            "quote": "경우에는제42조에도 불구하고다수의공급자들로부터 제안서를 제출받아 평가한후 협상 절차를 통하여 추정가격에 부가가치세를 더한 금액"
+          },
+          "coordination": "unsplit",
+          "items": [
+            {
+              "start": 302,
+              "end": 320,
+              "quote": "예정가격을 정한 경우에는 예정가격"
+            }
+          ]
+        }
+      ],
+      "unresolved": []
+    },
+    "section": "야구장 규모·용도별 건립 가이드북#p108"
+  },
+  {
+    "canonicalUrl": "https://www.koreabaseball.com/kbo/board/ebook/ebookpublication.aspx",
+    "contentSha256": "a9a24e16f6ca97ed76979a6964d0e73bb365d709061c336f3bca339e65176116",
+    "sourceRevision": "sha256:b897b7fa6959c6fe",
+    "sourceKey": "kbo:ebook:야구장-규모용도별-건립-가이드북",
+    "chunkId": 7943,
+    "claimGeneration": 1,
+    "note": "괄호 직전 원문(적용 범위는 원문 전체로 판단): ① 지방자치단체의장 또는 계약담당자는 물품\n단서 원문(분해하지 않음): (단순 물품구매는 제외한다)\n괄호 직전 원문(적용 범위는 원문 전체로 판단): ① 지방자치단체의장 또는 계약담당자는 물품(단순 물품구매는 제외한다) ㆍ 용역\n단서 원문(분해하지 않음): (청소ㆍ경비등 단순한 노무를 제공하는 용역은 제외한다)\n괄호 직전 원문(적용 범위는 원문 전체로 판단): 안전성 등의 이유로 필요하다고 인정되는 경우에는제42조에도 불구하고 다수의 공급자들로부터 제안서를 제출받아 평가한후 협상절차를 통하여 추정가격에 부가가치세를 더한 금액\n단서 원문(분해하지 않음): (예정가격을 정한 경우에는 예정가격)",
+    "structure": {
+      "version": "official-parenthetical-v2",
+      "sourceRevision": "sha256:b897b7fa6959c6fe",
+      "contentSha256": "f6191d1fa3e737d30e1da00cc793232777c06f3cbe6eb030b4532ee491d5240b",
+      "relations": [
+        {
+          "kind": "qualifier-quote",
+          "parenthetical": {
+            "start": 89,
+            "end": 104,
+            "quote": "(단순 물품구매는 제외한다)"
+          },
+          "context": {
+            "start": 66,
+            "end": 89,
+            "quote": "① 지방자치단체의장 또는 계약담당자는 물품"
+          },
+          "coordination": "unsplit",
+          "items": [
+            {
+              "start": 90,
+              "end": 103,
+              "quote": "단순 물품구매는 제외한다"
+            }
+          ]
+        },
+        {
+          "kind": "qualifier-quote",
+          "parenthetical": {
+            "start": 110,
+            "end": 140,
+            "quote": "(청소ㆍ경비등 단순한 노무를 제공하는 용역은 제외한다)"
+          },
+          "context": {
+            "start": 66,
+            "end": 110,
+            "quote": "① 지방자치단체의장 또는 계약담당자는 물품(단순 물품구매는 제외한다) ㆍ 용역 "
+          },
+          "coordination": "unsplit",
+          "items": [
+            {
+              "start": 111,
+              "end": 139,
+              "quote": "청소ㆍ경비등 단순한 노무를 제공하는 용역은 제외한다"
+            }
+          ]
+        },
+        {
+          "kind": "qualifier-quote",
+          "parenthetical": {
+            "start": 280,
+            "end": 300,
+            "quote": "(예정가격을 정한 경우에는 예정가격)"
+          },
+          "context": {
+            "start": 187,
+            "end": 280,
+            "quote": "안전성 등의 이유로 필요하다고 인정되는 경우에는제42조에도 불구하고 다수의 공급자들로부터 제안서를 제출받아 평가한후 협상절차를 통하여 추정가격에 부가가치세를 더한 금액"
+          },
+          "coordination": "unsplit",
+          "items": [
+            {
+              "start": 281,
+              "end": 299,
+              "quote": "예정가격을 정한 경우에는 예정가격"
+            }
+          ]
+        }
+      ],
+      "unresolved": []
+    },
+    "section": "야구장 규모·용도별 건립 가이드북#p108"
+  },
+  {
+    "canonicalUrl": "https://www.koreabaseball.com/kbo/board/ebook/ebookpublication.aspx",
+    "contentSha256": "a8a0f41290ffb64c60eee481c438e8e3795de03c1931bd8a0778f7728d684254",
+    "sourceRevision": "sha256:b897b7fa6959c6fe",
+    "sourceKey": "kbo:ebook:야구장-규모용도별-건립-가이드북",
+    "chunkId": 7946,
+    "claimGeneration": 1,
+    "note": "괄호 직전 원문(적용 범위는 원문 전체로 판단): 아울러, 지방자치단체를 당사자로 하는 계약에 관한 법률(이하'지방계약법') 시행령] 제43조 제1항에서 지방자치단체의장 또는 계약담당자는 물품\n단서 원문(분해하지 않음): (단순 물품구매는 제외한다)\n괄호 직전 원문(적용 범위는 원문 전체로 판단): · 용역\n단서 원문(분해하지 않음): (청소 등 단순한 노무를 제공하는 용역은 제외한다)\n괄호 직전 원문(적용 범위는 원문 전체로 판단): 경우에는제42조에도 불구하고다수의공급자들로부터 제안서를 제출받아 평가한후 협상 절차를 통하여 추정가격에 부가가치세를 더한 금액\n단서 원문(분해하지 않음): (예정가격을 정한 경우에는 예정가격)",
+    "structure": {
+      "version": "official-parenthetical-v2",
+      "sourceRevision": "sha256:b897b7fa6959c6fe",
+      "contentSha256": "e258ebbecc072771f270db53d6a7fbfd01678342862a751ccd4287834ecbb67d",
+      "relations": [
+        {
+          "kind": "qualifier-quote",
+          "parenthetical": {
+            "start": 116,
+            "end": 131,
+            "quote": "(단순 물품구매는 제외한다)"
+          },
+          "context": {
+            "start": 37,
+            "end": 116,
+            "quote": "아울러, 지방자치단체를 당사자로 하는 계약에 관한 법률(이하'지방계약법') 시행령] 제43조 제1항에서 지방자치단체의장 또는 계약담당자는 물품"
+          },
+          "coordination": "unsplit",
+          "items": [
+            {
+              "start": 117,
+              "end": 130,
+              "quote": "단순 물품구매는 제외한다"
+            }
+          ]
+        },
+        {
+          "kind": "qualifier-quote",
+          "parenthetical": {
+            "start": 136,
+            "end": 164,
+            "quote": "(청소 등 단순한 노무를 제공하는 용역은 제외한다)"
+          },
+          "context": {
+            "start": 132,
+            "end": 136,
+            "quote": "· 용역"
+          },
+          "coordination": "unsplit",
+          "items": [
+            {
+              "start": 137,
+              "end": 163,
+              "quote": "청소 등 단순한 노무를 제공하는 용역은 제외한다"
+            }
+          ]
+        },
+        {
+          "kind": "qualifier-quote",
+          "parenthetical": {
+            "start": 301,
+            "end": 321,
+            "quote": "(예정가격을 정한 경우에는 예정가격)"
+          },
+          "context": {
+            "start": 231,
+            "end": 301,
+            "quote": "경우에는제42조에도 불구하고다수의공급자들로부터 제안서를 제출받아 평가한후 협상 절차를 통하여 추정가격에 부가가치세를 더한 금액"
+          },
+          "coordination": "unsplit",
+          "items": [
+            {
+              "start": 302,
+              "end": 320,
+              "quote": "예정가격을 정한 경우에는 예정가격"
+            }
+          ]
+        }
+      ],
+      "unresolved": []
+    },
+    "section": "야구장 규모·용도별 건립 가이드북#p109"
+  },
+  {
+    "canonicalUrl": "https://www.koreabaseball.com/kbo/board/ebook/ebookpublication.aspx",
+    "contentSha256": "a9a24e16f6ca97ed76979a6964d0e73bb365d709061c336f3bca339e65176116",
+    "sourceRevision": "sha256:b897b7fa6959c6fe",
+    "sourceKey": "kbo:ebook:야구장-규모용도별-건립-가이드북",
+    "chunkId": 7947,
+    "claimGeneration": 1,
+    "note": "괄호 직전 원문(적용 범위는 원문 전체로 판단): ① 지방자치단체의장 또는 계약담당자는 물품\n단서 원문(분해하지 않음): (단순 물품구매는 제외한다)\n괄호 직전 원문(적용 범위는 원문 전체로 판단): ① 지방자치단체의장 또는 계약담당자는 물품(단순 물품구매는 제외한다) ㆍ 용역\n단서 원문(분해하지 않음): (청소ㆍ경비등 단순한 노무를 제공하는 용역은 제외한다)\n괄호 직전 원문(적용 범위는 원문 전체로 판단): 안전성 등의 이유로 필요하다고 인정되는 경우에는제42조에도 불구하고 다수의 공급자들로부터 제안서를 제출받아 평가한후 협상절차를 통하여 추정가격에 부가가치세를 더한 금액\n단서 원문(분해하지 않음): (예정가격을 정한 경우에는 예정가격)",
+    "structure": {
+      "version": "official-parenthetical-v2",
+      "sourceRevision": "sha256:b897b7fa6959c6fe",
+      "contentSha256": "f6191d1fa3e737d30e1da00cc793232777c06f3cbe6eb030b4532ee491d5240b",
+      "relations": [
+        {
+          "kind": "qualifier-quote",
+          "parenthetical": {
+            "start": 89,
+            "end": 104,
+            "quote": "(단순 물품구매는 제외한다)"
+          },
+          "context": {
+            "start": 66,
+            "end": 89,
+            "quote": "① 지방자치단체의장 또는 계약담당자는 물품"
+          },
+          "coordination": "unsplit",
+          "items": [
+            {
+              "start": 90,
+              "end": 103,
+              "quote": "단순 물품구매는 제외한다"
+            }
+          ]
+        },
+        {
+          "kind": "qualifier-quote",
+          "parenthetical": {
+            "start": 110,
+            "end": 140,
+            "quote": "(청소ㆍ경비등 단순한 노무를 제공하는 용역은 제외한다)"
+          },
+          "context": {
+            "start": 66,
+            "end": 110,
+            "quote": "① 지방자치단체의장 또는 계약담당자는 물품(단순 물품구매는 제외한다) ㆍ 용역 "
+          },
+          "coordination": "unsplit",
+          "items": [
+            {
+              "start": 111,
+              "end": 139,
+              "quote": "청소ㆍ경비등 단순한 노무를 제공하는 용역은 제외한다"
+            }
+          ]
+        },
+        {
+          "kind": "qualifier-quote",
+          "parenthetical": {
+            "start": 280,
+            "end": 300,
+            "quote": "(예정가격을 정한 경우에는 예정가격)"
+          },
+          "context": {
+            "start": 187,
+            "end": 280,
+            "quote": "안전성 등의 이유로 필요하다고 인정되는 경우에는제42조에도 불구하고 다수의 공급자들로부터 제안서를 제출받아 평가한후 협상절차를 통하여 추정가격에 부가가치세를 더한 금액"
+          },
+          "coordination": "unsplit",
+          "items": [
+            {
+              "start": 281,
+              "end": 299,
+              "quote": "예정가격을 정한 경우에는 예정가격"
+            }
+          ]
+        }
+      ],
+      "unresolved": []
+    },
+    "section": "야구장 규모·용도별 건립 가이드북#p109"
+  },
+  {
+    "canonicalUrl": "https://www.koreabaseball.com/kbo/board/ebook/ebookpublication.aspx",
+    "contentSha256": "281ea7160ab69d653192d62797621670c8a27e5693553868a33dfb3361188125",
+    "sourceRevision": "sha256:3d095cd3b5253584",
+    "sourceKey": "kbo:ebook:한국-야구사-연표",
+    "chunkId": 8278,
+    "claimGeneration": 1,
+    "note": "괄호 직전 원문(적용 범위는 원문 전체로 판단): \n단서 원문(분해하지 않음): (24군단, 31부대, 308부대)",
+    "structure": {
+      "version": "official-parenthetical-v2",
+      "sourceRevision": "sha256:3d095cd3b5253584",
+      "contentSha256": "90f642c9f38ee41e4f73a5a00938edb2aaa0c88810416e9e9ea232e308f6094c",
+      "relations": [
+        {
+          "kind": "qualifier-quote",
+          "parenthetical": {
+            "start": 519,
+            "end": 538,
+            "quote": "(24군단, 31부대, 308부대)"
+          },
+          "context": {
+            "start": 519,
+            "end": 519,
+            "quote": ""
+          },
+          "coordination": "unsplit",
+          "items": [
+            {
+              "start": 520,
+              "end": 537,
+              "quote": "24군단, 31부대, 308부대"
+            }
+          ]
+        }
+      ],
+      "unresolved": []
+    },
+    "section": "한국 야구사 연표#p116"
+  },
+  {
+    "canonicalUrl": "https://www.koreabaseball.com/kbo/board/ebook/ebookpublication.aspx",
+    "contentSha256": "6aec2fc4b8c0a45c4e457fb3af9a0201faf29ef978a662a13185d79eb1365b33",
+    "sourceRevision": "sha256:3d095cd3b5253584",
+    "sourceKey": "kbo:ebook:한국-야구사-연표",
+    "chunkId": 8682,
+    "claimGeneration": 1,
+    "note": "괄호 직전 원문(적용 범위는 원문 전체로 판단): 미군 4개 팀\n단서 원문(분해하지 않음): (미제2사단, 미제7사단, 미제1군단, 미부\n평부대)",
+    "structure": {
+      "version": "official-parenthetical-v2",
+      "sourceRevision": "sha256:3d095cd3b5253584",
+      "contentSha256": "0a1b4a80cb2f3047687c2da65c307143c4e9d56b5bcf0877b30d41e4062c9328",
+      "relations": [
+        {
+          "kind": "qualifier-quote",
+          "parenthetical": {
+            "start": 418,
+            "end": 447,
+            "quote": "(미제2사단, 미제7사단, 미제1군단, 미부\n평부대)"
+          },
+          "context": {
+            "start": 411,
+            "end": 418,
+            "quote": "미군 4개 팀"
+          },
+          "coordination": "unsplit",
+          "items": [
+            {
+              "start": 419,
+              "end": 446,
+              "quote": "미제2사단, 미제7사단, 미제1군단, 미부\n평부대"
+            }
+          ]
+        }
+      ],
+      "unresolved": []
+    },
+    "section": "한국 야구사 연표#p273"
+  },
+  {
+    "canonicalUrl": "https://www.koreabaseball.com/kbo/board/ebook/ebookpublication.aspx",
+    "contentSha256": "ef44b21000f1ba238989da5991a56a378293ef259b28c33d50e0b2299cde267e",
+    "sourceRevision": "sha256:3d095cd3b5253584",
+    "sourceKey": "kbo:ebook:한국-야구사-연표",
+    "chunkId": 8715,
+    "claimGeneration": 1,
+    "note": "괄호 직전 원문(적용 범위는 원문 전체로 판단): 미군 4개 팀\n단서 원문(분해하지 않음): (미제1군단, 재일요코스카, 미7사단, 미\n2사단)",
+    "structure": {
+      "version": "official-parenthetical-v2",
+      "sourceRevision": "sha256:3d095cd3b5253584",
+      "contentSha256": "c98f1aba8d773f03678b33139aa262865b918fdf5c9acc5b01984c0ac5a5dcea",
+      "relations": [
+        {
+          "kind": "qualifier-quote",
+          "parenthetical": {
+            "start": 423,
+            "end": 451,
+            "quote": "(미제1군단, 재일요코스카, 미7사단, 미\n2사단)"
+          },
+          "context": {
+            "start": 416,
+            "end": 423,
+            "quote": "미군 4개 팀"
+          },
+          "coordination": "unsplit",
+          "items": [
+            {
+              "start": 424,
+              "end": 450,
+              "quote": "미제1군단, 재일요코스카, 미7사단, 미\n2사단"
+            }
+          ]
+        }
+      ],
+      "unresolved": []
+    },
+    "section": "한국 야구사 연표#p286"
+  },
+  {
+    "canonicalUrl": "https://www.koreabaseball.com/kbo/board/ebook/ebookpublication.aspx",
+    "contentSha256": "4f41fa9775fbeed8d68c6f5980f648ced14f8da5800640fe603dc78fcf210f37",
+    "sourceRevision": "sha256:3d095cd3b5253584",
+    "sourceKey": "kbo:ebook:한국-야구사-연표",
+    "chunkId": 8743,
+    "claimGeneration": 1,
+    "note": "괄호 직전 원문(적용 범위는 원문 전체로 판단): 미군 4개 팀\n단서 원문(분해하지 않음): (미7사단, 주일미공군다치가와, 미2사단,\n미부평에스컴)",
+    "structure": {
+      "version": "official-parenthetical-v2",
+      "sourceRevision": "sha256:3d095cd3b5253584",
+      "contentSha256": "e0e4e79ad94b384391dfbab00b6746963d384a7a8cc95b7dc9e89f7e0a803a23",
+      "relations": [
+        {
+          "kind": "qualifier-quote",
+          "parenthetical": {
+            "start": 50,
+            "end": 81,
+            "quote": "(미7사단, 주일미공군다치가와, 미2사단,\n미부평에스컴)"
+          },
+          "context": {
+            "start": 43,
+            "end": 50,
+            "quote": "미군 4개 팀"
+          },
+          "coordination": "unsplit",
+          "items": [
+            {
+              "start": 51,
+              "end": 80,
+              "quote": "미7사단, 주일미공군다치가와, 미2사단,\n미부평에스컴"
+            }
+          ]
+        }
+      ],
+      "unresolved": []
+    },
+    "section": "한국 야구사 연표#p296"
+  },
+  {
+    "canonicalUrl": "https://www.koreabaseball.com/kbo/board/ebook/ebookpublication.aspx",
+    "contentSha256": "4df5b3d17771b6dd4f09904f8ccc6cea881aec97e5e1afe3784db1f7dcdb42a7",
+    "sourceRevision": "sha256:3d095cd3b5253584",
+    "sourceKey": "kbo:ebook:한국-야구사-연표",
+    "chunkId": 8774,
+    "claimGeneration": 1,
+    "note": "괄호 직전 원문(적용 범위는 원문 전체로 판단): 미군 4개 팀\n단서 원문(분해하지 않음): (미2사단, 주일미요코스카해군기지, 다치\n가와주둔미공군, 부평주둔미에스컴)",
+    "structure": {
+      "version": "official-parenthetical-v2",
+      "sourceRevision": "sha256:3d095cd3b5253584",
+      "contentSha256": "3ebc947964f2f3059268bbbe9657f0d0f693678974f317810b153575a77d0a06",
+      "relations": [
+        {
+          "kind": "qualifier-quote",
+          "parenthetical": {
+            "start": 421,
+            "end": 462,
+            "quote": "(미2사단, 주일미요코스카해군기지, 다치\n가와주둔미공군, 부평주둔미에스컴)"
+          },
+          "context": {
+            "start": 414,
+            "end": 421,
+            "quote": "미군 4개 팀"
+          },
+          "coordination": "unsplit",
+          "items": [
+            {
+              "start": 422,
+              "end": 461,
+              "quote": "미2사단, 주일미요코스카해군기지, 다치\n가와주둔미공군, 부평주둔미에스컴"
+            }
+          ]
+        }
+      ],
+      "unresolved": []
+    },
+    "section": "한국 야구사 연표#p308"
+  },
+  {
+    "canonicalUrl": "https://www.koreabaseball.com/kbo/board/ebook/ebookpublication.aspx",
+    "contentSha256": "3062c3ed79acf692598412095c7c9d572e9d83fe475d6d2849bf72c4cdeae2c2",
+    "sourceRevision": "sha256:3d095cd3b5253584",
+    "sourceKey": "kbo:ebook:한국-야구사-연표",
+    "chunkId": 8811,
+    "claimGeneration": 1,
+    "note": "괄호 직전 원문(적용 범위는 원문 전체로 판단): 미군 4개 팀\n단서 원문(분해하지 않음): (미군수기지사령부 패스컴, 미2사단, 미7\n사단, 미1군단)",
+    "structure": {
+      "version": "official-parenthetical-v2",
+      "sourceRevision": "sha256:3d095cd3b5253584",
+      "contentSha256": "444656083053f68cfc98025828b103609dbec8904790aab64e61bfcfd7a74172",
+      "relations": [
+        {
+          "kind": "qualifier-quote",
+          "parenthetical": {
+            "start": 224,
+            "end": 257,
+            "quote": "(미군수기지사령부 패스컴, 미2사단, 미7\n사단, 미1군단)"
+          },
+          "context": {
+            "start": 217,
+            "end": 224,
+            "quote": "미군 4개 팀"
+          },
+          "coordination": "unsplit",
+          "items": [
+            {
+              "start": 225,
+              "end": 256,
+              "quote": "미군수기지사령부 패스컴, 미2사단, 미7\n사단, 미1군단"
+            }
+          ]
+        }
+      ],
+      "unresolved": []
+    },
+    "section": "한국 야구사 연표#p322"
+  },
+  {
+    "canonicalUrl": "https://www.koreabaseball.com/kbo/board/ebook/ebookpublication.aspx",
+    "contentSha256": "364a7069190499934ba24a26c9fa5ca6f97cdcf99c8cb045cda7e8c86da7dc69",
+    "sourceRevision": "sha256:3d095cd3b5253584",
+    "sourceKey": "kbo:ebook:한국-야구사-연표",
+    "chunkId": 8843,
+    "claimGeneration": 1,
+    "note": "괄호 직전 원문(적용 범위는 원문 전체로 판단): 미군 4개 팀\n단서 원문(분해하지 않음): (미2사단, 미7사단, 미코스컴, 미1군단)",
+    "structure": {
+      "version": "official-parenthetical-v2",
+      "sourceRevision": "sha256:3d095cd3b5253584",
+      "contentSha256": "66e78762c93cd79cc65e916c544bc7b084e9f518459f39f338ef5c110f66d54c",
+      "relations": [
+        {
+          "kind": "qualifier-quote",
+          "parenthetical": {
+            "start": 259,
+            "end": 283,
+            "quote": "(미2사단, 미7사단, 미코스컴, 미1군단)"
+          },
+          "context": {
+            "start": 252,
+            "end": 259,
+            "quote": "미군 4개 팀"
+          },
+          "coordination": "unsplit",
+          "items": [
+            {
+              "start": 260,
+              "end": 282,
+              "quote": "미2사단, 미7사단, 미코스컴, 미1군단"
+            }
+          ]
+        }
+      ],
+      "unresolved": []
+    },
+    "section": "한국 야구사 연표#p333"
+  },
+  {
+    "canonicalUrl": "https://www.koreabaseball.com/kbo/board/ebook/ebookpublication.aspx",
+    "contentSha256": "b5cec05ccf3c4818d58b9c484b9b6d805f969dd715649ea01b3ac37d6a77e8f9",
+    "sourceRevision": "sha256:3d095cd3b5253584",
+    "sourceKey": "kbo:ebook:한국-야구사-연표",
+    "chunkId": 8870,
+    "claimGeneration": 1,
+    "note": "괄호 직전 원문(적용 범위는 원문 전체로 판단): 전에서 성균관대가 고려대를 5-2로 물리치고 우승\n단서 원문(분해하지 않음): (이\n후 대회 중단, 78년 6월 재개)",
+    "structure": {
+      "version": "official-parenthetical-v2",
+      "sourceRevision": "sha256:3d095cd3b5253584",
+      "contentSha256": "7db61fd70b9d1b9df1ca2e98be8aaac536409cf24f0d31715d0f761333f0a9eb",
+      "relations": [
+        {
+          "kind": "qualifier-quote",
+          "parenthetical": {
+            "start": 119,
+            "end": 141,
+            "quote": "(이\n후 대회 중단, 78년 6월 재개)"
+          },
+          "context": {
+            "start": 92,
+            "end": 119,
+            "quote": "전에서 성균관대가 고려대를 5-2로 물리치고 우승"
+          },
+          "coordination": "unsplit",
+          "items": [
+            {
+              "start": 120,
+              "end": 140,
+              "quote": "이\n후 대회 중단, 78년 6월 재개"
+            }
+          ]
+        }
+      ],
+      "unresolved": []
+    },
+    "section": "한국 야구사 연표#p343"
+  },
+  {
+    "canonicalUrl": "https://www.koreabaseball.com/kbo/board/ebook/ebookpublication.aspx",
+    "contentSha256": "a4c4369270fac9a84d3fd10e07256e62822ec5b13160b6dfac94cbf8a008bdb8",
+    "sourceRevision": "sha256:3d095cd3b5253584",
+    "sourceKey": "kbo:ebook:한국-야구사-연표",
+    "chunkId": 9142,
+    "claimGeneration": 1,
+    "note": "괄호 직전 원문(적용 범위는 원문 전체로 판단): 한국실업야구연맹 주최로 4월 18일부터 11개 팀\n단서 원문(분해하지 않음): (육\n군 경리단, 공군, 한국화장품, 롯데, 포항제철, 한국전\n력, 홍익회, 한일은행, 제일은행, 농협, 상업은행)",
+    "structure": {
+      "version": "official-parenthetical-v2",
+      "sourceRevision": "sha256:3d095cd3b5253584",
+      "contentSha256": "52abc44ff1ef0894836a5b7736bba523099d39be788d2f3d1f1deedff2dfca08",
+      "relations": [
+        {
+          "kind": "qualifier-quote",
+          "parenthetical": {
+            "start": 48,
+            "end": 112,
+            "quote": "(육\n군 경리단, 공군, 한국화장품, 롯데, 포항제철, 한국전\n력, 홍익회, 한일은행, 제일은행, 농협, 상업은행)"
+          },
+          "context": {
+            "start": 21,
+            "end": 48,
+            "quote": "한국실업야구연맹 주최로 4월 18일부터 11개 팀"
+          },
+          "coordination": "unsplit",
+          "items": [
+            {
+              "start": 49,
+              "end": 111,
+              "quote": "육\n군 경리단, 공군, 한국화장품, 롯데, 포항제철, 한국전\n력, 홍익회, 한일은행, 제일은행, 농협, 상업은행"
+            }
+          ]
+        }
+      ],
+      "unresolved": []
+    },
+    "section": "한국 야구사 연표#p442"
+  },
+  {
+    "canonicalUrl": "https://www.koreabaseball.com/kbo/board/ebook/ebookpublication.aspx",
+    "contentSha256": "bfa91d0db7406dc0360a64cdd48a1807008d2956dc9a753660a674024d5e2ef6",
+    "sourceRevision": "sha256:3d095cd3b5253584",
+    "sourceKey": "kbo:ebook:한국-야구사-연표",
+    "chunkId": 9175,
+    "claimGeneration": 1,
+    "note": "괄호 직전 원문(적용 범위는 원문 전체로 판단): 한국실업야구연맹 주최로 10월 19일 전기리그\n단서 원문(분해하지 않음): (경리\n단, 포항제철)",
+    "structure": {
+      "version": "official-parenthetical-v2",
+      "sourceRevision": "sha256:3d095cd3b5253584",
+      "contentSha256": "406074f76a52abc9ee00cca4a71961f4a15fc60a4354f242b5f09c85ef9e002c",
+      "relations": [
+        {
+          "kind": "qualifier-quote",
+          "parenthetical": {
+            "start": 703,
+            "end": 715,
+            "quote": "(경리\n단, 포항제철)"
+          },
+          "context": {
+            "start": 678,
+            "end": 703,
+            "quote": "한국실업야구연맹 주최로 10월 19일 전기리그"
+          },
+          "coordination": "unsplit",
+          "items": [
+            {
+              "start": 704,
+              "end": 714,
+              "quote": "경리\n단, 포항제철"
+            }
+          ]
+        }
+      ],
+      "unresolved": []
+    },
+    "section": "한국 야구사 연표#p454"
+  },
+  {
+    "canonicalUrl": "https://www.koreabaseball.com/kbo/board/ebook/ebookpublication.aspx",
+    "contentSha256": "18179d831925e283d44ffa43245a3ff767bdcf103c4f28512912caec49c6bacc",
+    "sourceRevision": "sha256:3d095cd3b5253584",
+    "sourceKey": "kbo:ebook:한국-야구사-연표",
+    "chunkId": 9194,
+    "claimGeneration": 1,
+    "note": "괄호 직전 원문(적용 범위는 원문 전체로 판단): 온스 리그\n단서 원문(분해하지 않음): (롯데, 경리단, 한일은, 포철, 상은)",
+    "structure": {
+      "version": "official-parenthetical-v2",
+      "sourceRevision": "sha256:3d095cd3b5253584",
+      "contentSha256": "12b4caf4da454589dd91b66cf0947a233b28eefc721e1edfd1fa950f6003e54b",
+      "relations": [
+        {
+          "kind": "qualifier-quote",
+          "parenthetical": {
+            "start": 53,
+            "end": 75,
+            "quote": "(롯데, 경리단, 한일은, 포철, 상은)"
+          },
+          "context": {
+            "start": 48,
+            "end": 53,
+            "quote": "온스 리그"
+          },
+          "coordination": "unsplit",
+          "items": [
+            {
+              "start": 54,
+              "end": 74,
+              "quote": "롯데, 경리단, 한일은, 포철, 상은"
+            }
+          ]
+        }
+      ],
+      "unresolved": []
+    },
+    "section": "한국 야구사 연표#p461"
+  },
+  {
+    "canonicalUrl": "https://www.koreabaseball.com/kbo/board/ebook/ebookpublication.aspx",
+    "contentSha256": "6a43e50328365816842ca7ca9f467b1a744bd263ebd76cea9c5569329296cb8b",
+    "sourceRevision": "sha256:3d095cd3b5253584",
+    "sourceKey": "kbo:ebook:한국-야구사-연표",
+    "chunkId": 9197,
+    "claimGeneration": 1,
+    "note": "괄호 직전 원문(적용 범위는 원문 전체로 판단): 25개 팀\n단서 원문(분해하지 않음): (경리단, 롯데, 포항제철, 상업은행, 홍익회,\n한국화장품, 농협, 성무, 제일은행, 한일은행, 한국전\n력, 연세대, 인하대, 경희대, 고려대, 동국대, 한양대,\n건국대, 인천체전, 동아대, 원광대, 영남대, 성균관\n대, 중앙대)",
+    "structure": {
+      "version": "official-parenthetical-v2",
+      "sourceRevision": "sha256:3d095cd3b5253584",
+      "contentSha256": "d9085cd5a12f2e728b55aa8c9443ea15ab98c7863c1a766e75df0d748ad20ce5",
+      "relations": [
+        {
+          "kind": "qualifier-quote",
+          "parenthetical": {
+            "start": 83,
+            "end": 211,
+            "quote": "(경리단, 롯데, 포항제철, 상업은행, 홍익회,\n한국화장품, 농협, 성무, 제일은행, 한일은행, 한국전\n력, 연세대, 인하대, 경희대, 고려대, 동국대, 한양대,\n건국대, 인천체전, 동아대, 원광대, 영남대, 성균관\n대, 중앙대)"
+          },
+          "context": {
+            "start": 78,
+            "end": 83,
+            "quote": "25개 팀"
+          },
+          "coordination": "unsplit",
+          "items": [
+            {
+              "start": 84,
+              "end": 210,
+              "quote": "경리단, 롯데, 포항제철, 상업은행, 홍익회,\n한국화장품, 농협, 성무, 제일은행, 한일은행, 한국전\n력, 연세대, 인하대, 경희대, 고려대, 동국대, 한양대,\n건국대, 인천체전, 동아대, 원광대, 영남대, 성균관\n대, 중앙대"
+            }
+          ]
+        }
+      ],
+      "unresolved": []
+    },
+    "section": "한국 야구사 연표#p462"
+  },
+  {
+    "canonicalUrl": "https://www.koreabaseball.com/kbo/board/ebook/ebookpublication.aspx",
+    "contentSha256": "41dfb4dcfd93f82e7e6bc427ad6b677bc01ddd33a21899007079e1a7532426b0",
+    "sourceRevision": "sha256:3d095cd3b5253584",
+    "sourceKey": "kbo:ebook:한국-야구사-연표",
+    "chunkId": 9198,
+    "claimGeneration": 1,
+    "note": "괄호 직전 원문(적용 범위는 원문 전체로 판단): 홍익회)와 라이온스 리그\n단서 원문(분해하지 않음): (경리단, 롯데, 포항제철, 한\n일은행, 상업은행)",
+    "structure": {
+      "version": "official-parenthetical-v2",
+      "sourceRevision": "sha256:3d095cd3b5253584",
+      "contentSha256": "a53f83a64d5d2e3b9bdaddb5e4c9861001d6c8fcfeb1e3c154381c7b3b59de55",
+      "relations": [
+        {
+          "kind": "qualifier-quote",
+          "parenthetical": {
+            "start": 756,
+            "end": 784,
+            "quote": "(경리단, 롯데, 포항제철, 한\n일은행, 상업은행)"
+          },
+          "context": {
+            "start": 743,
+            "end": 756,
+            "quote": "홍익회)와 라이온스 리그"
+          },
+          "coordination": "unsplit",
+          "items": [
+            {
+              "start": 757,
+              "end": 783,
+              "quote": "경리단, 롯데, 포항제철, 한\n일은행, 상업은행"
+            }
+          ]
+        }
+      ],
+      "unresolved": []
+    },
+    "section": "한국 야구사 연표#p463"
+  },
+  {
+    "canonicalUrl": "https://www.koreabaseball.com/kbo/board/ebook/ebookpublication.aspx",
+    "contentSha256": "8947e15c8642561d44147348e3047bfcf849fa5fab7015f3ee5b9baca0ace975",
+    "sourceRevision": "sha256:3d095cd3b5253584",
+    "sourceKey": "kbo:ebook:한국-야구사-연표",
+    "chunkId": 9204,
+    "claimGeneration": 1,
+    "note": "괄호 직전 원문(적용 범위는 원문 전체로 판단): 온스 리그\n단서 원문(분해하지 않음): (경리단, 롯데, 포항제철, 한일은행, 상업은\n행)",
+    "structure": {
+      "version": "official-parenthetical-v2",
+      "sourceRevision": "sha256:3d095cd3b5253584",
+      "contentSha256": "769c7e86b73193a9cf5bb9496a80a1425070d47aaff522df216f9e6e80d31f8a",
+      "relations": [
+        {
+          "kind": "qualifier-quote",
+          "parenthetical": {
+            "start": 48,
+            "end": 76,
+            "quote": "(경리단, 롯데, 포항제철, 한일은행, 상업은\n행)"
+          },
+          "context": {
+            "start": 43,
+            "end": 48,
+            "quote": "온스 리그"
+          },
+          "coordination": "unsplit",
+          "items": [
+            {
+              "start": 49,
+              "end": 75,
+              "quote": "경리단, 롯데, 포항제철, 한일은행, 상업은\n행"
+            }
+          ]
+        }
+      ],
+      "unresolved": []
+    },
+    "section": "한국 야구사 연표#p465"
+  },
+  {
+    "canonicalUrl": "https://www.koreabaseball.com/kbo/board/ebook/ebookpublication.aspx",
+    "contentSha256": "c623ed19eca566cfaf23225d6aff8c95f67c0172b63316ccb689a7b1e696aa26",
+    "sourceRevision": "sha256:8d2b83fc788790a3",
+    "sourceKey": "kbo:ebook:2026-kbo-리그-규정",
+    "chunkId": 9665,
+    "claimGeneration": 2,
+    "note": "괄호 직전 원문(적용 범위는 원문 전체로 판단): \n단서 원문(분해하지 않음): (단, 7, 8월 경기가 야간경기로 편성될 경우 18:00에 거행)",
+    "structure": {
+      "version": "official-parenthetical-v2",
+      "sourceRevision": "sha256:8d2b83fc788790a3",
+      "contentSha256": "34a7810e3fc087ec37ce75757ecb3f966c696388cbda8ba6faecbf86d1ae2c01",
+      "relations": [
+        {
+          "kind": "qualifier-quote",
+          "parenthetical": {
+            "start": 31,
+            "end": 68,
+            "quote": "(단, 7, 8월 경기가 야간경기로 편성될 경우 18:00에 거행)"
+          },
+          "context": {
+            "start": 31,
+            "end": 31,
+            "quote": ""
+          },
+          "coordination": "unsplit",
+          "items": [
+            {
+              "start": 32,
+              "end": 67,
+              "quote": "단, 7, 8월 경기가 야간경기로 편성될 경우 18:00에 거행"
+            }
+          ]
+        }
+      ],
+      "unresolved": []
+    },
+    "section": "2026 KBO 리그 규정#p58"
+  },
+  {
+    "canonicalUrl": "https://www.koreabaseball.com/kbo/board/ebook/ebookpublication.aspx",
+    "contentSha256": "f1afe38c51d5dc08476610dbb38b550a2cdb0da999fd7bace54e9b02ac913815",
+    "sourceRevision": "sha256:bed799a762c4f92d",
+    "sourceKey": "kbo:ebook:2026-kbo-야구규약",
+    "chunkId": 10029,
+    "claimGeneration": 2,
+    "note": "괄호 직전 원문(적용 범위는 원문 전체로 판단): 국내 공장등록증 사본\n단서 원문(분해하지 않음): (배트가 국내위탁제조에 의한 경우는\n위탁 공장의 등록증 사본)",
+    "structure": {
+      "version": "official-parenthetical-v2",
+      "sourceRevision": "sha256:bed799a762c4f92d",
+      "contentSha256": "6e8890fb470efd237103835593477ecb10f3ed1dda4742ae338cab541f034c84",
+      "relations": [
+        {
+          "kind": "qualifier-quote",
+          "parenthetical": {
+            "start": 242,
+            "end": 276,
+            "quote": "(배트가 국내위탁제조에 의한 경우는\n위탁 공장의 등록증 사본)"
+          },
+          "context": {
+            "start": 230,
+            "end": 242,
+            "quote": " 국내 공장등록증 사본"
+          },
+          "coordination": "unsplit",
+          "items": [
+            {
+              "start": 243,
+              "end": 275,
+              "quote": "배트가 국내위탁제조에 의한 경우는\n위탁 공장의 등록증 사본"
+            }
+          ]
+        }
+      ],
+      "unresolved": []
+    },
+    "section": "2026 KBO 야구규약#p143"
+  },
+  {
+    "canonicalUrl": "https://www.koreabaseball.com/kbo/board/ebook/ebookpublication.aspx",
+    "contentSha256": "335d4cceec6b0c0162b535dfd16e665fd488638fe1a7268dc86fc5c226716a00",
+    "sourceRevision": "sha256:bed799a762c4f92d",
+    "sourceKey": "kbo:ebook:2026-kbo-야구규약",
+    "chunkId": 10062,
+    "claimGeneration": 2,
+    "note": "괄호 직전 원문(적용 범위는 원문 전체로 판단): \n단서 원문(분해하지 않음): (단, 불입액에 대하여는 감액 또는 지급을 정지할 수 없다)",
+    "structure": {
+      "version": "official-parenthetical-v2",
+      "sourceRevision": "sha256:bed799a762c4f92d",
+      "contentSha256": "71170a07a4abce35f90ed4bec6c2781b4a342cfda3a6b2b99db80bfff717aeea",
+      "relations": [
+        {
+          "kind": "qualifier-quote",
+          "parenthetical": {
+            "start": 109,
+            "end": 142,
+            "quote": "(단, 불입액에 대하여는 감액 또는 지급을 정지할 수 없다)"
+          },
+          "context": {
+            "start": 109,
+            "end": 109,
+            "quote": ""
+          },
+          "coordination": "unsplit",
+          "items": [
+            {
+              "start": 110,
+              "end": 141,
+              "quote": "단, 불입액에 대하여는 감액 또는 지급을 정지할 수 없다"
+            }
+          ]
+        }
+      ],
+      "unresolved": []
+    },
+    "section": "2026 KBO 야구규약#p185"
+  },
+  {
+    "canonicalUrl": "https://www.koreabaseball.com/kbo/board/ebook/ebookpublication.aspx",
+    "contentSha256": "30e26d9f6f923cb9631bd97648f1f789b1ca85905e8a4fdcade2e446d9bd9dd1",
+    "sourceRevision": "sha256:bed799a762c4f92d",
+    "sourceKey": "kbo:ebook:2026-kbo-야구규약",
+    "chunkId": 10073,
+    "claimGeneration": 2,
+    "note": "괄호 직전 원문(적용 범위는 원문 전체로 판단): \n단서 원문(분해하지 않음): (단, 의결권은 없다)",
+    "structure": {
+      "version": "official-parenthetical-v2",
+      "sourceRevision": "sha256:bed799a762c4f92d",
+      "contentSha256": "167ac4cca441656e353a50fdcbd456854c61a3813e981e0f94602d3c19f796ae",
+      "relations": [
+        {
+          "kind": "qualifier-quote",
+          "parenthetical": {
+            "start": 122,
+            "end": 134,
+            "quote": "(단, 의결권은 없다)"
+          },
+          "context": {
+            "start": 122,
+            "end": 122,
+            "quote": ""
+          },
+          "coordination": "unsplit",
+          "items": [
+            {
+              "start": 123,
+              "end": 133,
+              "quote": "단, 의결권은 없다"
+            }
+          ]
+        }
+      ],
+      "unresolved": []
+    },
+    "section": "2026 KBO 야구규약#p189"
+  },
+  {
+    "canonicalUrl": "https://www.koreabaseball.com/kbo/board/ebook/ebookpublication.aspx",
+    "contentSha256": "4205435b4681527c8ae00744de7474cce519a4e0cd916e54699bd7a67a83bbb9",
+    "sourceRevision": "sha256:bed799a762c4f92d",
+    "sourceKey": "kbo:ebook:2026-kbo-야구규약",
+    "chunkId": 10089,
+    "claimGeneration": 2,
+    "note": "괄호 직전 원문(적용 범위는 원문 전체로 판단): \n단서 원문(분해하지 않음): (야구용품 지원에 한함)\n괄호 직전 원문(적용 범위는 원문 전체로 판단): 학교\n단서 원문(분해하지 않음): (4년제 대학교 2학년 또는 3년제 대학교 2학년에 재학 중 지\n명 받은 선수의 경우 재학 중이던 대학교에 지원)\n괄호 직전 원문(적용 범위는 원문 전체로 판단): \n단서 원문(분해하지 않음): (야구용품 지원에 한함)",
+    "structure": {
+      "version": "official-parenthetical-v2",
+      "sourceRevision": "sha256:bed799a762c4f92d",
+      "contentSha256": "e17004f8173fb0ad57acfc8385c9b2c056f5d398132cc9acb6cae5d1f6475bd9",
+      "relations": [
+        {
+          "kind": "qualifier-quote",
+          "parenthetical": {
+            "start": 71,
+            "end": 84,
+            "quote": "(야구용품 지원에 한함)"
+          },
+          "context": {
+            "start": 71,
+            "end": 71,
+            "quote": ""
+          },
+          "coordination": "unsplit",
+          "items": [
+            {
+              "start": 72,
+              "end": 83,
+              "quote": "야구용품 지원에 한함"
+            }
+          ]
+        },
+        {
+          "kind": "qualifier-quote",
+          "parenthetical": {
+            "start": 109,
+            "end": 172,
+            "quote": "(4년제 대학교 2학년 또는 3년제 대학교 2학년에 재학 중 지\n명 받은 선수의 경우 재학 중이던 대학교에 지원)"
+          },
+          "context": {
+            "start": 107,
+            "end": 109,
+            "quote": "학교"
+          },
+          "coordination": "unsplit",
+          "items": [
+            {
+              "start": 110,
+              "end": 171,
+              "quote": "4년제 대학교 2학년 또는 3년제 대학교 2학년에 재학 중 지\n명 받은 선수의 경우 재학 중이던 대학교에 지원"
+            }
+          ]
+        },
+        {
+          "kind": "qualifier-quote",
+          "parenthetical": {
+            "start": 182,
+            "end": 195,
+            "quote": "(야구용품 지원에 한함)"
+          },
+          "context": {
+            "start": 182,
+            "end": 182,
+            "quote": ""
+          },
+          "coordination": "unsplit",
+          "items": [
+            {
+              "start": 183,
+              "end": 194,
+              "quote": "야구용품 지원에 한함"
+            }
+          ]
+        }
+      ],
+      "unresolved": []
+    },
+    "section": "2026 KBO 야구규약#p195"
+  },
+  {
+    "canonicalUrl": "https://www.koreabaseball.com/kbo/board/ebook/ebookpublication.aspx",
+    "contentSha256": "def6af416769efa70cd7eca9b2556730720bda79f8988a7a2278d3e30f2f6442",
+    "sourceRevision": "sha256:bed799a762c4f92d",
+    "sourceKey": "kbo:ebook:2026-kbo-야구규약",
+    "chunkId": 10115,
+    "claimGeneration": 2,
+    "note": "괄호 직전 원문(적용 범위는 원문 전체로 판단): 포인트 박탈 종교·인종·성차별 행위 등\n단서 원문(분해하지 않음): (SNS를 통한 명예훼손 등 반사회적 행위로 사회적 물의를 야기하는 경우 포함)",
+    "structure": {
+      "version": "official-parenthetical-v2",
+      "sourceRevision": "sha256:bed799a762c4f92d",
+      "contentSha256": "f988e013b167bf49ff4a608e2f3cf8cc2b50f64b78431c66763c9fe7bd56dff1",
+      "relations": [
+        {
+          "kind": "qualifier-quote",
+          "parenthetical": {
+            "start": 59,
+            "end": 103,
+            "quote": "(SNS를 통한 명예훼손 등 반사회적 행위로 사회적 물의를 야기하는 경우 포함)"
+          },
+          "context": {
+            "start": 38,
+            "end": 59,
+            "quote": "포인트 박탈 종교·인종·성차별 행위 등"
+          },
+          "coordination": "unsplit",
+          "items": [
+            {
+              "start": 60,
+              "end": 102,
+              "quote": "SNS를 통한 명예훼손 등 반사회적 행위로 사회적 물의를 야기하는 경우 포함"
+            }
+          ]
+        }
+      ],
+      "unresolved": []
+    },
+    "section": "2026 KBO 야구규약#p198"
+  },
+  {
+    "canonicalUrl": "https://www.koreabaseball.com/kbo/board/ebook/ebookpublication.aspx",
+    "contentSha256": "4772108f45e51c596c485f18476140896e376ef810fc8ac8326a23424921018f",
+    "sourceRevision": "sha256:de8715105c8984be",
+    "sourceKey": "kbo:ebook:2026-공식야구규칙",
+    "chunkId": 192173,
+    "claimGeneration": 4,
+    "note": "괄호 직전 원문(적용 범위는 원문 전체로 판단): (A) 보크가 선언되었을 경우 (B) 타자가 다음의 이유로 주자가 되어 1루에 진루하기 위해, 그 주자가 루를 비워줄 의무가 생긴 경우 ① 타자가 아웃될 염려 없이, 1루에 나갈 수 있게 된 경우 ② 타자가 타격한 페어 볼이, 야수(투수 포함)에 닿기 전 또는 야수\n괄호 안 제외 항목 A: 투수.\n나머지 적용 조건과 효과: 위 원문 그대로.",
+    "structure": {
+      "version": "official-parenthetical-v2",
+      "sourceRevision": "sha256:de8715105c8984be",
+      "contentSha256": "5befb74cc4ebda86471301a9b1b668948f8215c320d607db77fcd0964e23e79f",
+      "relations": [
+        {
+          "kind": "exclusion",
+          "parenthetical": {
+            "start": 309,
+            "end": 316,
+            "quote": "(투수 제외)"
+          },
+          "context": {
+            "start": 160,
+            "end": 309,
+            "quote": " (A) 보크가 선언되었을 경우 (B) 타자가 다음의 이유로 주자가 되어 1루에 진루하기 위해, 그 주자가 루를 비워줄 의무가 생긴 경우 ① 타자가 아웃될 염려 없이, 1루에 나갈 수 있게 된 경우 ② 타자가 타격한 페어 볼이, 야수(투수 포함)에 닿기 전 또는 야수"
+          },
+          "coordination": "unsplit",
+          "items": [
+            {
+              "start": 310,
+              "end": 312,
+              "quote": "투수"
+            }
+          ]
+        }
+      ],
+      "unresolved": []
+    },
+    "section": "2026 공식야구규칙#p46"
+  },
+  {
+    "canonicalUrl": "https://www.koreabaseball.com/kbo/board/ebook/ebookpublication.aspx",
+    "contentSha256": "5423df1af59e021bffd459136a563f84766e1a60c4e57e5b97332d23e4d536ea",
+    "sourceRevision": "sha256:de8715105c8984be",
+    "sourceKey": "kbo:ebook:2026-공식야구규칙",
+    "chunkId": 192190,
+    "claimGeneration": 4,
+    "note": "괄호 직전 원문(적용 범위는 원문 전체로 판단): ② 세 타자 요건을 충족하지 못한 상황에서 감독이나 코치가 2회 를 초과하여 투수 마운드에 올라갈 경우 즉시 투수를 교체해야 하는 규정에도 불구하고, 투수는 세 타자 요건을 충족할 때까지\n단서 원문(분해하지 않음): (또는 그에 앞서 이닝이 종료된 경우는 이닝 종료 시까지)",
+    "structure": {
+      "version": "official-parenthetical-v2",
+      "sourceRevision": "sha256:de8715105c8984be",
+      "contentSha256": "d805f6d1d220b0b96ca61041e42a0c7f39208bb6e55c46396425684910ed045c",
+      "relations": [
+        {
+          "kind": "qualifier-quote",
+          "parenthetical": {
+            "start": 240,
+            "end": 272,
+            "quote": "(또는 그에 앞서 이닝이 종료된 경우는 이닝 종료 시까지)"
+          },
+          "context": {
+            "start": 134,
+            "end": 240,
+            "quote": " ② 세 타자 요건을 충족하지 못한 상황에서 감독이나 코치가 2회 를 초과하여 투수 마운드에 올라갈 경우 즉시 투수를 교체해야 하는 규정에도 불구하고, 투수는 세 타자 요건을 충족할 때까지 "
+          },
+          "coordination": "unsplit",
+          "items": [
+            {
+              "start": 241,
+              "end": 271,
+              "quote": "또는 그에 앞서 이닝이 종료된 경우는 이닝 종료 시까지"
+            }
+          ]
+        }
+      ],
+      "unresolved": []
+    },
+    "section": "2026 공식야구규칙#p74"
+  },
+  {
+    "canonicalUrl": "https://www.koreabaseball.com/kbo/board/ebook/ebookpublication.aspx",
+    "contentSha256": "77a46ab08574920c76012cb862dd5ac64085dda7dabd5bfe359c5cefdf820112",
+    "sourceRevision": "sha256:de8715105c8984be",
+    "sourceKey": "kbo:ebook:2026-공식야구규칙",
+    "chunkId": 192199,
+    "claimGeneration": 4,
+    "note": "괄호 직전 원문(적용 범위는 원문 전체로 판단): 09⒝⑶ 참조) 타자의 파울 타구로 인해 주자가 수비방해로 아웃되어 제3아웃 이 된 경우 타자는 타석을 마친 것으로 간주되고, 다음 이닝의 선두타자는 다음 타순의 타자가 된다\n단서 원문(분해하지 않음): (2아웃 미만인 경우 타자는 타석에 들어가 타격을 완료한다)",
+    "structure": {
+      "version": "official-parenthetical-v2",
+      "sourceRevision": "sha256:de8715105c8984be",
+      "contentSha256": "b36573d1b70f4f501cb32adf2b1aa4d439d1875d2c5bab943b7a01bd2f75bd6b",
+      "relations": [
+        {
+          "kind": "qualifier-quote",
+          "parenthetical": {
+            "start": 556,
+            "end": 589,
+            "quote": "(2아웃 미만인 경우 타자는 타석에 들어가 타격을 완료한다)"
+          },
+          "context": {
+            "start": 458,
+            "end": 556,
+            "quote": " 09⒝⑶ 참조) 타자의 파울 타구로 인해 주자가 수비방해로 아웃되어 제3아웃 이 된 경우 타자는 타석을 마친 것으로 간주되고, 다음 이닝의 선두타자는 다음 타순의 타자가 된다"
+          },
+          "coordination": "unsplit",
+          "items": [
+            {
+              "start": 557,
+              "end": 588,
+              "quote": "2아웃 미만인 경우 타자는 타석에 들어가 타격을 완료한다"
+            }
+          ]
+        }
+      ],
+      "unresolved": []
+    },
+    "section": "2026 공식야구규칙#p93"
+  },
+  {
+    "canonicalUrl": "https://www.koreabaseball.com/kbo/board/ebook/ebookpublication.aspx",
+    "contentSha256": "b4c776535d00cbf36771d71ca98690cdb4432b50a2ea0c56072a7b0fafdcbf04",
+    "sourceRevision": "sha256:de8715105c8984be",
+    "sourceKey": "kbo:ebook:2026-공식야구규칙",
+    "chunkId": 192203,
+    "claimGeneration": 4,
+    "note": "괄호 직전 원문(적용 범위는 원문 전체로 판단): 02 함)하는 경우 ⑵ 손과 발로 베이스에 도달하려고 하는 경우 ⑶ 슬라이딩 후 베이스\n괄호 안 제외 항목 A: 홈 플레이트.\n나머지 적용 조건과 효과: 위 원문 그대로.\n괄호 직전 원문(적용 범위는 원문 전체로 판단): 상기 예외 규칙에도 불구하고, 주 자가 롤블록을 하거나 야수의 무릎 위로 다리를 들어 올리거나 차 는 경우 또는 팔이나 상체를 던져 고의적으로 접촉할 경우\n단서 원문(분해하지 않음): (또는 시 도할 경우)",
+    "structure": {
+      "version": "official-parenthetical-v2",
+      "sourceRevision": "sha256:de8715105c8984be",
+      "contentSha256": "fd2daf5fbd0a30c382a7a47d40637244528365a7983655e788655c0e5752b21c",
+      "relations": [
+        {
+          "kind": "exclusion",
+          "parenthetical": {
+            "start": 204,
+            "end": 215,
+            "quote": "(홈 플레이트 제외)"
+          },
+          "context": {
+            "start": 155,
+            "end": 204,
+            "quote": " 02 함)하는 경우 ⑵ 손과 발로 베이스에 도달하려고 하는 경우 ⑶ 슬라이딩 후 베이스"
+          },
+          "coordination": "unsplit",
+          "items": [
+            {
+              "start": 205,
+              "end": 211,
+              "quote": "홈 플레이트"
+            }
+          ]
+        },
+        {
+          "kind": "qualifier-quote",
+          "parenthetical": {
+            "start": 532,
+            "end": 544,
+            "quote": "(또는 시 도할 경우)"
+          },
+          "context": {
+            "start": 445,
+            "end": 532,
+            "quote": " 상기 예외 규칙에도 불구하고, 주 자가 롤블록을 하거나 야수의 무릎 위로 다리를 들어 올리거나 차 는 경우 또는 팔이나 상체를 던져 고의적으로 접촉할 경우"
+          },
+          "coordination": "unsplit",
+          "items": [
+            {
+              "start": 533,
+              "end": 543,
+              "quote": "또는 시 도할 경우"
+            }
+          ]
+        }
+      ],
+      "unresolved": []
+    },
+    "section": "2026 공식야구규칙#p100"
+  },
+  {
+    "canonicalUrl": "https://www.koreabaseball.com/kbo/board/ebook/ebookpublication.aspx",
+    "contentSha256": "c97e7455f66513f63f55d8dfcd77ab8cbc1541ea1f49b46096e7883a02674717",
+    "sourceRevision": "sha256:de8715105c8984be",
+    "sourceKey": "kbo:ebook:2026-공식야구규칙",
+    "chunkId": 192240,
+    "claimGeneration": 4,
+    "note": "괄호 직전 원문(적용 범위는 원문 전체로 판단): 록할 수 있다\n단서 원문(분해하지 않음): (다른 야수의 포구 방해로 글러브에서 공이 떨어지\n는 경우 등)",
+    "structure": {
+      "version": "official-parenthetical-v2",
+      "sourceRevision": "sha256:de8715105c8984be",
+      "contentSha256": "9424526c698310fafe534cad4b0445e6403de34eb90d38df4d0879dc4dd51065",
+      "relations": [
+        {
+          "kind": "qualifier-quote",
+          "parenthetical": {
+            "start": 22,
+            "end": 57,
+            "quote": "(다른 야수의 포구 방해로 글러브에서 공이 떨어지\n는 경우 등)"
+          },
+          "context": {
+            "start": 15,
+            "end": 22,
+            "quote": "록할 수 있다"
+          },
+          "coordination": "unsplit",
+          "items": [
+            {
+              "start": 23,
+              "end": 56,
+              "quote": "다른 야수의 포구 방해로 글러브에서 공이 떨어지\n는 경우 등"
+            }
+          ]
+        }
+      ],
+      "unresolved": []
+    },
+    "section": "2026 공식야구규칙#p158"
+  },
+  {
+    "canonicalUrl": "https://www.koreabaseball.com/kbo/board/ebook/ebookpublication.aspx",
+    "contentSha256": "5cc857b870a8f6d3a523f449abcad7f092baf92d8105a53119642b58e714ca6f",
+    "sourceRevision": "sha256:de8715105c8984be",
+    "sourceKey": "kbo:ebook:2026-공식야구규칙",
+    "chunkId": 192243,
+    "claimGeneration": 4,
+    "note": "괄호 직전 원문(적용 범위는 원문 전체로 판단): 사구(고의4구 포함), 보크, 폭투\n단서 원문(분해하지 않음): (제3스트라이크가 폭투가 되어 타\n자가 1루에 살아나간 경우 포함)",
+    "structure": {
+      "version": "official-parenthetical-v2",
+      "sourceRevision": "sha256:de8715105c8984be",
+      "contentSha256": "1b900a39a6ed3b3e22cb3cbcabbd712cb745f9d8db18ecfe5f89c951ff6cba40",
+      "relations": [
+        {
+          "kind": "qualifier-quote",
+          "parenthetical": {
+            "start": 253,
+            "end": 290,
+            "quote": "(제3스트라이크가 폭투가 되어 타\n자가 1루에 살아나간 경우 포함)"
+          },
+          "context": {
+            "start": 234,
+            "end": 253,
+            "quote": "사구(고의4구 포함), 보크, 폭투"
+          },
+          "coordination": "unsplit",
+          "items": [
+            {
+              "start": 254,
+              "end": 289,
+              "quote": "제3스트라이크가 폭투가 되어 타\n자가 1루에 살아나간 경우 포함"
+            }
+          ]
+        }
+      ],
+      "unresolved": []
+    },
+    "section": "2026 공식야구규칙#p164"
+  },
+  {
+    "canonicalUrl": "https://www.koreabaseball.com/kbo/board/ebook/ebookpublication.aspx",
+    "contentSha256": "3466dd9b99bf9d341c4f18683190ef7173b0f28080cf43abef7fed4b030ca572",
+    "sourceRevision": "sha256:de8715105c8984be",
+    "sourceKey": "kbo:ebook:2026-공식야구규칙",
+    "chunkId": 192249,
+    "claimGeneration": 4,
+    "note": "괄호 직전 원문(적용 범위는 원문 전체로 판단): 었을 경우 수비에 관한 출전기록은 없는 것으로 한다\n단서 원문(분해하지 않음): (단, 출전경기로\n는 인정)\n괄호 직전 원문(적용 범위는 원문 전체로 판단): 록은 정규시즌 기록에 포함시킨다\n단서 원문(분해하지 않음): (단, 우리나라에서는 적용하지 않는\n다)",
+    "structure": {
+      "version": "official-parenthetical-v2",
+      "sourceRevision": "sha256:de8715105c8984be",
+      "contentSha256": "e65d7669b55775900c205c9fe8c216f3a97b60685e3866bc4bd1758e976c80f6",
+      "relations": [
+        {
+          "kind": "qualifier-quote",
+          "parenthetical": {
+            "start": 464,
+            "end": 479,
+            "quote": "(단, 출전경기로\n는 인정)"
+          },
+          "context": {
+            "start": 436,
+            "end": 464,
+            "quote": "었을 경우 수비에 관한 출전기록은 없는 것으로 한다"
+          },
+          "coordination": "unsplit",
+          "items": [
+            {
+              "start": 465,
+              "end": 478,
+              "quote": "단, 출전경기로\n는 인정"
+            }
+          ]
+        },
+        {
+          "kind": "qualifier-quote",
+          "parenthetical": {
+            "start": 530,
+            "end": 552,
+            "quote": "(단, 우리나라에서는 적용하지 않는\n다)"
+          },
+          "context": {
+            "start": 513,
+            "end": 530,
+            "quote": "록은 정규시즌 기록에 포함시킨다"
+          },
+          "coordination": "unsplit",
+          "items": [
+            {
+              "start": 531,
+              "end": 551,
+              "quote": "단, 우리나라에서는 적용하지 않는\n다"
+            }
+          ]
+        }
+      ],
+      "unresolved": []
+    },
+    "section": "2026 공식야구규칙#p171"
+  },
+  {
+    "canonicalUrl": "https://6ptotvmi5753.edge.naverncp.com/KBO_FILE/ebook/pdf/2026_야구규약.pdf",
+    "contentSha256": "e7e3fe0ac8c93cbe357322b84812db3918413ebd4b12f033a4befd6b7c123cd9",
+    "sourceRevision": "sha256:5d9127c6799317bd",
+    "sourceKey": "kbo:ebook:2026-kbo-야구규약-필수-조항",
+    "chunkId": 192280,
+    "claimGeneration": 1,
+    "note": "괄호 직전 원문(적용 범위는 원문 전체로 판단): 당해 정규시즌의 현역선수 등록일수가 150일 이상인 경우\n단서 원문(분해하지 않음): (다 만, 2006년 정규시즌부터는 145일 이상인 경우로 한다)",
+    "structure": {
+      "version": "official-parenthetical-v2",
+      "sourceRevision": "sha256:5d9127c6799317bd",
+      "contentSha256": "6db8279cf8c828fe171128b135e4592c413a219dd8e48c7d7bef78545d42f2e1",
+      "relations": [
+        {
+          "kind": "qualifier-quote",
+          "parenthetical": {
+            "start": 644,
+            "end": 680,
+            "quote": "(다 만, 2006년 정규시즌부터는 145일 이상인 경우로 한다)"
+          },
+          "context": {
+            "start": 612,
+            "end": 644,
+            "quote": " 당해 정규시즌의 현역선수 등록일수가 150일 이상인 경우"
+          },
+          "coordination": "unsplit",
+          "items": [
+            {
+              "start": 645,
+              "end": 679,
+              "quote": "다 만, 2006년 정규시즌부터는 145일 이상인 경우로 한다"
+            }
+          ]
+        }
+      ],
+      "unresolved": []
+    },
+    "section": "2026 KBO 야구규약#제17장 프리에이전트(FA) > 제162조 [FA자격요건]"
+  },
+  {
+    "canonicalUrl": "https://6ptotvmi5753.edge.naverncp.com/KBO_FILE/ebook/pdf/2026_야구규약.pdf",
+    "contentSha256": "ad33504ec92e639de5b89eaf4502a341719266a1c12bdfbb258c970dac68e9bf",
+    "sourceRevision": "sha256:5d9127c6799317bd",
+    "sourceKey": "kbo:ebook:2026-kbo-야구규약-필수-조항",
+    "chunkId": 192283,
+    "claimGeneration": 1,
+    "note": "괄호 직전 원문(적용 범위는 원문 전체로 판단): ⑤ 4년제 대학을 졸업한 선수(대한야구소프트볼협회에 4년간 대 학선수로 등록한 선수에 한하며, 이하 같다)는 제1항에도 불구하 고 8 정규시즌\n단서 원문(분해하지 않음): (단, 2022년 시즌 종료 후부터 7 정규시즌으로 단축)",
+    "structure": {
+      "version": "official-parenthetical-v2",
+      "sourceRevision": "sha256:5d9127c6799317bd",
+      "contentSha256": "07c9e9ac152f6b515e2eefeeee85e1becf46d09688be5e202d89a2fe2cec276c",
+      "relations": [
+        {
+          "kind": "qualifier-quote",
+          "parenthetical": {
+            "start": 128,
+            "end": 160,
+            "quote": "(단, 2022년 시즌 종료 후부터 7 정규시즌으로 단축)"
+          },
+          "context": {
+            "start": 49,
+            "end": 128,
+            "quote": "⑤ 4년제 대학을 졸업한 선수(대한야구소프트볼협회에 4년간 대 학선수로 등록한 선수에 한하며, 이하 같다)는 제1항에도 불구하 고 8 정규시즌"
+          },
+          "coordination": "unsplit",
+          "items": [
+            {
+              "start": 129,
+              "end": 159,
+              "quote": "단, 2022년 시즌 종료 후부터 7 정규시즌으로 단축"
+            }
+          ]
+        }
+      ],
+      "unresolved": []
+    },
+    "section": "2026 KBO 야구규약#제17장 프리에이전트(FA) > 제162조 [FA자격요건]"
+  },
+  {
+    "canonicalUrl": "https://www.koreabaseball.com/kbo/board/ebook/ebookpublication.aspx",
+    "contentSha256": "3509c071175bf2a7f50a0b5240ab3a09840dac509e26fa789a79ae36b2311538",
+    "sourceRevision": "sha256:5b3ad2878dfbf830",
+    "sourceKey": "kbo:ebook:2026-kbo-연감",
+    "chunkId": 192520,
+    "claimGeneration": 2,
+    "note": "괄호 직전 원문(적용 범위는 원문 전체로 판단): 로 늘렸다\n단서 원문(분해하지 않음): (메이저리그 진출한\n2021년 제외)",
+    "structure": {
+      "version": "official-parenthetical-v2",
+      "sourceRevision": "sha256:5b3ad2878dfbf830",
+      "contentSha256": "b0198d4a1031ee55be68f0da737ecfd97cfeb67689e4268ec52cc3e61d6bb8f9",
+      "relations": [
+        {
+          "kind": "qualifier-quote",
+          "parenthetical": {
+            "start": 5,
+            "end": 25,
+            "quote": "(메이저리그 진출한\n2021년 제외)"
+          },
+          "context": {
+            "start": 0,
+            "end": 5,
+            "quote": "로 늘렸다"
+          },
+          "coordination": "unsplit",
+          "items": [
+            {
+              "start": 6,
+              "end": 24,
+              "quote": "메이저리그 진출한\n2021년 제외"
+            }
+          ]
+        }
+      ],
+      "unresolved": []
+    },
+    "section": "2026 KBO 연감#p107"
+  },
+  {
+    "canonicalUrl": "https://www.koreabaseball.com/kbo/board/ebook/ebookpublication.aspx",
+    "contentSha256": "908aa4c4802a7525d51a25617702f9be9220d6f601e750aa16afb97a077dc3f7",
+    "sourceRevision": "sha256:5b3ad2878dfbf830",
+    "sourceKey": "kbo:ebook:2026-kbo-연감",
+    "chunkId": 193068,
+    "claimGeneration": 2,
+    "note": "괄호 직전 원문(적용 범위는 원문 전체로 판단): 외 13차례\n괄호 안 제외 항목 A: 18회.\n나머지 적용 조건과 효과: 위 원문 그대로.",
+    "structure": {
+      "version": "official-parenthetical-v2",
+      "sourceRevision": "sha256:5b3ad2878dfbf830",
+      "contentSha256": "4a0cf2c3f10541a853e35dd5671c4a13ac78631678bd07695ce07ae2bc7ac9cc",
+      "relations": [
+        {
+          "kind": "exclusion",
+          "parenthetical": {
+            "start": 604,
+            "end": 612,
+            "quote": "(18회 제외)"
+          },
+          "context": {
+            "start": 597,
+            "end": 604,
+            "quote": "외 13차례 "
+          },
+          "coordination": "unsplit",
+          "items": [
+            {
+              "start": 605,
+              "end": 608,
+              "quote": "18회"
+            }
+          ]
+        }
+      ],
+      "unresolved": []
+    },
+    "section": "2026 KBO 연감#p325"
+  },
+  {
+    "canonicalUrl": "https://www.koreabaseball.com/kbo/board/ebook/ebookpublication.aspx",
+    "contentSha256": "4c79ba4d8f8a41e470112e65c39ac840d20814343fb31bbaa79b492407625ceb",
+    "sourceRevision": "sha256:5b3ad2878dfbf830",
+    "sourceKey": "kbo:ebook:2026-kbo-연감",
+    "chunkId": 193129,
+    "claimGeneration": 2,
+    "note": "괄호 직전 원문(적용 범위는 원문 전체로 판단): • 월간 최고 승률\n단서 원문(분해하지 않음): (3,10월 제외)",
+    "structure": {
+      "version": "official-parenthetical-v2",
+      "sourceRevision": "sha256:5b3ad2878dfbf830",
+      "contentSha256": "d399bb25075f57f6bf06dd3cb763ebaa90b9b5b45326d3a1ce938f3b17ceb13a",
+      "relations": [
+        {
+          "kind": "qualifier-quote",
+          "parenthetical": {
+            "start": 100,
+            "end": 110,
+            "quote": "(3,10월 제외)"
+          },
+          "context": {
+            "start": 89,
+            "end": 100,
+            "quote": "• 월간 최고 승률 "
+          },
+          "coordination": "unsplit",
+          "items": [
+            {
+              "start": 101,
+              "end": 109,
+              "quote": "3,10월 제외"
+            }
+          ]
+        }
+      ],
+      "unresolved": []
+    },
+    "section": "2026 KBO 연감#p346"
+  },
+  {
+    "canonicalUrl": "https://www.koreabaseball.com/kbo/board/ebook/ebookpublication.aspx",
+    "contentSha256": "931c610b15a5b8d07240299d93359d88a7ddbcf04084512a5256828713a86958",
+    "sourceRevision": "sha256:5b3ad2878dfbf830",
+    "sourceKey": "kbo:ebook:2026-kbo-연감",
+    "chunkId": 193130,
+    "claimGeneration": 2,
+    "note": "괄호 직전 원문(적용 범위는 원문 전체로 판단): • 월간 최저 승률\n단서 원문(분해하지 않음): (3,10월 제외)",
+    "structure": {
+      "version": "official-parenthetical-v2",
+      "sourceRevision": "sha256:5b3ad2878dfbf830",
+      "contentSha256": "95607cc8ba6d9aeed110eabaefb7050234bbbe70834a393e01738207d4935884",
+      "relations": [
+        {
+          "kind": "qualifier-quote",
+          "parenthetical": {
+            "start": 15,
+            "end": 25,
+            "quote": "(3,10월 제외)"
+          },
+          "context": {
+            "start": 4,
+            "end": 15,
+            "quote": "• 월간 최저 승률 "
+          },
+          "coordination": "unsplit",
+          "items": [
+            {
+              "start": 16,
+              "end": 24,
+              "quote": "3,10월 제외"
+            }
+          ]
+        }
+      ],
+      "unresolved": []
+    },
+    "section": "2026 KBO 연감#p347"
+  },
+  {
+    "canonicalUrl": "https://www.koreabaseball.com/kbo/board/ebook/ebookpublication.aspx",
+    "contentSha256": "5ee95c08efa640acbe027c69ce247ee4dc6a8e76fb0f52184d946a6505df633a",
+    "sourceRevision": "sha256:5b3ad2878dfbf830",
+    "sourceKey": "kbo:ebook:2026-kbo-연감",
+    "chunkId": 193543,
+    "claimGeneration": 2,
+    "note": "괄호 직전 원문(적용 범위는 원문 전체로 판단): \n단서 원문(분해하지 않음): (’89 이후, ’`99~’00 양대리그 제외)",
+    "structure": {
+      "version": "official-parenthetical-v2",
+      "sourceRevision": "sha256:5b3ad2878dfbf830",
+      "contentSha256": "c4f771a1382f7e3c468d62d496c2490016be174f7c1e529bbe5d9f5a6c2b0937",
+      "relations": [
+        {
+          "kind": "qualifier-quote",
+          "parenthetical": {
+            "start": 802,
+            "end": 828,
+            "quote": "(’89 이후, ’`99~’00 양대리그 제외)"
+          },
+          "context": {
+            "start": 802,
+            "end": 802,
+            "quote": ""
+          },
+          "coordination": "unsplit",
+          "items": [
+            {
+              "start": 803,
+              "end": 827,
+              "quote": "’89 이후, ’`99~’00 양대리그 제외"
+            }
+          ]
+        }
+      ],
+      "unresolved": []
+    },
+    "section": "2026 KBO 연감#p536"
+  },
+  {
+    "canonicalUrl": "https://6ptotvmi5753.edge.naverncp.com/KBO_FILE/ebook/pdf/2026_야구규칙.pdf",
+    "contentSha256": "914ecaf32b87a73316ef9bce2d44ac0ac7f8ce1d7b04888206cce2bac0b47e44",
+    "sourceRevision": "sha256:07651ec70e392723",
+    "sourceKey": "kbo:ebook:2026-공식야구규칙-필수-조항",
+    "chunkId": 193607,
+    "claimGeneration": 1,
+    "note": "괄호 직전 원문(적용 범위는 원문 전체로 판단): 무사 또는 1사에 주자 1·2루 또는 만루일 때 타자가 친 것이 플라이 볼\n괄호 안 제외 항목 A: 직선타구.\n괄호 안 제외 항목 B: 번트한 것이 떠올라 플라이 볼이 된 것.\n제외 범위: 위 병렬 항목 각각이 제외됨.\n나머지 적용 조건과 효과: 위 원문 그대로.",
+    "structure": {
+      "version": "official-parenthetical-v2",
+      "sourceRevision": "sha256:07651ec70e392723",
+      "contentSha256": "d549530b145f0329133b25f4a23469f38d4f01f0a3dcc6ca3417f9cdfd12b740",
+      "relations": [
+        {
+          "kind": "exclusion",
+          "parenthetical": {
+            "start": 82,
+            "end": 117,
+            "quote": "(직선타구 또는 번트한 것이 떠올라 플라이 볼이 된 것은 제외)"
+          },
+          "context": {
+            "start": 40,
+            "end": 82,
+            "quote": "무사 또는 1사에 주자 1·2루 또는 만루일 때 타자가 친 것이 플라이 볼 "
+          },
+          "coordination": "explicit-or",
+          "items": [
+            {
+              "start": 83,
+              "end": 87,
+              "quote": "직선타구"
+            },
+            {
+              "start": 91,
+              "end": 112,
+              "quote": "번트한 것이 떠올라 플라이 볼이 된 것"
+            }
+          ]
+        }
+      ],
+      "unresolved": []
+    },
+    "section": "2026 공식야구규칙#40. INFIELD FLY (인필드 플라이)"
+  }
+]

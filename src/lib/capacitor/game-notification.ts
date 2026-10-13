@@ -10,6 +10,7 @@ import {
   type WidgetTapModeReason,
 } from "../native-live-activity";
 import { supabase } from "../supabase/client";
+import { awaitBootPrefs } from "@/lib/boot-cache";
 import {
   createLockCardGateFence,
   advanceLockCardGateFence,
@@ -21,6 +22,7 @@ import {
 // 네이티브 GameNotificationPlugin(@CapacitorPlugin name="GameNotification")과 페어.
 // iOS는 Live Activity(별도)라 여기선 android만 동작.
 interface WidgetData {
+  resultPitchers?: string;
   myTeam: string;
   away: string;
   home: string;
@@ -42,6 +44,7 @@ interface WidgetData {
 
 /** 안드 위젯 06:00 롤오버 타깃(다음 예정 경기, 라이트). */
 export interface WidgetNextGame {
+  gameId: string;
   away: string;
   home: string;
   stadium: string;
@@ -229,6 +232,16 @@ export async function bootstrapAndroidLockCardGate(): Promise<void> {
     const { data: { session } } = await supabase.auth.getSession();
     const token = session?.access_token;
     if (!token) return;
+    // PR④: 부트 번들 로드를 기다렸다 소비(begin 유예→settle 대기 — NativePushMount 가
+    // AuthProvider 보다 먼저 뜨는 race 흘수). 토글(PUT)은 setLiveActivityEnabledCache 경유로
+    // 부트 캠시를 무효화하므로, 캠시 적중 = 캠시 이후 토글 없음 → gen fence 계약 유지(fence 는
+    // await 전에 capture 되어 대기 중 토글도 폐기된다). 미스면 종전 fetch(fail-open).
+    const bootUserId = session?.user?.id;
+    const bootPrefs = bootUserId ? await awaitBootPrefs(bootUserId, "androidLockCardGate") : null;
+    if (bootPrefs) {
+      await applyAndroidLockCardGateFromLoad(bootPrefs.live_activity !== false, gen);
+      return;
+    }
     const res = await fetch("/api/push/prefs", { headers: { Authorization: `Bearer ${token}` } });
     if (!res.ok) return;
     const { prefs } = await res.json();

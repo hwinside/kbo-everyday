@@ -79,14 +79,14 @@ function stripComments(src) {
 // 게이트 시작 시점에 항상 검사하므로 핀 누락/윴여는 fallback 경로와 무관하게 즉시 RED).
 const CHAT_TRANSPORT_SHA256 = {
   "src/lib/supabase/useChat.ts": "1a3253dfb9bb01c94ddd820673661c2f6ac226c97e9887932904c0a24b388548",
-  "src/components/game/GameChat.tsx": "d2a5b69a077fa67a228ac0f98081c2f7003ea7bbecec23ce9fe6028870119987",
+  "src/components/game/GameChat.tsx": "1ccbd2ab11d72d11faaf2ab3aedb85ea7a351b643189c5e9e142006ef6e39045",
   "src/components/game/LiveChat.tsx": "7bd019886e682c9d930729b25ee99dec780109ec4f1a85fb21d8217a9496548c",
-  "src/app/api/admin/today-detail/route.ts": "206e50ea9ec78992179ed061f91da473913fd8ae09a685b0c617e24d2e8bc10b",
+  "src/app/api/admin/today-detail/route.ts": "cf11f6a0a202e022a2e43156dfaee19f079b27d434b84014f7cfd15a5517090d",
   "src/app/api/admin/supabase-usage/route.ts": "4db90091a59b99da9dc3d1e0937359a4ab1da4f752addf41756ef4c07e0decb5",
-  "src/app/api/admin/content/route.ts": "b1d1ecf0e8a8474485561fd8f09f11a7eda2433c1b5d6b657e66487749ccab02",
-  "src/app/api/admin/reports/route.ts": "990c3a42e40c337d45f1ac7023efc339a4562036fd4ae775d8e3a9b678e7f442",
-  "src/app/api/contextual-stats/route.ts": "81d430b3a0af4e01261a8e1de8f2e8206713a2af363b6e4f53b42f5490674b77",
-  "src/app/api/report/route.ts": "7162fc6bde6e7ea2747c7877281ccf0857b05eded5d409d24ab5e02608986bf3",
+  "src/app/api/admin/content/route.ts": "1f1c05f769d73e2be625ac4b3c84070dbb9dc86b6ecdd84594dd2a4205d94451",
+  "src/app/api/admin/reports/route.ts": "2f8023871d42d8fdd424e299d6746eb97d5dc93fd4c337df30cc96f91684bfa6",
+  "src/app/api/contextual-stats/route.ts": "702ecef644a73174c3a194311817fbeb40b13226085750e5b253663f0d731d0d",
+  "src/app/api/report/route.ts": "3fb645585272e76efb4a3462163af14769d9f5c5d40a1555ea9b73f625b6514a",
   "src/app/api/slack/gif-collector/route.ts": "155483260ced25cacfa3132a6c4305fc0a86f6eafd5b2aae722f2523d8a0e9d4",
   "src/app/api/game-chat/prefs/route.ts": "036a254346d128c5d12574a66f56b69864a578674b4edfbebb2abb8d827f320d",
   "src/app/api/venue-stories/attendees/route.ts": "e1c21c12d3ce1bbfc25b0f2cb17ef2b6ccb7cbf0cca531bfb1ad055f9d05552a",
@@ -225,10 +225,15 @@ function assertFrameFencing() {
     /if \(!envelope\.ok\) return;[\s\S]*if \(mySeq <= channelRef\.current\) return;[\s\S]*channelRef\.current = mySeq;[\s\S]*onFrame\(envelope\.data\);/.test(src));
   ok("relay hook resets channel owner seq refs on game switch",
     /liveFrameOwnerSeqRef\.current = 0;[\s\S]*detailFrameOwnerSeqRef\.current = 0;/.test(src));
-  ok("relay hook forwards live\/detail frames through channel refs",
-    /applyFrame\(liveFrameOwnerSeqRef, options\?\.onLiveFrame, envelope\);[\s\S]*applyFrame\(detailFrameOwnerSeqRef, options\?\.onDetailFrame, envelope\);/.test(src));
+  // 삼순 4차(2026-08-25) ②: applyFrame 이 채널별 generation fence(genSnapshot, genRef)를 받는다.
+  // live 는 liveGenerationRef, detail 은 detailGenerationRef 로 분리 — 공용 relayGenerationRef ❌.
+  ok("relay hook forwards live\/detail frames through per-channel generation refs",
+    /applyFrame\(liveFrameOwnerSeqRef, options\?\.onLiveFrame, envelope, myLiveGeneration, liveGenerationRef\);[\s\S]*applyFrame\(detailFrameOwnerSeqRef, options\?\.onDetailFrame, envelope, myDetailGeneration, detailGenerationRef\);/.test(src));
+  // fencing 은 shouldApplyRelayResponse 에 유지된다. B안(2026-08-25)에서 그 앞에
+  // P0-3 generation fence(shouldApplyPollResponse)를 AND 로 강화했으므로 `if (` 시작을
+  // 요구하지 않고 fencing 술어 자체의 존재를 확인한다(fencing 제거는 여전히 검출).
   ok("relay frame fencing remains on shouldApplyRelayResponse",
-    /if \(shouldApplyRelayResponse\(\{[\s\S]*requestSeq: mySeq,[\s\S]*currentSeq: requestSeqRef\.current/.test(src));
+    /shouldApplyRelayResponse\(\{[\s\S]*requestSeq: mySeq,[\s\S]*currentSeq: requestSeqRef\.current/.test(src));
 }
 
 function assertRouteIncludeWiring() {

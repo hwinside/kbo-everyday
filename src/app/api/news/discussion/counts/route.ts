@@ -1,3 +1,5 @@
+import { withCloudflarePublicCache } from "@/lib/http/cloudflare-cache";
+import { getClientIp } from "@/lib/http/client-ip";
 import { NextRequest, NextResponse } from "next/server";
 import { getSupabaseAdmin } from "@/lib/supabase/admin";
 import {
@@ -16,10 +18,14 @@ const COUNTS_CACHE_HEADERS = { "Cache-Control": "public, s-maxage=60" } as const
 const NO_STORE = { "Cache-Control": "no-store" } as const;
 
 export async function GET(req: NextRequest) {
+  return withCloudflarePublicCache(req, await getCounts(req));
+}
+
+async function getCounts(req: NextRequest) {
   if (!process.env.SUPABASE_SERVICE_ROLE_KEY) {
     return NextResponse.json({ error: "discussion service unavailable" }, { status: 503, headers: NO_STORE });
   }
-  const ip = req.headers.get("x-forwarded-for")?.split(",")[0]?.trim() || "unknown";
+  const ip = getClientIp(req);
   if (!allowNewsDiscussionRequest(`counts:${ip}`)) {
     return NextResponse.json({ error: "too many requests" }, { status: 429, headers: NO_STORE });
   }
@@ -64,7 +70,7 @@ export async function POST(req: NextRequest) {
   if (!process.env.SUPABASE_SERVICE_ROLE_KEY) {
     return NextResponse.json({ error: "discussion service unavailable" }, { status: 503 });
   }
-  const ip = req.headers.get("x-forwarded-for")?.split(",")[0]?.trim() || "unknown";
+  const ip = getClientIp(req);
   if (!allowNewsDiscussionRequest(`counts:${ip}`)) {
     return NextResponse.json({ error: "too many requests" }, { status: 429 });
   }

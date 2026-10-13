@@ -1,3 +1,4 @@
+import { getClientIp } from "@/lib/http/client-ip";
 import { NextRequest, NextResponse } from "next/server";
 import { supabaseAdmin as supabase } from "@/lib/supabase/admin";
 import { supabaseErrorResponse } from "@/lib/supabase/error";
@@ -13,7 +14,7 @@ export async function POST(req: NextRequest) {
   const userId = verified.user.id;
   // 기존 KBO- 코드 호환: 입력값 정규화
   const code = rawCode?.replace(/^KBO-/i, "KEUBO-");
-  const ipAddress = req.headers.get("x-forwarded-for")?.split(",")[0]?.trim() || "unknown";
+  const ipAddress = getClientIp(req);
 
   if (!code) {
     return NextResponse.json({ error: "code required" }, { status: 400 });

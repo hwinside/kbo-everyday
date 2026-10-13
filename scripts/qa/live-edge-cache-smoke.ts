@@ -644,6 +644,56 @@ async function main() {
     },
   );
 
+  await check("game-live actual GET: malformed date는 I/O 없이 미캐시 400", async () => {
+    const liveRoute = await import("../../src/app/api/game-live/route");
+    const { NextRequest: NR } = await import("next/server");
+    let fetchCalls = 0;
+    globalThis.fetch = (async () => {
+      fetchCalls++;
+      throw new Error("malformed_date_must_not_reach_io");
+    }) as typeof fetch;
+    try {
+      for (const date of ["invalid", "2026-09-08", "2026090", "202609080", "2026090x", " 20260908", "20260908\n", "２０２６０９０８"]) {
+        const url = new URL("http://localhost/api/game-live");
+        url.searchParams.set("date", date);
+        const res = await liveRoute.GET(new NR(url));
+        assert.equal(res.status, 400, `date=${JSON.stringify(date)}`);
+        assertNotCacheable(res, "game-live malformed date");
+        assert.deepEqual(await res.json(), { error: "date must be YYYYMMDD", games: [] });
+      }
+      assert.equal(fetchCalls, 0, "invalid input reached upstream/witness I/O");
+    } finally {
+      globalThis.fetch = originalFetch;
+    }
+  });
+
+  await check("game-live actual GET: valid/default date의 실제 upstream 실패는 503 유지", async () => {
+    const liveRoute = await import("../../src/app/api/game-live/route");
+    const { resolveGameLiveDate } = await import("../../src/lib/game-live-date");
+    const { NextRequest: NR } = await import("next/server");
+    let fetchCalls = 0;
+    globalThis.fetch = (async () => {
+      fetchCalls++;
+      throw new Error("qa_forced_upstream_failure");
+    }) as typeof fetch;
+    try {
+      for (const date of [undefined, "", "20200101", "20991231", "20240229"]) {
+        const url = new URL("http://localhost/api/game-live");
+        if (date !== undefined) url.searchParams.set("date", date);
+        const beforeDate = resolveGameLiveDate();
+        const beforeCalls = fetchCalls;
+        const res = await liveRoute.GET(new NR(url));
+        const body = await res.json();
+        assert.equal(res.status, 503, "upstream outage must not become an input error");
+        assert.ok(fetchCalls > beforeCalls, "valid/default input did not reach upstream");
+        assert.ok(date ? body.date === date : [beforeDate, resolveGameLiveDate()].includes(body.date));
+        assertNotCacheable(res, "game-live valid/default upstream failure");
+      }
+    } finally {
+      globalThis.fetch = originalFetch;
+    }
+  });
+
   await check(
     "game-live actual GET: upstream 실패 503 은 캐시 금지(traceHeaders 기본값 검증)",
     async () => {

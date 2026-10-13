@@ -1,3 +1,6 @@
+import { isStatDefinitionQuestion } from "./definition-intent";
+import { recordPlayerNamesMatch } from "./record-player-identity";
+
 /**
  * 야잘알봇 시즌 기록 질의 (kbo_structured).
  *
@@ -118,6 +121,91 @@ export const UNTRUSTED_METRIC_ALIASES = [
 const UNTRUSTED_EXEMPT_PATTERNS: ReadonlyArray<RegExp> = [
   /wrc\+?/gi,
 ];
+
+/**
+ * **카운트 명사 + 값 술어의 국소 결속** — 명사 *바로 뒤* 같은 명사구에 값 술어가 붙을 때만
+ * 값 요구다.
+ *
+ * 🔴 `수`·`기록`·`성적` 은 뒤에 무엇이 붙느냐로 뜻이 갈린다:
+ *   · `기록이 뭐야?`   → 값 요구  (삼순 2차: 종전엔 `뭐` 가 정의로 이겨 샜다)
+ *   · `수는 어떻게 세?` → 정의     (삼순 2차: 종전엔 `수는` 이 값으로 이겨 막았다)
+ *
+ * 🔴 **문장 전체 공존이 아니라 국소 결속이다** (삼순 3차 NO-GO). 2차 구현은
+ *   `COUNT_NOUN.test(q) && VALUE_PREDICATE.test(q)` 로 두 정규식을 **따로** 돌려
+ *   문장 어디에든 둘이 있으면 값 요구로 읽었다. 그래서
+ *     · `희생번트 기록 규칙 알려줘`   → `기록` + `알려` 공존 → **차단**(정의인데)
+ *     · `희생번트 기록 방식이 뭐야?` → `기록` + `뭐`   공존 → **차단**(정의인데)
+ *   `기록 규칙`·`기록 방식` 은 `기록` 이 뒤 명사를 수식하는 복합 명사구라, 술어는
+ *   `규칙`·`방식` 에 걸린 것이지 `기록` 에 걸린 게 아니다. 그래서 값 술어를 카운트 명사
+ *   **바로 뒤(조사 허용)** 에만 결속한다 — 사이에 `규칙/방식/방법/계산` 같은 다른 명사가
+ *   끼면 결속이 끊겨 아래 정의 술어 판정으로 내려간다(양보).
+ *
+ * ⚠️ 한 정규식이어야 한다. 두 정규식의 AND 는 위치를 잃는다(그게 3차 결함이었다).
+ * ⚠️ `수` 는 앞에 공백을 요구한다 — 안 그러면 `타수`·`투수`·`점수` 에서 잡힌다.
+ * ⚠️ 끼어드는 단어 목록(`규칙/방식/…`)을 두지 않는다 — 인접만 결속하면 그 목록은 필요 없고,
+ *   목록을 두는 순간 반례마다 룰이 쌓인다(M90 `open_language_never_closes_with_rules`).
+ */
+const UNTRUSTED_COUNT_NOUN_VALUE_ASK =
+  /(?:^|\s)(?:개수|횟수|기록|성적|수)(?:는|가|를|은|도|이)?\s*(?:뭐|뭔|무엇|얼마|어때|어떻게\s*돼|알려|보여|말해)/;
+
+/**
+ * **명시적 수량 의문** — 폐쇄적이라 그대로 값 요구로 읽는다.
+ *
+ * ⚠️ `알려`·`보여` 를 여기 넣지 않는다 — `차이 알려줘` 는 정의 요청이다.
+ *   그 둘은 위 `UNTRUSTED_COUNT_VALUE_PREDICATE` 에서 **카운트 명사와 함께일 때만** 쓴다.
+ */
+const UNTRUSTED_EXPLICIT_QUANTITY = /몇|얼마|개야|개나|개는|개\?|총\s*몇/;
+
+/**
+ * untrusted 지표의 **뜻·규칙**을 묻는 술어. 있으면 값 요구가 아니므로 양보한다.
+ *
+ * ⚠️ 이 집합은 "정의 질문 감지기" 가 아니다 — 그건 열린 문제다. 값 요구가 없다는 것을
+ *   이미 확인한 뒤의 **보조 신호**로만 쓴다. 놓쳐도 손해는 종전과 같은 차단 안내라
+ *   fail-safe 방향이다.
+ */
+const UNTRUSTED_DEFINITION_ASK =
+  /뭐|뭔|무엇|뜻|의미|정의|설명|차이|다른\s*점|들어가|포함|영향|규칙|룰\b|어떻게/;
+
+/**
+ * untrusted 지표 질문이 **값을 요구**하는가 — 차단/양보의 단일 술어 (삼순 2026-09-04).
+ *
+ * 계약:
+ * ```
+ * 차단 = untrusted 지표 AND ( 명시적 값 요구  OR  선수+지표 bare query )
+ * 양보 = 정의 술어가 붙고 값 요구가 없을 때
+ * 차단 = 혼합(`희생번트가 뭐야, 김도영은 몇 개야?`) — 값 요구가 이긴다
+ * ```
+ *
+ * 🔴 **판정 순서가 곧 계약이다** (삼순 2차 NO-GO 로 재설계).
+ *   1차 구현은 `수는`·`기록` 같은 **단어 포함**으로 값 요구를 판정해 양쪽으로 샜다:
+ *     · `타석 수는 어떻게 세는 거야?`  → `수는` 이 이겨 **차단**(정의인데)
+ *     · `김도영 희생번트 기록이 뭐야?` → `뭐` 가 이겨 **양보**(값 요구인데)
+ *   `수`·`기록`·`횟수` 는 명사일 뿐이고 **뒤에 오는 술어**가 뜻을 정한다. 그래서
+ *   단어 존재가 아니라 `카운트 명사 + 술어` 문법으로 묶는다.
+ *   2차 구현은 그 문법을 두 정규식의 AND 로 흉내내 **문장 전체 공존**이 됐다(삼순 3차
+ *   NO-GO: `희생번트 기록 규칙 알려줘` 차단). 이제 술어를 명사 바로 뒤에만 결속한다.
+ *
+ * 🔴 **선수명만으로 값 요구로 보지 않는다** (삼순 1차 NO-GO). 선수 결속은 정의 술어가
+ *   없을 때만(= bare query) 값 요구로 읽는다.
+ */
+export function untrustedValueAsk(question: string, playerBound: boolean): boolean {
+  const spaced = normalizeWithSpaces(question);
+  // ① 명시적 수량 의문 — 폐쇄집합. 정의 술어가 섞여 있어도 이긴다(혼합 질문 차단).
+  if (UNTRUSTED_EXPLICIT_QUANTITY.test(spaced)) return true;
+  // ② 카운트 명사 + 값 술어 **국소 결속** — `기록이 뭐야?` · `성적 알려줘`.
+  //    명사만으로도, 술어만으로도 값 요구가 아니고, 둘이 문장 어딘가에 같이 있는 것도
+  //    아니다. 술어가 명사 **바로 뒤**에 붙어야 한다(`기록 규칙 알려줘` 는 결속 안 됨).
+  if (UNTRUSTED_COUNT_NOUN_VALUE_ASK.test(spaced)) {
+    return true;
+  }
+  // ③ 정의 술어가 있으면 양보 — 여기까지 왔다는 건 값 요구 신호가 없다는 뜻이다.
+  //    ⚠️ `타석 수는 어떻게 세는 거야?` 류(방법·절차)도 여기서 잡힌다(`어떻게`).
+  //      별도 축을 뒀다가 **결함주입에서 살아남아** 실측으로 중복임을 확인하고 지웠다 —
+  //      억지로 RED 를 만드는 대신 관측되지 않는 코드를 없애는 쪽이 맞다.
+  if (UNTRUSTED_DEFINITION_ASK.test(spaced)) return false;
+  // ④ 선수+지표 bare query — 의문사가 없어도 유저가 둘을 함께 적었으면 그 값을 원한 것이다.
+  return playerBound;
+}
 
 /** 시즌 표현. 올해만 답한다 — 과거 시즌 row 가 DB 에 없기 때문이다. */
 const CURRENT_SEASON_WORDS = ["올해", "올시즌", "이번시즌", "금년", "올해의", String(SUPPORTED_SEASON)];
@@ -322,6 +410,22 @@ export type CareerSpan =
   | { type: "career" }
   | { type: "year"; year: number };
 
+/**
+ * `resolveSeasonRecordIntent` 의 부가 문맥 — 질문 문자열만으로는 모르는 것.
+ *
+ * 🔴 `playerBound` 는 **파이프라인이 이미 계산한 사실**을 넘겨받는 것이지,
+ *   이 모듈이 이름을 다시 푸는 게 아니다. 로스터 매칭을 여기서 재구현하면 두 곳이
+ *   갈라지고, 그 드리프트가 곱 9월 하니스 사고의 구조였다.
+ *
+ * ⚠️ 기본값 `false` 는 **안전한 쪽**이 아니라 보수적인 쪽이다(양보). 호출부가
+ *   선수 결속을 안 넘기면 bare query 축이 꺼져 값 요구가 사전으로 샐다 —
+ *   그래서 호출부 두 곳을 모두 게이트로 묶어 둔다.
+ */
+export interface SeasonRecordIntentOptions {
+  /** 질문이 로스터 선수에 결속됐는가(파이프라인 판정 결과). */
+  playerBound?: boolean;
+}
+
 export type SeasonRecordIntent =
   | { kind: "none" }
   /** 신뢰할 수 없는 지표(pa/sac/sf) — 명시적으로 답변 거절. */
@@ -330,7 +434,7 @@ export type SeasonRecordIntent =
   | { kind: "unsupported_season" }
   /** 연도별 시리즈·통산·과거 시즌 — KBO 공식 Total.aspx 조회. */
   | { kind: "career"; query: SeasonRecordQuery; span: CareerSpan }
-  | { kind: "query"; query: SeasonRecordQuery };
+  | { kind: "query"; query: SeasonRecordQuery; queries?: SeasonRecordQuery[]; unavailableSeasons?: number[] };
 
 /**
  * 질문에서 "올해 시즌 기록" 의도를 뽑는다.
@@ -344,7 +448,9 @@ export type SeasonRecordIntent =
 export function resolveSeasonRecordIntent(
   question: string,
   preferredTable?: "batter" | "pitcher",
+  options?: SeasonRecordIntentOptions,
 ): SeasonRecordIntent {
+  if (isStatDefinitionQuestion(question)) return { kind: "none" };
   const compact = normalize(question);
 
   // ⚠️ 지표어를 먼저 오려낸다 — `wrc` 는 untrusted 알리아스 `pa` 를 문자열로 포함하진
@@ -354,7 +460,13 @@ export function resolveSeasonRecordIntent(
     compact,
   );
   if (UNTRUSTED_METRIC_ALIASES.some((alias) => untrustedTarget.includes(normalize(alias)))) {
-    return { kind: "untrusted_metric" };
+    // 🔴 **지표어 존재 → 값 요구** 로 바꾸었다 (2026-09-04, 삼순 조건부 GO).
+    //   종전은 글자만 있으면 차단해서 뜻을 물은 질문에도 "기록을 안내할 수 없다" 가 나갔다.
+    if (untrustedValueAsk(question, options?.playerBound === true)) {
+      return { kind: "untrusted_metric" };
+    }
+    // 값 요구가 아니면 이 경로의 소관이 아니다 — `none` 으로 양보해 사전·RAG·LLM 이 받는다.
+    return { kind: "none" };
   }
   // 서술·평가형은 지표어가 섞여 있어도 숫자 질문이 아니다 — 서술형 RAG 담당.
   if (DESCRIPTIVE_ASK.test(compact)) return { kind: "none" };
@@ -436,31 +548,62 @@ export function resolveSeasonRecordIntent(
     // `출장`은 타자 전용 표현. 공통어 `경기 수`보다 먼저 매칭돼야 표현이 보존된다.
     { table: "batter", metric: "games", pattern: /출장(?:\s*(?:경기|수))?/ },
     // 공통어 — 여기서만 포지션 결속이 허용된다.
-    { table: "batter", metric: "games", pattern: /경기\s*수/, ambiguous: true },
+    { table: "batter", metric: "games", pattern: /경기\s*수|(?<=[,·/])\s*경기(?=\s*[,·/]|\s*$)/, ambiguous: true },
   ];
 
   const normalized = normalizeWithSpaces(question);
-  let best = patterns.find((entry) => entry.pattern.test(normalized));
-  // 지표어가 없으면 이 경로 대상이 아니다. 의문사만 있고 지표가 없는 문장(`김도영 어때?`)은
-  // 여기서 걸러져 서술형 RAG 로 간다.
-  if (!best) return { kind: "none" };
-  // 지표어는 잡혔는데 의문 표현이 전혀 없고, 지표명 외의 서술 요구도 없는 경우 —
-  // `김도영 타율` 같은 형태다. 이건 값 요청으로 본다(위 주석 참조).
+  // Consume matched spans so 피홈런/도루실패/2루타 do not also request
+  // 홈런/도루/루타. Preserve distinct, non-overlapping requested metrics.
+  // 득점권 names a split, not the 득점 (runs) metric. Keep normalized
+  // intact for scope detection, but remove the compound during extraction.
+  let rest = normalized.replace(/득점\s*권/g, " ");
+  const selected: SeasonRecordQuery[] = [];
+  for (const entry of patterns) {
+    if (!entry.pattern.test(rest)) continue;
+    rest = rest.replace(new RegExp(entry.pattern.source, entry.pattern.flags + "g"), " ");
+    const table = entry.ambiguous && preferredTable ? preferredTable : entry.table;
+    const definitions = table === "pitcher" ? PITCHER_METRICS : BATTER_METRICS;
+    const def = definitions[entry.metric as keyof typeof definitions] as { label: string; kind: SeasonRecordQuery["kind"] };
+    if (!selected.some((q) => q.table === table && q.metric === entry.metric)) {
+      selected.push({ table, metric: entry.metric, label: def.label, kind: def.kind });
+    }
+  }
+  const scan = scanTemporalRefs(question);
+  const years = [...new Set([...normalized.matchAll(/(?:19|20)\d{2}/g)].map((m) => Number(m[0])))];
+  const partialSeasonComparison = options?.playerBound && scan.refTotal > 1
+    && /비교|\bvs\b|대비/i.test(normalized) && years.includes(SUPPORTED_SEASON)
+    && years.length === scan.refTotal && !scan.rangeMarker && !scan.seriesWord && !scan.careerWord
+    && !/최고|최저|최악|커리어\s*하이|하이라이트|베스트|기록\s*경신/.test(scan.spaced);
+  // A roster-bound summary asks for our trusted basic season fields, not a
+  // subjective assessment. Explicit metric requests retain their own scope.
+  if (!selected.length && options?.playerBound && /성적|기록/.test(compact) && !/경신|신기록|최초|달성|세운|세웠/.test(compact)) {
+    // Generic historical summaries belong to the existing history guide.
+    // Keep the separately labelled current-vs-past partial comparison contract.
+    if (!partialSeasonComparison && (scan.careerWord || scan.seriesWord || scan.pastDelta !== null
+      || scan.refTotal > 1 || (scan.explicitYear !== null && scan.explicitYear !== SUPPORTED_SEASON))) {
+      return { kind: "none" };
+    }
+    if (/오늘|어제|그제|내일|\d+월|\d+일|이번경기|지난경기/.test(compact)) return { kind: "unsupported_season" };
+    const table = preferredTable ?? "batter";
+    const definitions = table === "pitcher" ? PITCHER_METRICS : BATTER_METRICS;
+    const keys = table === "pitcher"
+      ? ["era", "games", "wins", "losses", "ip", "so", "saves", "holds"]
+      : ["avg", "hr", "rbi", "hits", "games", "tb"];
+    for (const metric of keys) {
+      const def = definitions[metric as keyof typeof definitions] as { label: string; kind: SeasonRecordQuery["kind"] };
+      selected.push({ table, metric, label: def.label, kind: def.kind });
+    }
+  }
+  if (!selected.length) return { kind: "none" };
+  // A season snapshot cannot answer splits, other competitions or schedules.
+  // Only claim this scope AFTER a metric or player-bound summary exists.
+  // Otherwise general product/rules/news questions must retain their own route.
+  if (hasSeasonRecordSplitQualifier(question)) {
+    return { kind: "unsupported_season" };
+  }
+
   void explicitlyNumeric;
-  // 공통어 `경기 수`만 이름으로 확정된 로스터 포지션에 결속한다(투수면 pitcher).
-  // explicit `등판`/`출장`까지 뒤집으면 `문보경 등판 수`에 타자 경기 수를 답하는 오답이 된다.
-  if (best.ambiguous && preferredTable) best = { ...best, table: preferredTable };
-  const metrics = best.table === "pitcher" ? PITCHER_METRICS : BATTER_METRICS;
-  const def = metrics[best.metric as keyof typeof metrics] as {
-    label: string;
-    kind: SeasonRecordQuery["kind"];
-  };
-  const query: SeasonRecordQuery = {
-    table: best.table,
-    metric: best.metric,
-    label: def.label,
-    kind: def.kind,
-  };
+  const query = selected[0];
 
   // ── 시점 판정 (2026-08-10 캐처: `연도별 타율 추이`가 올해 단일값으로 오답) ──────
   // 종전에는 통산·과거 시즌을 "준비 중" fail-close 로 닫았다. 정본이 없어서가 아니라
@@ -470,7 +613,6 @@ export function resolveSeasonRecordIntent(
   //   시점 참조(명시연도·상대연도·현재·최근범위·cutoff)를 **먼저 전부 추출**하고,
   //   복수/범위/미지원 조합이면 축소하지 말고 fail-close 한다. series/career/year 선택은
   //   그 다음이다. "좁은 한정이 넓은 시점어를 이긴다" 를 문장 나열이 아니라 구조로 강제.
-  const scan = scanTemporalRefs(question);
   // ⓪-a 월별/경기별 축 — 우리 정본은 연도별 테이블뿐이다. 월·경기 단위 시계열은
   //   서빙 데이터가 없으므로 어느 쪽으로도 축소하지 않고 fail-close (삼순 10차).
   if (/월별|경기별/.test(scan.spaced)) return { kind: "unsupported_season" };
@@ -481,7 +623,14 @@ export function resolveSeasonRecordIntent(
   if (scan.recentRange) return { kind: "unsupported_season" };
   // ② 시점 참조 2개 이상 = 비교·범위 질의 (`작년과 올해`·`작년과 재작년`·`2025년과 2026년`).
   //   단일값으로 축소하면 오답이다.
-  if (scan.refTotal > 1) return { kind: "unsupported_season" };
+  if (scan.refTotal > 1) {
+    // Only explicit discrete season comparisons get a labelled partial answer.
+    // Ranges, career aggregates and extrema must never become a current total.
+    if (partialSeasonComparison) {
+      return { kind: "query", query, queries: selected, unavailableSeasons: years.filter((y) => y !== SUPPORTED_SEASON) };
+    }
+    return { kind: "unsupported_season" };
+  }
   // ③ cutoff·범위 표지(까지·이후·이전·부터·~)가 시점 참조/통산어에 붙으면 부분합·구간
   //   질의다 — 현재 통산 행(올해 포함)·단일 연도와 다른 값이라 fail-close.
   if (scan.rangeMarker && (scan.refTotal > 0 || scan.careerWord)) {
@@ -490,6 +639,12 @@ export function resolveSeasonRecordIntent(
   // ④ 최고/최저(커리어하이) — 통산 **평균/누계**와 다른 극값이다. 규정타석 판정이 필요해
   //   정본 조회가 아니다 → fail-close.
   if (/최고|최저|최악|커리어\s*하이|하이라이트|베스트|기록\s*경신/.test(scan.spaced)) {
+    return { kind: "unsupported_season" };
+  }
+  // Historical bundles are not implemented here: never silently emit only
+  // the first field. Existing single-field career queries remain supported.
+  if (selected.length > 1 && (scan.seriesWord || scan.careerWord || scan.pastDelta !== null
+    || (scan.explicitYear !== null && scan.explicitYear !== SUPPORTED_SEASON))) {
     return { kind: "unsupported_season" };
   }
   // ⑤ 여기부터 시점 참조는 0개 또는 1개다.
@@ -515,7 +670,7 @@ export function resolveSeasonRecordIntent(
     return { kind: "career", query, span: { type: "year", year: scan.explicitYear } };
   }
   // 현재 시즌 지목(올해) 또는 시점 표현 없음 → 기존 현재 시즌 경로.
-  return { kind: "query", query };
+  return { kind: "query", query, ...(selected.length > 1 ? { queries: selected } : {}) };
 }
 
 /** 명시적으로 올해를 지목했는가. 시즌 표현이 아예 없으면 현재 시즌으로 본다. */
@@ -578,7 +733,9 @@ export function resolveSeasonRecord(
     return { kind: "inconsistent" };
   }
   if (expectedName !== undefined &&
-      (row.name !== expectedName || (row.team ?? null) !== (expectedTeam ?? null))) {
+      (typeof row.name !== "string" || /[\r\n<>]/.test(row.name)
+        || !recordPlayerNamesMatch(expectedKboId, row.name, expectedName)
+        || (row.team ?? null) !== (expectedTeam ?? null))) {
     return { kind: "inconsistent" };
   }
 
@@ -610,6 +767,8 @@ export function resolveSeasonRecord(
     if ((query.metric === "avg" || query.metric === "wpct") && Number(value) > 1) {
       return { kind: "inconsistent" };
     }
+    // AVG shares the ranking display precision; accepted input has at most 3 decimals.
+    if (query.metric === "avg") value = Number(value).toFixed(3);
   } else {
     if (typeof raw !== "string") return { kind: "inconsistent" };
     value = raw.trim();
@@ -637,11 +796,23 @@ export function formatAsOf(iso: string): string {
   return `${mm}/${dd}`;
 }
 
-export function composeSeasonRecordAnswer(outcome: Extract<SeasonRecordOutcome, { kind: "ok" }>): string {
+/** Snapshot publication time, not a claim that every game on this date is included. */
+export function formatSnapshotAsOf(iso: string): string {
+  const date = new Date(iso);
+  if (!Number.isFinite(date.getTime())) return "";
+  const kst = new Date(date.getTime() + 9 * 60 * 60 * 1000);
+  return `${formatAsOf(iso)} ${String(kst.getUTCHours()).padStart(2, "0")}:${String(kst.getUTCMinutes()).padStart(2, "0")} KST`;
+}
+
+export function composeSeasonRecordAnswer(outcome: Extract<SeasonRecordOutcome, { kind: "ok" }>, appSnapshot = false): string {
   const asOf = formatAsOf(outcome.asOf);
   const who = outcome.team ? `${outcome.name}(${outcome.team})` : outcome.name;
-  const suffix = asOf ? `\n\n📊 ${SUPPORTED_SEASON} 시즌 · ${asOf} 기준` : "";
-  return `${who} 선수의 ${SUPPORTED_SEASON} 시즌 ${outcome.label}은 ${outcome.value}입니다.${suffix}`;
+  const suffix = asOf ? appSnapshot
+    ? `\n\n📊 ${SUPPORTED_SEASON} 시즌 · 앱 기록 스냅샷 ${formatSnapshotAsOf(outcome.asOf)} 갱신 (경기 반영 완료 시각은 아님)`
+    : `\n\n📊 ${SUPPORTED_SEASON} 시즌 · ${asOf} 기준` : "";
+  const syllable = outcome.label.charCodeAt(outcome.label.length - 1) - 0xac00;
+  const topicParticle = syllable >= 0 && syllable <= 11171 && syllable % 28 === 0 ? "는" : "은";
+  return `${who} 선수의 ${SUPPORTED_SEASON} 시즌 ${outcome.label}${topicParticle} ${outcome.value}입니다.${suffix}`;
 }
 
 export const UNTRUSTED_METRIC_ANSWER =
@@ -650,7 +821,18 @@ export const UNTRUSTED_METRIC_ANSWER =
 // 지원된다. 종전 문구("통산 기록은 아직 준비 중")는 지원 기능을 미지원으로 안내하는 거짓말이다.
 // 이 문구가 닫는 건 frozen contract 밖 상대 기간 표현(`데뷔 후 3년`·`최근 5경기`)뿐이므로
 // 지원하는 질문 형태를 정확히 안내한다.
+export function hasSeasonRecordSplitQualifier(question: string): boolean {
+  const compact = normalize(question);
+  return /포스트시즌|가을야구|플레이오프|한국시리즈|와일드카드|대표팀|국가대표|국대|아시안게임|퓨처스|2군|올스타|부상|상대|원정|전반기|후반기|득점권|주자|좌투|우투|월간|주간|월별|주별|홈(?!런|란)|(?:오늘|어제|그제|내일|다음|이번|지난)경기|\d+월|\d+일/.test(compact)
+    || /\b(?:ps|wbc)\b/i.test(question)
+    || /(?:[가-힣a-z]+)전(?:성적|기록|타율|홈런|안타|경기|타점)/.test(compact);
+}
+
 export const UNSUPPORTED_SEASON_ANSWER =
   "그 기간 형태로는 아직 집계할 수 없습니다. 확인 가능한 범위는 특정 연도(예: 2019년 타율), 통산 기록, 연도별 기록입니다.";
 export const RECORD_MISSING_ANSWER =
   "그 선수의 올 시즌 기록을 아직 찾지 못했습니다. 조금 뒤 다시 질문하면 최신 상태로 확인하겠습니다.";
+
+/** Split-specific copy; not the fallback for missing historical metrics. */
+export const UNSUPPORTED_SPLIT_ANSWER =
+  "요청하신 상황·대회·기간으로 나눈 기록은 현재 제공하지 않습니다. 질문을 나눠 다시 물으셔도 같은 조건의 기록은 확인할 수 없으며, 제공 시점은 정해지지 않았습니다. 대신 지원되는 정규시즌의 특정 연도(예: 2019년 타율), 통산, 연도별 기록은 확인할 수 있습니다.";

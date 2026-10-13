@@ -42,10 +42,23 @@ export interface TeamPitching {
   hitsAllowed?: number;
 }
 
-export interface TeamRecordsResponse {
+/** upstream 에서 조립한 원자료 — 아직 수신시각이 붙지 않은 상태. */
+export interface TeamRecordsData {
   season: number;
   batting: TeamBatting[];
   pitching: TeamPitching[];
+}
+
+export interface TeamRecordsResponse extends TeamRecordsData {
+  /**
+   * 이 데이터를 **upstream(KBO/Naver)에서 실제로 받은** 시각(ISO).
+   *
+   * 🔴 왜 필요한가 (삼순 2026-08-28 P0-③): 아래 fail-soft 경로는 upstream 이 죽으면
+   *   **만료된 메모리 캐시를 그대로 200 으로** 돌려준다. 소비자가 "응답을 받은 시각"을
+   *   신선도로 쓰면 몇 시간 묵은 값을 방금 값으로 오인한다 — 200 은 신선도의 증거가 아니다.
+   *   그래서 신선도를 **데이터에 결속**해서 내보낸다(M90 `값과 provenance 는 별도 축`).
+   */
+  fetchedAt: string;
 }
 
 async function withinDeadline<T>(
@@ -303,7 +316,7 @@ function formatRate(
 export function mapNaverTeamRecords(
   payload: unknown,
   season: number,
-): TeamRecordsResponse {
+): TeamRecordsData {
   const rows = (
     payload as {
       success?: boolean;
@@ -388,7 +401,7 @@ export async function fetchNaverTeamRecords(
   season: number,
   deadlineAt: number = Date.now() + TOTAL_DEADLINE_MS,
   fetchImpl: typeof fetch = fetch,
-): Promise<TeamRecordsResponse> {
+): Promise<TeamRecordsData> {
   return withinDeadline(
     async (signal) => {
       const res = await fetchImpl(
@@ -422,8 +435,8 @@ export async function loadTeamRecords(
   naverImpl: (
     year: number,
     deadlineAt: number,
-  ) => Promise<TeamRecordsResponse> = fetchNaverTeamRecords,
-): Promise<TeamRecordsResponse> {
+  ) => Promise<TeamRecordsData> = fetchNaverTeamRecords,
+): Promise<TeamRecordsData> {
   const deadlineAt = Date.now() + TOTAL_DEADLINE_MS;
   try {
     const { batting, pitching } = await kboImpl(deadlineAt);
@@ -453,7 +466,10 @@ export async function loadCachedTeamRecords(
   if (cache && cache.data.season === season && cache.expiresAt > Date.now()) {
     return cache.data;
   }
-  const data = await loadTeamRecords(season);
+  const loaded = await loadTeamRecords(season);
+  // fetchedAt 은 **upstream 응답을 받은 그 시각**에 한 번만 찍고 캐시에 함께 저장한다.
+  // 캐시 히트마다 갱신하면 "우리가 응답한 시각"이 되어 신선도 의미가 사라진다.
+  const data: TeamRecordsResponse = { ...loaded, fetchedAt: new Date().toISOString() };
   cache = { data, expiresAt: Date.now() + CACHE_TTL_MS };
   return data;
 }

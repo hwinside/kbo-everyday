@@ -22,7 +22,7 @@ import { SUPABASE_URL, ANON, SERVICE_ROLE, REF, BASE } from "./_env.mjs";
 
 const BASE_URL = process.argv.find((a) => a.startsWith("--base-url="))?.split("=")[1] ?? BASE;
 // 진입점은 스윙/투구 모션 WebP 중 하나를 랜덤 노출한다 (2026-08-21 지시).
-const MOTION_SRC_RE = /^\/mascot\/motion\/(swing|pitching)\.webp$/;
+const MOTION_SRC_RE = /^\/mascot\/entry\/v1\/(swing|pitching)\.webp$/;
 const GENIUS_ID = "45ae7419-6a9a-4c6b-9101-8d65df7e242e";
 const PAGES = [
   { label: "홈", path: "/" },
