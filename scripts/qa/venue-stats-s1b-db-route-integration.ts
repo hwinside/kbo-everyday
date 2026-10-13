@@ -632,6 +632,7 @@ async function regularSeasonWindowScopeRegression() {
   const { collectSeasonGameUniverse } = await import("../../src/lib/crawler/season-games-cache");
   const { REGULAR_SEASON_WINDOWS } = await import("../../src/lib/crawler/naver-games");
   const w = REGULAR_SEASON_WINDOWS["2026"];
+  const provisionalWindow = { ...w, finalized: false };
   assert.ok(w, "2026 정규시즌 window 등록됨");
 
   // 수집 자체는 일어나지 않게 모든 날짜 verified-empty 로 닫고 범위만 관찰한다.
@@ -646,6 +647,7 @@ async function regularSeasonWindowScopeRegression() {
 
   const future = await collectSeasonGameUniverse(2026, "0", {
     today: "2026-10-13",
+    regularSeasonWindow: provisionalWindow,
     fetcher: async (date) => date > w.end ? { games: [], emptyVerified: false } : VERIFIED_EMPTY,
   });
   assert.ok(future.expectedDates.includes("20261013"), "window.end 뒤 날짜를 조용히 제외하지 않음");
@@ -659,6 +661,7 @@ async function regularSeasonWindowScopeRegression() {
   // end 뒤 horizon 은 응답 내용과 무관하게 구조적 incomplete 여야 한다.
   const alwaysVerifiedEmpty = await collectSeasonGameUniverse(2026, "0", {
     today: "2026-10-13",
+    regularSeasonWindow: provisionalWindow,
     fetcher: async (): Promise<SeasonGameFetchResult> => VERIFIED_EMPTY,
   });
   assert.equal(
@@ -691,6 +694,12 @@ async function regularSeasonWindowScopeRegression() {
 
   // provisional end는 과거가 되어도 실제 종료일이 아니다. 운영자가 공식 actual end와
   // finalized=true를 함께 넣은 뒤에만 그 날짜에서 자르고 complete를 열 수 있다.
+  const productionFinal = await collectSeasonGameUniverse(2026, "0", {
+    today: "2026-11-01", fetcher: noop,
+  });
+  assert.equal(w.finalized, true, "2026 공식 종료 확정 설정");
+  assert.equal(productionFinal.complete, true, "현재 설정으로 정규 비교 복구");
+  assert.equal(productionFinal.expectedDates.at(-1), "20261012", "PS 날짜는 정규 모수에서 제외");
   const finalizedWindow = { start: w.start, end: "20261020", finalized: true } as const;
   const settledPast = await collectSeasonGameUniverse(2026, "0", {
     today: "2026-11-01",
@@ -709,6 +718,7 @@ async function regularSeasonWindowScopeRegression() {
   // 모르므로 우주 완전함은 주장하지 않는다(window 갱신이 유일한 해소 조건).
   const postponed = await collectSeasonGameUniverse(2026, "0", {
     today: "2026-10-15",
+    regularSeasonWindow: provisionalWindow,
     fetcher: async (date): Promise<SeasonGameFetchResult> =>
       date === "20261020" ? gamesResult([makeFinalGame("20261020LGOB0")]) : VERIFIED_EMPTY,
   });
@@ -722,6 +732,7 @@ async function regularSeasonWindowScopeRegression() {
   // 전-시리즌 우주(srId≠"0")는 이 경계 규칙의 대상이 아니다 — 종랰 동작 보존.
   const allFuture = await collectSeasonGameUniverse(2026, "0,1,3,4,5,7,9", {
     today: "2026-10-13",
+    regularSeasonWindow: provisionalWindow,
     fetcher: async (): Promise<SeasonGameFetchResult> => VERIFIED_EMPTY,
   });
   assert.equal(allFuture.complete, true, "전-시리즌 우주는 end 경계 규칙 미적용(기존 동작)");
