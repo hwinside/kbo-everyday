@@ -190,11 +190,24 @@ struct GameWidgetProvider: TimelineProvider {
             let nextSnap = nextRaw.asSnapshot()
             if now >= rollover {
                 // 이미 전환 시각을 지남 → 지금 바로 예정 경기 표시(앱 미실행 폴백).
-                entries.append(GameWidgetEntry(date: now, snapshot: nextSnap))
+                let nextExpiry = Self.rollover6amKST(gameId: nextSnap.gameId)
+                entries.append(GameWidgetEntry(date: now, snapshot: nextExpiry.map { now >= $0 } == true ? nil : nextSnap))
+                if let nextExpiry, now < nextExpiry {
+                    entries.append(GameWidgetEntry(date: nextExpiry, snapshot: nil))
+                }
             } else {
                 // 전환 전 → 지금은 결과(live면 5h 후 stale), rollover 시점에 예정 경기로 자동 전환.
                 appendCurrent(before: rollover)
                 entries.append(GameWidgetEntry(date: rollover, snapshot: nextSnap))
+            }
+        } else if let snap, ["final", "cancelled", "scheduled"].contains(snap.resolvedStatus),
+                  let expiry = Self.rollover6amKST(gameId: snap.gameId) {
+            // No next game: do not pin the last regular-season result for the offseason.
+            if now >= expiry {
+                entries.append(GameWidgetEntry(date: now, snapshot: nil))
+            } else {
+                appendCurrent(before: expiry)
+                entries.append(GameWidgetEntry(date: expiry, snapshot: nil))
             }
         } else {
             appendCurrent(before: nil)
