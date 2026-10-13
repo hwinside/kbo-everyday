@@ -342,7 +342,7 @@ public class GameNotificationPlugin extends Plugin {
                 next.optString("away", ""), next.optString("home", ""),
                 next.optString("stadium", ""), next.optString("time", ""),
                 next.optString("date", ""), next.optString("astarter", ""),
-                next.optString("hstarter", ""), resultPitchers);
+                next.optString("hstarter", ""), next.optString("gameId", ""), resultPitchers);
         } else {
             GameScoreWidget.writeAndRefresh(
                 getContext(), myTeam, away, home, as, hs, status, pitcher, pteam,
