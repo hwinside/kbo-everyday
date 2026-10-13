@@ -10,6 +10,8 @@ import { PRESEASON_GAMES, PRESEASON_DATES } from "@/lib/constants/preseason-sche
 import type { BroadcastChannel } from "@/lib/broadcast-channels";
 
 interface RawGameData {
+  srId?: string;
+  gameLabel?: string;
   gameId: string;
   homeTeamId: number;
   awayTeamId: number;
@@ -31,6 +33,8 @@ interface RawGameData {
 }
 
 export interface HomeGame {
+  srId?: string;
+  gameLabel?: string;
   id: string;
   homeTeamId: number;
   awayTeamId: number;
@@ -117,6 +121,8 @@ export function useHomeInit(options?: UseHomeInitOptions) {
       .then(data => {
         const games: HomeGame[] = (data.games ?? []).map((g: RawGameData) => ({
           id: g.gameId,
+          srId: g.srId,
+          gameLabel: g.gameLabel,
           homeTeamId: g.homeTeamId,
           awayTeamId: g.awayTeamId,
           time: g.time,

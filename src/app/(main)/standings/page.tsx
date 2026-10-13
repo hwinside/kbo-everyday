@@ -1,4 +1,6 @@
 "use client";
+
+import { isRegularSeasonFinal } from "@/lib/constants/season";
 import { ChevronLeft, Check } from "lucide-react";
 import HeaderProfileLink from "@/components/ui/HeaderProfileLink";
 import { getTeamBorderColorById } from "@/lib/utils/team-border-color";
@@ -241,6 +243,7 @@ export default function StandingsPage() {
         </button>
       ))}
       </div>
+      <p className="text-xs text-text-secondary mt-3">{season} {season === 2025 || isRegularSeasonFinal() ? "정규시즌 최종 순위·기록" : "정규시즌 순위·기록"}</p>
       <div className="flex gap-2 mt-2 mb-3">
       {([
         { id: "team" as MainTab, label: "구단 순위" },

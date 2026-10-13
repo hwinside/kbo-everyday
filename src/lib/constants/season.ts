@@ -17,3 +17,10 @@ export function isWithinRegularSeasonWindow(date: string): boolean {
   return !!w && date >= w.start && date <= w.end;
 }
 
+
+/** Final labels apply only after the explicitly confirmed end date in KST. */
+export function isRegularSeasonFinal(now = new Date()): boolean {
+  const date = now.toLocaleDateString("sv-SE", { timeZone: "Asia/Seoul" }).replaceAll("-", "");
+  const window = REGULAR_SEASON_WINDOWS[date.slice(0, 4)];
+  return !!window?.finalized && date > window.end;
+}

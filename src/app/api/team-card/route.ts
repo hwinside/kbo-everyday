@@ -82,13 +82,13 @@ export async function GET(req: NextRequest) {
 
     let monthGames = await getMonthGames(thisMonth).catch(() => []);
     let teamFinals = monthGames.filter(
-      (g) => (g.awayTeamId === team.id || g.homeTeamId === team.id) && g.status === "final",
+      (g) => (g.awayTeamId === team.id || g.homeTeamId === team.id) && g.status === "final" && g.srId === "0",
     );
     if (teamFinals.length < 5) {
       const prevGames = await getMonthGames(prevMonth).catch(() => []);
       monthGames = [...prevGames, ...monthGames];
       teamFinals = monthGames.filter(
-        (g) => (g.awayTeamId === team.id || g.homeTeamId === team.id) && g.status === "final",
+        (g) => (g.awayTeamId === team.id || g.homeTeamId === team.id) && g.status === "final" && g.srId === "0",
       );
     }
     teamFinals.sort((a, b) => a.date.localeCompare(b.date));
