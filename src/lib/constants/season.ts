@@ -7,9 +7,16 @@ export interface RegularSeasonWindow {
 }
 
 export const REGULAR_SEASON_WINDOWS: Readonly<Record<string, RegularSeasonWindow>> = {
-  // 2026-10-13 확인: 10/12 정규 종료, 10/14 WC 등록. 정규 통계 모수 확정.
+  // 2026-10-13 확인: 정규 종료 10/12, WC 10/14 등록.
   "2026": { start: "20260328", end: "20261012", finalized: true },
 };
+
+/** date(YYYYMMDD)가 검증된 정규시즌 window 안인가. 미등록 연도는 false(fail-close). */
+export function isWithinRegularSeasonWindow(date: string): boolean {
+  const w = REGULAR_SEASON_WINDOWS[date.slice(0, 4)];
+  return !!w && date >= w.start && date <= w.end;
+}
+
 
 /** Final labels apply only after the explicitly confirmed end date in KST. */
 export function isRegularSeasonFinal(now = new Date()): boolean {

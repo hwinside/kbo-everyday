@@ -115,9 +115,9 @@ export async function fetchLineupConfirmed(
   if (opts?.timeoutMs != null) {
     const remaining = opts.timeoutMs - (Date.now() - startMs);
     if (remaining <= 0) return null;
-    const snap = await fetchNaverLineup(gameId, { timeoutMs: remaining });
+    const snap = await fetchNaverLineup(gameId, { timeoutMs: remaining, srId: series });
     return snap ? true : null;
   }
-  const snap = await fetchNaverLineup(gameId);
+  const snap = await fetchNaverLineup(gameId, { srId: series });
   return snap ? true : null;
 }

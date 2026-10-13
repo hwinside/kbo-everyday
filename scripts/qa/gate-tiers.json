@@ -1112,6 +1112,14 @@
       "tier": "ci"
     },
     {
+      "name": "qa:postseason-operations",
+      "tier": "ci"
+    },
+    {
+      "name": "qa:postseason-series",
+      "tier": "ci"
+    },
+    {
       "name": "qa:postseason-labels",
       "tier": "ci"
     }

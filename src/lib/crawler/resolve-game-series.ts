@@ -1,3 +1,5 @@
+import { isWithinRegularSeasonWindow } from "@/lib/constants/season";
+import { isAllStarGameId } from "@/lib/constants/teams";
 import { normalizeSeriesId, type GameSeriesId } from "./game-series";
 
 // Identity is immutable for a game ID. Bound memory; never cache missing/failed lookups.
@@ -20,6 +22,9 @@ export async function resolveGameSeries(
   opts?.signal?.throwIfAborted();
   const known = normalizeSeriesId(opts?.srId) ?? knownGameSeries(gameId);
   if (known !== undefined) return rememberGameSeries(gameId, known)!;
+  if (isAllStarGameId(gameId)) return rememberGameSeries(gameId, "9")!;
+  // The regular path must not import network/DB adapters, either.
+  if (isWithinRegularSeasonWindow(gameId.slice(0, 8))) return rememberGameSeries(gameId, "0")!;
   const signal = opts?.signal ?? AbortSignal.timeout(2500);
   // Independent schedule lookup: no detailed APIs or ID-conversion recursion.
   const { fetchKboGamesOnly } = await import("./kbo-api");

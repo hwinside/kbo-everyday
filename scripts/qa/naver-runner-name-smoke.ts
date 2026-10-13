@@ -1,7 +1,3 @@
-import { rememberGameSeries } from "../../src/lib/crawler/resolve-game-series";
-// Transport-only fault injection: source identity is fixed; postseason source mapping has its own regression.
-
-rememberGameSeries("20260730OBSK0", "0");
 /**
  * Naver failover 주자 타순/이름 회귀.
  *
