@@ -1,5 +1,7 @@
 "use client";
 
+import { postseasonGameLabel } from "@/lib/crawler/game-series";
+
 import { useState, useCallback, useEffect, useRef } from "react";
 import { useParams, useSearchParams } from "next/navigation";
 import { motion, AnimatePresence } from "framer-motion";
@@ -490,6 +492,7 @@ export default function GameDetailPage() {
     <div className="min-h-[100dvh] bg-bg-primary max-w-[640px] mx-auto w-full">
       {/* 헤더는 스크롤 컨테이너(PullToRefresh) 밖 page-root에 두어 sticky top-0가 페이지 스크롤 기준으로 고정되게 한다 */}
       <GameDetailHeader title={matchupTitle} />
+      {postseasonGameLabel(gameDetail?.srId, gameDetail?.gameLabel) && <p className="px-5 py-1 text-xs font-bold text-accent">{postseasonGameLabel(gameDetail?.srId, gameDetail?.gameLabel)}</p>}
 
     <PullToRefresh
       onRefresh={handleRefresh}

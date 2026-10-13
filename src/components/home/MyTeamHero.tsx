@@ -1,5 +1,6 @@
 "use client";
 
+import { postseasonGameLabel } from "@/lib/crawler/game-series";
 import { useEffect, useState } from "react";
 import Link from "next/link";
 import Image from "next/image";
@@ -13,6 +14,8 @@ import { pickGameWeather, type GameWeather, type StadiumWeatherMap } from "@/lib
 import { normalizeCancelReason } from "@/lib/utils/cancel-reason";
 
 interface HomeGame {
+  srId?: string;
+  gameLabel?: string;
   id: string;
   homeTeamId: number;
   awayTeamId: number;
@@ -128,6 +131,7 @@ export default function MyTeamHero({ myTeam, myTeamGame, embedded = false }: { m
                   <span className="text-2xl font-black tabular-nums text-text-primary">{myTeamGame.homeScore}</span>
                 </div>
               )}
+              {postseasonGameLabel(myTeamGame.srId, myTeamGame.gameLabel) && <span className="text-xs font-bold text-text-primary">{postseasonGameLabel(myTeamGame.srId, myTeamGame.gameLabel)}</span>}
               <span className={`text-xs font-semibold px-2 py-0.5 rounded-full ${
                 myTeamGame.status === "live" ? "bg-red-500/20 text-red-400 animate-pulse" :
                 myTeamGame.status === "cancelled" ? "bg-text-tertiary/20 text-text-tertiary" :

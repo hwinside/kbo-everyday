@@ -37,6 +37,8 @@ function findPlayerByNumericId(numericId: string): { name: string } | undefined 
 // ===== Types =====
 
 export interface GameDetailResponse {
+  srId?: string;
+  gameLabel?: string;
   gameId: string;
   status: "scheduled" | "live" | "final" | "cancelled";
   /**
@@ -916,6 +918,8 @@ export async function getGameDetailRouteResult(params: {
 
     const response: GameDetailResponse = {
       gameId,
+      srId: series,
+      gameLabel: kboListGame?.gameLabel || listGame?.gameLabel,
       status,
       cancelReason,
       meta,

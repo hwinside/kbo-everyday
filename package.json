@@ -578,7 +578,8 @@
     "qa:venue-story-auto-flight": "tsx scripts/qa/venue-story-auto-flight-smoke.ts",
     "qa:la-ack-recovery": "tsx scripts/qa/la-ack-recovery-smoke.ts",
     "qa:la-device-recovery": "tsx scripts/qa/la-device-recovery-smoke.ts && tsx scripts/qa/la-device-recovery-route-smoke.ts",
-    "qa:la-recovery-card-policy": "bash scripts/qa/la-recovery-card-policy-smoke.sh"
+    "qa:la-recovery-card-policy": "bash scripts/qa/la-recovery-card-policy-smoke.sh",
+    "qa:postseason-labels": "node --import tsx --test tests/postseason-labels.test.ts"
   },
   "dependencies": {
     "@capacitor-firebase/messaging": "^8.3.0",

@@ -1,5 +1,7 @@
 "use client";
 
+import { postseasonGameLabel } from "@/lib/crawler/game-series";
+
 import Image from "next/image";
 import Link from "next/link";
 import { getTeamById } from "@/lib/constants/teams";
@@ -25,6 +27,8 @@ interface CompactGameCardProps {
    */
   featured?: boolean;
   game: {
+    srId?: string;
+    gameLabel?: string;
     id: string;
     awayTeamId: number;
     homeTeamId: number;
@@ -221,6 +225,7 @@ export default function CompactGameCard({ game, isPreseason, myTeamId, weather, 
           >
             {isLive ? `LIVE ${game.inning}` : isCancelled ? cancelReasonBadge(game.cancelReason) : isFinal ? "종료" : dateStr ? `${formatBadgeDate(dateStr)} ${game.time}` : game.time}
           </span>
+          {postseasonGameLabel(game.srId, game.gameLabel) && <span className="text-[10px] font-bold text-text-primary">{postseasonGameLabel(game.srId, game.gameLabel)}</span>}
           {isPreseason && (
             <span className="rounded bg-yellow-500/15 px-1 text-[9px] font-medium leading-[14px] text-yellow-500">시범</span>
           )}
