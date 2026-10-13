@@ -52,11 +52,11 @@ export default function PostseasonLadder() {
     return () => { disposed = true; clearTimeout(timer); controller?.abort(); document.removeEventListener("visibilitychange", visibility); };
   }, [enabled]);
   if (!enabled) return null;
-  if (loading) return <div className="mx-4 mb-3 rounded-2xl bg-bg-secondary p-4 text-sm text-text-tertiary" role="status">포스트시즌 일정 확인 중…</div>;
-  if (failed) return <div className="mx-4 mb-3 rounded-2xl bg-bg-secondary p-4 text-sm text-text-tertiary" role="status">포스트시즌 일정을 불러오지 못했어요. 잠시 후 다시 확인할게요.</div>;
+  if (loading) return <div className="mb-3 rounded-2xl bg-bg-secondary p-4 text-sm text-text-tertiary" role="status">포스트시즌 일정 확인 중…</div>;
+  if (failed) return <div className="mb-3 rounded-2xl bg-bg-secondary p-4 text-sm text-text-tertiary" role="status">포스트시즌 일정을 불러오지 못했어요. 잠시 후 다시 확인할게요.</div>;
   if (!data) return null;
   const round = data.rounds.find(r=>r.id === (selected ?? data.currentStage)) ?? data.rounds[0];
-  return <section className="mx-4 mb-3 rounded-2xl border border-black/5 bg-bg-secondary p-4 dark:border-white/10" aria-label={`${data.season} 포스트시즌 대진`}>
+  return <section className="mb-3 rounded-2xl border border-black/5 bg-bg-secondary p-4 dark:border-white/10" aria-label={`${data.season} 포스트시즌 대진`}>
     <div className="flex items-center justify-between gap-2">
       <h2 className="text-base font-bold text-text-primary">{data.season} 포스트시즌</h2>
       <span className="text-xs text-text-secondary">{states[round.state]}</span>
