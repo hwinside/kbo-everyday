@@ -136,7 +136,7 @@ export default function TodayGamesSection({ todayGames, isPreseason, myTeamId }:
           ) : (
             <>
               <p className="text-[15px] font-medium text-text-primary">오늘은 경기가 없습니다</p>
-              <p className="text-xs text-text-tertiary mt-1">내일 경기를 기대해주세요!</p>
+              <p className="text-xs text-text-tertiary mt-1">다음 경기 일정은 경기 탭에서 확인해주세요.</p>
             </>
           )}
         </GlassCard>

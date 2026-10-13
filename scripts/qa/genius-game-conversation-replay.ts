@@ -71,6 +71,10 @@ async function main() {
         getCache: async () => null, setCache: async () => {}, log: async (entry) => { pipelineLog.push(entry); },
         reserveDaily: async () => ({ allowed: true, remaining: 99 }),
         now: () => now, loadPreviousTurn: async () => context,
+        // The lazy postseason port must use the same dated overlay, never live
+        // facts from replay execution time. Base safely ignores this new port.
+        loadPostseason: async (season) => snapshot?.appFacts?.postseason?.season === season
+          ? snapshot.appFacts.postseason : null,
         loadGameConversation: async () => ({ games: snapshot.games, appFacts: snapshot.appFacts, favoriteTeam: snapshot.favoriteTeams?.[row.user_id] ?? null }),
         callGameConversation: async (input) => {
           const result = await production.callGameConversation!(input);
