@@ -1,5 +1,3 @@
-import { rememberGameSeries } from "../../src/lib/crawler/resolve-game-series";
-// Transport-only fault injection: source identity is fixed; postseason source mapping has its own regression.
 import assert from "node:assert/strict";
 import { loadAppLineups, renderAppLineup, type AppLineupSnapshot } from "../../src/lib/baseball-qa/app-lineup";
 import { renderGameConversation, type GameConversationInput } from "../../src/lib/baseball-qa/game-conversation";
@@ -7,7 +5,6 @@ import { fetchNaverLineup } from "../../src/lib/crawler/naver-lineup";
 import { answerQuestion, type QaDeps } from "../../src/lib/baseball-qa/pipeline";
 
 export async function checkAppLineup() {
-  rememberGameSeries("20261005HHSS0", "0");
   const now = Date.parse("2026-10-05T08:00:00Z");
   const game = { gameId: "20261005HHSS0", awayName: "한화", homeName: "삼성", stadium: "대구", time: "18:30", status: "scheduled" };
   const side = (prefix: string) => ({ starter: `${prefix}선발`, batters: Array.from({ length: 9 }, (_, i) =>

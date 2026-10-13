@@ -148,12 +148,12 @@ export function parseNaverPreviewLineup(json: unknown): NaverLineupSnapshot | nu
  */
 export async function fetchNaverLineup(
   kboGameId: string,
-  opts?: { signal?: AbortSignal; timeoutMs?: number; requireGameIdentity?: boolean },
+  opts?: { signal?: AbortSignal; timeoutMs?: number; srId?: string; requireGameIdentity?: boolean },
 ): Promise<NaverLineupSnapshot | null> {
   try {
     const signal =
       opts?.signal ?? (opts?.timeoutMs != null ? AbortSignal.timeout(opts.timeoutMs) : undefined);
-    const nId = await resolveNaverGameId(kboGameId, { signal });
+    const nId = await resolveNaverGameId(kboGameId, { signal, srId: opts?.srId });
     const res = await fetch(`${NAVER_API}/${nId}/preview`, {
       headers: { "User-Agent": "Mozilla/5.0 (compatible; KboEveryday/1.0)" },
       next: { revalidate: 60 },
@@ -177,12 +177,12 @@ export async function fetchNaverLineup(
  */
 export async function fetchNaverPreviewStarters(
   kboGameId: string,
-  opts?: { signal?: AbortSignal; timeoutMs?: number },
+  opts?: { signal?: AbortSignal; timeoutMs?: number; srId?: string },
 ): Promise<NaverPreviewStarters | null> {
   try {
     const signal =
       opts?.signal ?? (opts?.timeoutMs != null ? AbortSignal.timeout(opts.timeoutMs) : undefined);
-    const nId = await resolveNaverGameId(kboGameId, { signal });
+    const nId = await resolveNaverGameId(kboGameId, { signal, srId: opts?.srId });
     const res = await fetch(`${NAVER_API}/${nId}/preview`, {
       headers: { "User-Agent": "Mozilla/5.0 (compatible; KboEveryday/1.0)" },
       next: { revalidate: 60 },

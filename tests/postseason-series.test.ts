@@ -5,6 +5,7 @@ import { seriesIdFromNaverId } from "../src/lib/crawler/game-series";
 import { parseGame, fetchGameLinescore, fetchBoxScore } from "../src/lib/crawler/kbo-api";
 import { mapNaverGameToKbo } from "../src/lib/crawler/naver-games";
 import { fetchLineupConfirmed } from "../src/lib/crawler/lineup-confirmed";
+import { getGameDetailRouteResult } from "../src/lib/services/game-detail";
 import { fetchNaverLiveEvidence } from "../src/lib/notifications/kbo-live-games";
 
 const cases = [
@@ -71,4 +72,35 @@ test("unknown identity fails closed and remains retryable; caller abort is respe
   } finally { globalThis.fetch = original; }
   // A previous miss is not negative-cached when official identity becomes available.
   assert.equal(await resolveNaverGameId("20271014OBLG0", { srId: "4" }), "44441014OBLG02027");
+});
+
+for (const [gameId, srId] of cases) {
+  test(`${gameId}: user-facing game detail sends exact series to all three APIs`, async () => {
+    const original = globalThis.fetch;
+    const details: URLSearchParams[] = [];
+    globalThis.fetch = async (input, init) => {
+      const url = String(input);
+      if (url.includes("GetKboGameList")) return Response.json({ game: [{
+        G_ID: gameId, G_DT: gameId.slice(0,8), SR_ID: srId,
+        AWAY_ID: gameId.slice(8,10), HOME_ID: gameId.slice(10,12), AWAY_NM: "원정", HOME_NM: "홈",
+        GAME_STATE_SC: "1", CANCEL_SC_ID: "0",
+      }] });
+      if (/GetScoreBoard|GetBoxScore|GetLineUpAnalysis/.test(url)) details.push(new URLSearchParams(String(init?.body)));
+      return Response.json([]);
+    };
+    try {
+      await getGameDetailRouteResult({ gameId });
+      assert.equal(details.length, 3, "scoreboard + box + lineup all requested");
+      for (const request of details) assert.equal(request.get("srId"), srId);
+    } finally { globalThis.fetch = original; }
+  });
+}
+test("cold regular-season ID resolves without a schedule request", async () => {
+  const original = globalThis.fetch;
+  let calls = 0;
+  globalThis.fetch = async () => { calls++; throw new Error("schedule unavailable"); };
+  try {
+    assert.equal(await resolveNaverGameId("20260805LGOB0"), "20260805LGOB02026");
+    assert.equal(calls, 0);
+  } finally { globalThis.fetch = original; }
 });

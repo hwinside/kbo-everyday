@@ -784,7 +784,7 @@ export const BOXSCORE_NAVER_TIMEOUT_MS = 2500;
 export async function fetchBoxScore(
   gameId: string,
   seasonId?: string,
-  opts?: { kboTimeoutMs?: number; naverTimeoutMs?: number },
+  opts?: { kboTimeoutMs?: number; naverTimeoutMs?: number; srId?: string },
 ): Promise<BoxScoreResult | null> {
   const kboBudget = opts?.kboTimeoutMs ?? BOXSCORE_KBO_TIMEOUT_MS;
   const naverReserve = opts?.naverTimeoutMs ?? BOXSCORE_NAVER_TIMEOUT_MS;
@@ -799,7 +799,7 @@ export async function fetchBoxScore(
   try {
     const sid = seasonId || gameId.slice(0, 4);
     const signal = AbortSignal.timeout(kboBudget);
-    const srId = await resolveGameSeries(gameId, { signal });
+    const srId = await resolveGameSeries(gameId, { signal, srId: opts?.srId });
     const body = `leId=1&srId=${srId}&seasonId=${sid}&gameId=${gameId}`;
     const res = await fetch(`${KBO_SCHEDULE_BASE}/GetBoxScore`, {
       method: "POST",
@@ -853,11 +853,11 @@ export async function fetchBoxScore(
 }
 
 /** 이닝별 스코어 조회 (특정 경기). 종료 직후 빈 이닝표면 null을 반환해 settle 재시도를 유도한다. */
-export async function fetchGameLinescore(gameId: string, seasonId?: string): Promise<GameLinescore | null> {
+export async function fetchGameLinescore(gameId: string, seasonId?: string, seriesId?: string): Promise<GameLinescore | null> {
   try {
     const sid = seasonId || gameId.slice(0, 4);
     const signal = AbortSignal.timeout(10000);
-    const srId = await resolveGameSeries(gameId, { signal });
+    const srId = await resolveGameSeries(gameId, { signal, srId: seriesId });
     const body = `leId=1&srId=${srId}&seasonId=${sid}&gameId=${gameId}`;
     const res = await fetch(`${KBO_SCHEDULE_BASE}/GetScoreBoard`, {
       method: "POST",
