@@ -30,6 +30,7 @@ export interface GameConversationInput {
   teamNames: { question: string[]; context_question: string[]; profile: string[] };
 }
 export interface ConversationEntityResolver {
+  onPostseason?: () => void;
   isBare: (text: string) => boolean;
   onLineupGames?: (games: ConversationGame[], date: string) => void;
 }

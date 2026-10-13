@@ -1124,6 +1124,14 @@
       "tier": "ci"
     },
     {
+      "name": "qa:postseason-finalize",
+      "tier": "ci"
+    },
+    {
+      "name": "qa:season-predictions-close:pglite",
+      "tier": "ci"
+    },
+    {
       "name": "qa:postseason-ladder",
       "tier": "ci"
     }

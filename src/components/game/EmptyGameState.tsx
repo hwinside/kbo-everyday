@@ -1,5 +1,6 @@
 "use client";
 
+import { REGULAR_SEASON_WINDOWS } from "@/lib/constants/season";
 import { useState, useEffect } from "react";
 import { motion } from "framer-motion";
 import { Calendar, MapPin, Clock, Trophy } from "lucide-react";
@@ -47,7 +48,7 @@ export default function EmptyGameState({ selectedDate }: { selectedDate: string 
     >
       {/* 이 날짜는 경기 없음 안내 */}
       <div className="text-center pt-6 pb-2">
-        <p className="text-text-tertiary text-sm">이 날은 경기가 없어요</p>
+        <p className="text-text-tertiary text-sm">{(() => { const date = selectedDate.replaceAll("-", ""); const w = REGULAR_SEASON_WINDOWS[date.slice(0, 4)]; return w?.finalized && date > w.end ? "정규시즌이 종료됐어요. 이 날짜에 등록된 경기는 없으며, 이후 일정은 대진 확정·공식 발표에 따라 추가될 수 있어요." : "이 날은 경기가 없어요"; })()}</p>
       </div>
 
       {/* D-day 카운트다운 카드 */}
