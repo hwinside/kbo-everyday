@@ -44,6 +44,7 @@ interface WidgetData {
 
 /** 안드 위젯 06:00 롤오버 타깃(다음 예정 경기, 라이트). */
 export interface WidgetNextGame {
+  gameId: string;
   away: string;
   home: string;
   stadium: string;

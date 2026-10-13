@@ -519,6 +519,7 @@ export default function HomeClientShell({ initialGames, initialLiveGames, initia
     const androidNext =
       rolloverNextGame
         ? {
+            gameId: rolloverNextGame.id,
             away: ID_TO_KBO_CODE[rolloverNextGame.awayTeamId] ?? "",
             home: ID_TO_KBO_CODE[rolloverNextGame.homeTeamId] ?? "",
             stadium: rolloverNextGame.stadium ?? "",
