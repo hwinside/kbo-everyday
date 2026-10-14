@@ -93,9 +93,10 @@ export function mergeKboEnrichment(naverBase: KboGame[], kboGames: KboGame[]): K
  * 총 소요 ≈ max(Naver ~30ms, KBO enrich ≤1.5s). KBO 열화여도 홈은 ≤1.5s 안에 수렴.
  */
 export async function fetchGamesUserFacing(date: string): Promise<KboGame[]> {
+  const deadlineAtMs = Date.now() + KBO_ENRICH_TIMEOUT_MS;
   const games = (await fetchGamesUserFacingWithMeta(date)).games;
   const { refreshPostseasonSchedule } = await import("@/lib/postseason/schedule");
-  return refreshPostseasonSchedule(games, date);
+  return refreshPostseasonSchedule(games, date, date, deadlineAtMs);
 }
 
 /**

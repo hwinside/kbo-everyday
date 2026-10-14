@@ -276,7 +276,7 @@ export async function fetchKboGamesOnly(
   return data.game.map(parseGame);
 }
 
-export async function fetchGames(
+async function fetchGamesUnfiltered(
   date: string,
   srId = "0,1,3,4,5,7,9",
   opts?: { timeoutMs?: number; deadlineAtMs?: number },
@@ -363,6 +363,13 @@ export async function fetchGames(
     }
   }
   return games;
+}
+
+export async function fetchGames(...args: Parameters<typeof fetchGamesUnfiltered>): Promise<KboGame[]> {
+  const deadline = args[2]?.deadlineAtMs ?? Date.now() + (args[2]?.timeoutMs ?? 10_000);
+  const games = await fetchGamesUnfiltered(...args);
+  const { filterNeededPostseasonGames } = await import("@/lib/postseason/schedule");
+  return filterNeededPostseasonGames(games, args[0], g => g.gameId, deadline);
 }
 
 /** 이전/다음 경기일 조회 */

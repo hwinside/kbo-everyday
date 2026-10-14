@@ -1021,11 +1021,23 @@ async function saveCache(gameId: string, summary: Record<string, unknown>, srId:
   } catch { /* ignore */ }
 }
 
+async function postseasonPreviewGuard(gameId: string): Promise<NextResponse | null> {
+  try {
+    const { filterNeededPostseasonGames } = await import("@/lib/postseason/schedule");
+    const eligible = await filterNeededPostseasonGames([gameId], gameId.slice(0, 8), id => id);
+    return eligible.length ? null : NextResponse.json({ preview: null, source: "not_needed" });
+  } catch {
+    return NextResponse.json({ preview: null, source: "schedule_unavailable" }, { status: 503 });
+  }
+}
+
 export async function GET(req: NextRequest) {
   const gameId = req.nextUrl.searchParams.get("gameId");
   if (!gameId) return NextResponse.json({ error: "gameId required" }, { status: 400 });
   if (isAllStarGameId(gameId)) return NextResponse.json({ preview: null, source: "allstar" });
 
+  const guard = await postseasonPreviewGuard(gameId);
+  if (guard) return guard;
   let game: KboGame;
   try {
     game = await resolvePreviewGameContext(gameId);
@@ -1065,6 +1077,8 @@ export async function POST(req: NextRequest) {
     return NextResponse.json({ error: "GEMINI_API_KEY not configured" }, { status: 500 });
   }
 
+  const guard = await postseasonPreviewGuard(body.gameId);
+  if (guard) return guard;
   let game: KboGame;
   try {
     game = await resolvePreviewGameContext(body.gameId);

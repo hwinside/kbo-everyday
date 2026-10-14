@@ -1,3 +1,4 @@
+import { runBeforeDeadline } from "@/lib/async-deadline";
 import type { KboGame } from "@/lib/crawler/kbo-api";
 import { REGULAR_SEASON_WINDOWS } from "@/lib/constants/season";
 import { buildPostseasonLadder, POSTSEASON_STAGES, type LadderSnapshot } from "./ladder";
@@ -67,10 +68,41 @@ export async function loadPostseasonSchedule(): Promise<LadderSnapshot | null> {
   try { return await pending; } finally { pending = null; }
 }
 
-export async function refreshPostseasonSchedule(games: KboGame[], from: string, to = from): Promise<KboGame[]> {
-  const window = REGULAR_SEASON_WINDOWS[from.slice(0,4)];
+export function isCurrentPostseasonDate(date: string): boolean {
   const today = new Date().toLocaleDateString("sv-SE", { timeZone: "Asia/Seoul" }).replaceAll("-", "");
-  if (!window?.finalized || to <= window.end || from.slice(0,4) !== today.slice(0,4) || from > `${today.slice(0,4)}1130`) return games;
-  const snapshot = await loadPostseasonSchedule();
-  return snapshot ? reconcilePostseasonSchedule(games, snapshot, from, to) : games;
+  const window = REGULAR_SEASON_WINDOWS[date.slice(0, 4)];
+  return !!window?.finalized && date > window.end && date.slice(0, 4) === today.slice(0, 4) && date <= `${today.slice(0, 4)}1130`;
+}
+
+export async function refreshPostseasonSchedule(
+  games: KboGame[], from: string, to = from, deadlineAtMs = Date.now() + 1500,
+  load = loadPostseasonSchedule,
+): Promise<KboGame[]> {
+  if (!isCurrentPostseasonDate(to)) return games;
+  const previous = cached?.season === Number(from.slice(0, 4)) ? cached : null;
+  try {
+    const refreshing = load().catch(() => null);
+    const snapshot = previous ?? await runBeforeDeadline(() => refreshing, deadlineAtMs);
+    // A prior successful snapshot is usable immediately. Refresh failure must
+    // never turn a healthy home/games response into an error.
+
+    return snapshot ? reconcilePostseasonSchedule(games, snapshot, from, to) : games;
+  } catch { return previous ? reconcilePostseasonSchedule(games, previous, from, to) : games; }
+}
+
+/** Filter only: notification collectors must retain their own source/status contract. */
+export function excludeNotNeeded<T>(games: T[], snapshot: LadderSnapshot, id: (game: T) => string): T[] {
+  const excluded = new Set(snapshot.rounds.flatMap(r => r.games.filter(g => g.notNeeded).map(g => g.gameId)));
+  return games.filter(g => !excluded.has(id(g)));
+}
+
+/** Operational callers fail closed on unknown schedule, rather than send an obsolete event. */
+export async function filterNeededPostseasonGames<T>(
+  games: T[], date: string, id: (game: T) => string, deadlineAtMs = Date.now() + 1500,
+  load = loadPostseasonSchedule,
+): Promise<T[]> {
+  if (!games.length || !isCurrentPostseasonDate(date)) return games;
+  const snapshot = await runBeforeDeadline(load, deadlineAtMs);
+  if (!snapshot) throw new Error("Postseason eligibility unavailable");
+  return excludeNotNeeded(games, snapshot, id);
 }
