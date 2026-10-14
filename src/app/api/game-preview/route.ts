@@ -1,4 +1,6 @@
-import { guardPreviewContext, previewSeriesInstructions, previewVersion, usesRegularPreviewContext } from "@/lib/ai/preview-series-policy";
+import { loadPostseasonSeeds } from "@/lib/postseason/seeds";
+import { isPostseason } from "@/lib/crawler/game-series";
+import { guardPreviewContext, previewPostseasonFacts, previewSeriesInstructions, previewVersion, usesRegularPreviewContext } from "@/lib/ai/preview-series-policy";
 import { resolveGameSeries } from "@/lib/crawler/resolve-game-series";
 import { NextRequest, NextResponse } from "next/server";
 import { supabaseAdmin as supabase } from "@/lib/supabase/admin";
@@ -700,7 +702,9 @@ function formatDiffSignal(diff: LineupDiffSignal, teamShort: string): string {
   return `${teamShort}: ${parts.join(" / ")}\n`;
 }
 
-async function buildPreviewPrompt(req: PreviewRequest, srId: unknown): Promise<string> {
+async function buildPreviewPrompt(req: PreviewRequest, game: KboGame): Promise<string> {
+  const srId = game.srId;
+  const seeds = isPostseason(srId) ? await loadPostseasonSeeds(Number(req.gameId.slice(0, 4))) : [];
   const awayShort = getTeamShortName(req.awayTeamId);
   const homeShort = getTeamShortName(req.homeTeamId);
   const awayName = getTeamName(req.awayTeamId);
@@ -841,6 +845,7 @@ ${awayPitchers.join("\n")}
 ${homePitchers.join("\n")}
 ${standingsSection}${seriesSection}${recentRecordSection}${h2hSection}${recentFormSection}
 ${previewSeriesInstructions(srId)}
+${previewPostseasonFacts(game, seeds)}
 
 ## 작성 규칙
 0. 존댓말(~습니다/~합니다) 절대 금지. 기사체 반말(~했다/~이다/~있다)로만 작성하세요.
@@ -1090,7 +1095,7 @@ export async function POST(req: NextRequest) {
   }
 
   try {
-    const prompt = await buildPreviewPrompt(body, game.srId);
+    const prompt = await buildPreviewPrompt(body, game);
 
     const geminiRes = await fetch(GEMINI_URL, {
       method: "POST",
