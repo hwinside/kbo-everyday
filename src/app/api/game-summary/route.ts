@@ -1,3 +1,5 @@
+import { summaryCompetitionPolicy, invalidPostseasonNarrative } from "@/lib/game-summary/competition-context";
+import { resolveGameSeries } from "@/lib/crawler/resolve-game-series";
 import { NextRequest, NextResponse, after } from "next/server";
 import { supabaseAdmin as supabase } from "@/lib/supabase/admin";
 import { TEAMS, isAllStarGameId } from "@/lib/constants/teams";
@@ -30,7 +32,7 @@ import {
 } from "@/lib/game-summary/failure-observability";
 const GEMINI_API_KEY = process.env.GEMINI_API_KEY;
 const GEMINI_URL = `https://generativelanguage.googleapis.com/v1beta/models/gemini-2.5-flash:generateContent?key=${GEMINI_API_KEY}`;
-const PROMPT_VERSION = 13; // v13: 순위 환각 방지 가드(공식 순위표 기준 규칙 + 조회 실패 fallback) — 기존 캐시 재생성
+const PROMPT_VERSION = 14; // 포스트시즌 문맥 분리 — 이전 저장 요약 재생성
 
 // (2026-08-29 LG:롯데 콜드게임 인시던트, 삼순 A안) 생성 단계 실패의 durable 관측.
 // 기존엔 console.error 만 남아 Vercel 로그 보존창을 놔치면 실패 지점을 소급 판정할 수
@@ -595,6 +597,14 @@ export async function POST(req: NextRequest) {
       { status: canonicalSource.httpStatus },
     );
   }
+  // Identity must be authoritative; never fall back to regular-season context.
+  let srId;
+  try {
+    srId = await resolveGameSeries(requestBody.gameId, { srId: canonicalSource.game?.srId });
+  } catch {
+    return NextResponse.json({ error: "series-unavailable" }, { status: 503 });
+  }
+  const competition = summaryCompetitionPolicy(srId);
   const body = canonicalSource.input;
   const generationFingerprint = canonicalSource.fingerprint;
 
@@ -639,15 +649,15 @@ export async function POST(req: NextRequest) {
   // 맥락 데이터 병렬 조회 (실패해도 진행)
   const meta = parseGameMeta(body.gameId);
   const [seriesCtx, standingsCtx] = await Promise.all([
-    meta ? fetchSeriesContext(body.gameId, meta.awayTeamId, meta.homeTeamId).catch(() => null) : Promise.resolve(null),
-    meta ? fetchStandingsContext(meta.awayTeamId, meta.homeTeamId).catch(() => null) : Promise.resolve(null),
+    meta && competition.regular ? fetchSeriesContext(body.gameId, meta.awayTeamId, meta.homeTeamId).catch(() => null) : Promise.resolve(null),
+    meta && competition.regular ? fetchStandingsContext(meta.awayTeamId, meta.homeTeamId).catch(() => null) : Promise.resolve(null),
   ]);
 
   // Gemini 호출 + 승패 검증 (실패 시 1회 재시도)
   const sanitized = sanitizePlayerNames(body);
   const seriesText = seriesCtx?.text ?? null;
   const seriesStatus = seriesCtx?.status ?? null;
-  const prompt = buildPrompt(sanitized, seriesText, standingsCtx);
+  const prompt = buildPrompt(sanitized, seriesText, standingsCtx) + competition.instructions;
   const MAX_ATTEMPTS = 2;
 
   for (let attempt = 1; attempt <= MAX_ATTEMPTS; attempt++) {
@@ -716,6 +726,17 @@ export async function POST(req: NextRequest) {
 
       // 정규화
       normalizeSummary(summary);
+
+      if (!competition.regular) {
+        // Structured context is not generated from regular standings or a regular series.
+        summary.standingsImpact = null;
+        summary.seriesContext = competition.label;
+        if (invalidPostseasonNarrative(summary)) {
+          if (attempt < MAX_ATTEMPTS) continue;
+          reportGenerationFailure(body.gameId, "gemini-parse", "non-regular competition context violation");
+          return NextResponse.json({ error: "competition-context-mismatch" }, { status: 502 });
+        }
+      }
 
       // 스코어 검증
       const headlineStr = (summary.headline || "").toLowerCase();
