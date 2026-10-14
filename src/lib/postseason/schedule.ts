@@ -5,6 +5,8 @@ import { buildPostseasonLadder, POSTSEASON_STAGES, type LadderSnapshot } from ".
 
 let cached: LadderSnapshot | null = null;
 let pending: Promise<LadderSnapshot | null> | null = null;
+const kboDates = new Map<string, { fetchedAt: number; games: KboGame[] }>();
+export const KBO_SUPPLEMENT_TTL_MS = 5 * 60_000;
 const isPS = (g: KboGame) => POSTSEASON_STAGES.some(id => id === g.srId);
 
 /** Actual upstream rows only: never invent dates, game IDs or opponents. */
@@ -27,6 +29,25 @@ export function reconcilePostseasonSchedule(games: KboGame[], snapshot: LadderSn
   return [...rows.values()].sort((a,b) => a.gameId.localeCompare(b.gameId));
 }
 
+export function postseasonSupplementDates(today: string): string[] {
+  const start = Date.parse(`${today.slice(0,4)}-${today.slice(4,6)}-${today.slice(6,8)}T00:00:00Z`);
+  return Array.from({ length: 15 }, (_, i) => new Date(start + i * 86400000).toISOString().slice(0,10).replaceAll("-", ""))
+    .filter(date => date <= `${today.slice(0,4)}1130`);
+}
+
+/** General collectors preserve their source rows when eligibility is unavailable. */
+export async function filterPostseasonGamesBestEffort(
+  games: KboGame[], date: string, deadlineAtMs: number, load = loadPostseasonSchedule,
+): Promise<KboGame[]> {
+  if (!games.length || !isCurrentPostseasonDate(date)) return games;
+  const previous = cached?.season === Number(date.slice(0,4)) ? cached : null;
+  try {
+    const refreshing = load().catch(() => null);
+    const snapshot = previous ?? await runBeforeDeadline(() => refreshing, deadlineAtMs);
+    return snapshot ? excludeNotNeeded(games, snapshot, g => g.gameId) : games;
+  } catch { return previous ? excludeNotNeeded(games, previous, g => g.gameId) : games; }
+}
+
 export async function loadPostseasonSchedule(): Promise<LadderSnapshot | null> {
   const today = new Date().toLocaleDateString("sv-SE", { timeZone: "Asia/Seoul" }).replaceAll("-", "");
   const season = Number(today.slice(0,4));
@@ -40,16 +61,11 @@ export async function loadPostseasonSchedule(): Promise<LadderSnapshot | null> {
       fetchNaverGames(window.end, undefined, { toDate: `${season}1130`, timeoutMs: 3000 }).catch(() => [] as KboGame[]),
       loadPostseasonSeeds(season),
     ]);
-    // Naver can lag behind the KBO registration of the next round. Probe the
-    // upcoming fortnight even when Naver has no dates, plus all known PS dates.
-    const dates = new Set(naver.filter(isPS).map(g => g.date));
-    const start = new Date(`${window.end.slice(0,4)}-${window.end.slice(4,6)}-${window.end.slice(6,8)}T00:00:00Z`);
-    const horizon = new Date(`${today.slice(0,4)}-${today.slice(4,6)}-${today.slice(6,8)}T00:00:00Z`).getTime()+14*86400000;
-    for (let i=1; start.getTime()+i*86400000 <= horizon; i++) {
-      const date = new Date(start.getTime()+i*86400000).toISOString().slice(0,10).replaceAll("-", "");
-      if (date <= `${season}1130`) dates.add(date);
-    }
-    const queue = [...dates].sort();
+    // Past results come from Naver; KBO supplements only the next fortnight.
+    // Cache each successful date (including empty dates) independently of the
+    // 30-second ladder refresh, so live result refreshes do not fan out again.
+    const queue = postseasonSupplementDates(today);
+    for (const date of kboDates.keys()) if (date < today) kboDates.delete(date);
     const kbo: KboGame[] = [];
     let successfulDates = 0;
     let cursor = 0;
@@ -57,7 +73,15 @@ export async function loadPostseasonSchedule(): Promise<LadderSnapshot | null> {
     await Promise.all(Array.from({ length: Math.min(8, queue.length) }, async () => {
       while (cursor < queue.length && !signal.aborted) {
         const date = queue[cursor++];
-        try { kbo.push(...await fetchKboGamesOnly(date, "3,4,5,7", { signal })); successfulDates++; }
+        const previous = kboDates.get(date);
+        if (previous && Date.now() - previous.fetchedAt < KBO_SUPPLEMENT_TTL_MS) {
+          kbo.push(...previous.games); successfulDates++; continue;
+        }
+        try {
+          const games = await fetchKboGamesOnly(date, "3,4,5,7", { signal });
+          kboDates.set(date, { games, fetchedAt: Date.now() });
+          kbo.push(...games); successfulDates++;
+        }
         catch { /* Keep Naver evidence on source failure; never fabricate a fixture. */ }
       }
     }));

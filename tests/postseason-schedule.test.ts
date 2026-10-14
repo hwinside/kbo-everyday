@@ -1,7 +1,7 @@
 import assert from "node:assert/strict";
 import { test } from "node:test";
 import { buildPostseasonLadder } from "../src/lib/postseason/ladder";
-import { mergePostseasonSchedule, reconcilePostseasonSchedule, refreshPostseasonSchedule, filterNeededPostseasonGames, excludeNotNeeded } from "../src/lib/postseason/schedule";
+import { filterPostseasonGamesBestEffort, postseasonSupplementDates, mergePostseasonSchedule, reconcilePostseasonSchedule, refreshPostseasonSchedule, filterNeededPostseasonGames, excludeNotNeeded } from "../src/lib/postseason/schedule";
 import type { KboGame } from "../src/lib/crawler/kbo-api";
 const seeds = [{rank:4,teamId:1,name:"LG"},{rank:5,teamId:2,name:"두산"}];
 const wc = {gameId:"20261014OBLG0",date:"20261014",srId:"4",status:"final",awayTeamId:2,homeTeamId:1,awayName:"두산",homeName:"LG",awayScore:1,homeScore:4} as KboGame;
@@ -51,3 +51,20 @@ test("event source failure fails closed, never authorizes stale WC2", async () =
  await assert.rejects(filterNeededPostseasonGames([second],"20261015",g=>g.gameId,Date.now()+100,async()=>{throw new Error("offline");}),/offline/);
  await assert.rejects(filterNeededPostseasonGames([second],"20261015",g=>g.gameId,Date.now()+20,()=>new Promise(()=>{})),/deadline/);
 });
+
+ test("general collectors preserve rows on failed or timed-out ladder without injecting fixtures", async () => {
+ const games=[second];
+ assert.equal(await filterPostseasonGamesBestEffort(games,"20261015",Date.now()+100,async()=>{throw new Error("offline");}),games);
+ assert.equal(await filterPostseasonGamesBestEffort(games,"20261015",Date.now()+20,()=>new Promise(()=>{})),games);
+ const snap=buildPostseasonLadder(2026,[wc,second,semi],seeds,1);
+ assert.deepEqual(await filterPostseasonGamesBestEffort(games,"20261015",Date.now()+100,async()=>snap),[]);
+ });
+ test("KBO supplement remains bounded late in postseason and never queries past dates", () => {
+ for (const today of ["20261014","20261110"]) {
+ const dates=postseasonSupplementDates(today);
+ assert.equal(dates.length,15);
+ assert.equal(dates[0],today);
+ assert.ok(dates.every(date=>date>=today));
+ }
+ assert.deepEqual(postseasonSupplementDates("20261130"),["20261130"]);
+ });

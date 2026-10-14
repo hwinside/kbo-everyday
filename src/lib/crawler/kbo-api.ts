@@ -368,8 +368,8 @@ async function fetchGamesUnfiltered(
 export async function fetchGames(...args: Parameters<typeof fetchGamesUnfiltered>): Promise<KboGame[]> {
   const deadline = args[2]?.deadlineAtMs ?? Date.now() + (args[2]?.timeoutMs ?? 10_000);
   const games = await fetchGamesUnfiltered(...args);
-  const { filterNeededPostseasonGames } = await import("@/lib/postseason/schedule");
-  return filterNeededPostseasonGames(games, args[0], g => g.gameId, deadline);
+  const { filterPostseasonGamesBestEffort } = await import("@/lib/postseason/schedule");
+  return filterPostseasonGamesBestEffort(games, args[0], deadline);
 }
 
 /** 이전/다음 경기일 조회 */
