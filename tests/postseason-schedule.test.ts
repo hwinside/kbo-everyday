@@ -68,3 +68,19 @@ test("event source failure fails closed, never authorizes stale WC2", async () =
  }
  assert.deepEqual(postseasonSupplementDates("20261130"),["20261130"]);
  });
+
+for (const status of ["live", "final"] as const) {
+ test(`fresh Naver ${status} survives cached KBO scheduled row`, () => {
+  const latest = { ...wc, status };
+  const stale = { ...wc, status: "scheduled", awayScore: null, homeScore: null, gameLabel: "WC1" } as KboGame;
+  const rows = mergePostseasonSchedule([latest, second], [stale, semi]);
+  assert.deepEqual(rows.find(g => g.gameId === wc.gameId), { ...latest, gameLabel: "WC1" });
+  assert.deepEqual(rows.find(g => g.gameId === semi.gameId), semi);
+  const snap = buildPostseasonLadder(2026, rows, seeds, 1);
+  assert.equal(reconcilePostseasonSchedule([second], snap, "20261015").length, status === "final" ? 0 : 1);
+ });
+}
+test("missing KBO label preserves Naver label", () => {
+ const latest = { ...wc, gameLabel: "WC1" };
+ assert.deepEqual(mergePostseasonSchedule([latest], [wc]), [latest]);
+});

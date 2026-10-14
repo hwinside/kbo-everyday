@@ -12,7 +12,11 @@ const isPS = (g: KboGame) => POSTSEASON_STAGES.some(id => id === g.srId);
 /** Actual upstream rows only: never invent dates, game IDs or opponents. */
 export function mergePostseasonSchedule(naver: KboGame[], kbo: KboGame[]): KboGame[] {
   const rows = new Map(naver.filter(isPS).map(g => [g.gameId, g]));
-  for (const g of kbo.filter(isPS)) rows.set(g.gameId, g);
+  for (const g of kbo.filter(isPS)) {
+    const latest = rows.get(g.gameId);
+    // KBO supplements can be five minutes old: preserve Naver scores/status.
+    rows.set(g.gameId, latest ? { ...latest, gameLabel: g.gameLabel || latest.gameLabel } : g);
+  }
   return [...rows.values()];
 }
 
