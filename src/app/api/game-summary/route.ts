@@ -1,3 +1,7 @@
+import { loadSummaryPostseasonFacts } from "@/lib/game-summary/postseason-facts";
+import { isPostseason } from "@/lib/crawler/game-series";
+import { summaryCompetitionPolicy, summaryCompetitionInstructions, invalidPostseasonNarrative, sanitizePostseasonNarrative } from "@/lib/game-summary/competition-context";
+import { resolveGameSeries } from "@/lib/crawler/resolve-game-series";
 import { NextRequest, NextResponse, after } from "next/server";
 import { supabaseAdmin as supabase } from "@/lib/supabase/admin";
 import { TEAMS, isAllStarGameId } from "@/lib/constants/teams";
@@ -30,7 +34,7 @@ import {
 } from "@/lib/game-summary/failure-observability";
 const GEMINI_API_KEY = process.env.GEMINI_API_KEY;
 const GEMINI_URL = `https://generativelanguage.googleapis.com/v1beta/models/gemini-2.5-flash:generateContent?key=${GEMINI_API_KEY}`;
-const PROMPT_VERSION = 13; // v13: 순위 환각 방지 가드(공식 순위표 기준 규칙 + 조회 실패 fallback) — 기존 캐시 재생성
+const PROMPT_VERSION = 14; // 포스트시즌 문맥 분리 — 이전 저장 요약 재생성
 
 // (2026-08-29 LG:롯데 콜드게임 인시던트, 삼순 A안) 생성 단계 실패의 durable 관측.
 // 기존엔 console.error 만 남아 Vercel 로그 보존창을 놔치면 실패 지점을 소급 판정할 수
@@ -250,7 +254,7 @@ ${homeShort}: ${homeRank}위 (${homeSt.wins}승 ${homeSt.losses}패, 승률 ${ho
 
 // ===== Prompt builder =====
 
-function buildPrompt(data: BoxScoreInput, seriesCtx: string | null, standingsCtx: string | null): string {
+function buildPrompt(data: BoxScoreInput, seriesCtx: string | null, standingsCtx: string | null, regular = true): string {
   const { awayTeam, homeTeam, awayScore, homeScore, linescore, awayBatters, homeBatters, awayPitchers, homePitchers } = data;
 
   // 이닝별 점수 + 득점 흐름 구조화
@@ -340,9 +344,9 @@ function buildPrompt(data: BoxScoreInput, seriesCtx: string | null, standingsCtx
 
   // 맥락 섹션 — seriesCtx 는 snapshot.ts 가 이미 '## 시리즈 스냅샷' 헤딩 포함해서 바로 append
   let contextSection = "";
-  if (seriesCtx) contextSection += `\n${seriesCtx}`;
-  if (standingsCtx) contextSection += `\n## 현재 순위\n${standingsCtx}\n${STANDINGS_ACCURACY_RULES}`;
-  else contextSection += `\n${STANDINGS_UNAVAILABLE_RULES}`;
+  if (regular && seriesCtx) contextSection += `\n${seriesCtx}`;
+  if (regular && standingsCtx) contextSection += `\n## 현재 순위\n${standingsCtx}\n${STANDINGS_ACCURACY_RULES}`;
+  else if (regular) contextSection += `\n${STANDINGS_UNAVAILABLE_RULES}`;
 
   return `당신은 KBO 프로야구를 20년 넘게 현장에서 취재해온 베테란 스포츠 기자입니다.
 마감 시간에 쫓기며 오늘 직접 본 경기의 기사를 쓰고 있습니다.
@@ -376,14 +380,14 @@ function buildPrompt(data: BoxScoreInput, seriesCtx: string | null, standingsCtx
 4. **이닝 해석 규칙 (경기 구조 반드시 준수).** 원정팀=이닝 초 공격, 홈팀=이닝 말 공격. 득점 타임라인이 주어졌으면 그 순서를 절대 바꾸지 마라. 예: "9회초 원정팀 2점" 다음에 "9회말 홈팀 4점"이라면, 홈팀이 나중에 득점한 것이다. 순서를 뒤집어 "홈팀이 먼저 역전하고 원정팀이 다시 재역전" 같은 물리적으로 불가능한 서사를 쓰면 절대 안 된다.
 4. **숫자를 서사로.** "3안타 4타점"을 나열하지 말고, 그 숫자가 경기 흐름에서 왜 중요했는지 해석하라.
 5. **빈 칸보다 침묵.** 해당 없는 필드는 null로 두라. 억지로 채우면 품질이 떨어진다.
-6. **경기 맥락을 활용하라.** 시리즈 상황(스윕, 위닝시리즈), 순위 영향이 있으면 자연스럽게 녹여서 경기의 의미를 부여하라.
+${regular ? `6. **경기 맥락을 활용하라.** 시리즈 상황(스윕, 위닝시리즈), 순위 영향이 있으면 자연스럽게 녹여서 경기의 의미를 부여하라.
    **시리즈 문구 분기 (아래 '## 시리즈 스냅샷' 섹션의 '상태' 값과 '## 시리즈 문구 규칙'을 반드시 준수):**
    - 상태 in_progress: "원점으로 돌렸다 / 추격의 발판 / 시리즈 리드 / 열세 만회 / 스윕 직전" 같은 진행형 표현 허용.
    - 상태 completed: 확정형만. "원점 / 추격 / 리드 굳힘 / 발판" 금지. "이번 시리즈를 N승 N패로 마쳤다 / 스윕으로 마감" 등.
    - 상태 completed_with_cancellation + 동률: 반드시 "우천 취소로 이번 시리즈는 N승 N패 무승부로 마무리됐다" 패턴. "원점으로 돌렸다" 절대 금지.
    - 상태 completed_with_cancellation + 승패 결정: 결과 중심으로 "이번 시리즈를 N승 N패로 마무리했다". "N경기로 축소된 시리즈" 표현은 필요할 때만 보조로.
    - seriesCanceledCount가 0이면 취소 언급 자체 금지.
-   - 시리즈 승수·날짜·스코어는 '## 시리즈 스냅샷'에 있는 값만 사용. 창작 금지.
+   - 시리즈 승수·날짜·스코어는 '## 시리즈 스냅샷'에 있는 값만 사용. 창작 금지.` : "6. 경기 의미는 아래 포스트시즌 확정 사실만 사용한다. 정규시즌 순위/3연전 해석을 적용하지 않는다."}
 7. **상투구/클리셰 절대 금지.** 아래 표현은 쓰지 마라. 더 구체적이고 이 경기만의 표현으로 대체:
    - "팽팽한 투수전 양상" → 구체적 상황 ("양 선발이 5회까지 무안타로 맞섰다" 등)
    - "경기의 결정적인 승부처는" → 바로 장면부터 시작 ("5회말 2사 만루, X의 타석에서~")
@@ -437,8 +441,8 @@ ${contextSection}
   },
   "mvpPitcher": null 또는 { "name": "...", "stats": "...", "reason": "..." },
   "insight": "경기 총평. 양 팀 입장에서 이 경기의 의미. 팬이 기억해야 할 포인트. 시리즈/순위 맥락이 있으면 자연스럽게 포함. 3~4문장.",
-  "seriesContext": "시리즈 맥락을 1문장으로 요약. 상태(in_progress/completed/completed_with_cancellation)에 맞는 문구만 사용. 스냅샷의 승수·취소 날짜와 일치해야 함. 시리즈 맥락이 없으면 null. 시리즈 데이터가 1경기 끼리면 null.",
-  "standingsImpact": "현재 순위 맥락에서 이 경기의 의미를 한 줄로 (예: '4위 경쟁이 치열한 상황에서 중요한 1승'). 순위 데이터가 없거나 의미 있는 해석이 어려우면 null. 주의: 순위 변동을 단정짓지 마라 — '올라갔다/떨어졌다' 확정은 금지, '~에 유리해졌다/중요한 경기였다' 수준으로."
+  "seriesContext": "${regular ? "" : "정규시즌 외 경기는 null. 아래 예시는 적용하지 않음. "}시리즈 맥락을 1문장으로 요약. 상태(in_progress/completed/completed_with_cancellation)에 맞는 문구만 사용. 스냅샷의 승수·취소 날짜와 일치해야 함. 시리즈 맥락이 없으면 null. 시리즈 데이터가 1경기 끼리면 null.",
+  "standingsImpact": "${regular ? "" : "정규시즌 외 경기는 반드시 null. 아래 예시는 적용하지 않음. "}현재 순위 맥락에서 이 경기의 의미를 한 줄로 (예: '4위 경쟁이 치열한 상황에서 중요한 1승'). 순위 데이터가 없거나 의미 있는 해석이 어려우면 null. 주의: 순위 변동을 단정짓지 마라 — '올라갔다/떨어졌다' 확정은 금지, '~에 유리해졌다/중요한 경기였다' 수준으로."
 }`;
 }
 
@@ -595,6 +599,14 @@ export async function POST(req: NextRequest) {
       { status: canonicalSource.httpStatus },
     );
   }
+  // Identity must be authoritative; never fall back to regular-season context.
+  let srId;
+  try {
+    srId = await resolveGameSeries(requestBody.gameId, { srId: canonicalSource.game?.srId });
+  } catch {
+    return NextResponse.json({ error: "series-unavailable" }, { status: 503 });
+  }
+  const competition = summaryCompetitionPolicy(srId);
   const body = canonicalSource.input;
   const generationFingerprint = canonicalSource.fingerprint;
 
@@ -639,15 +651,18 @@ export async function POST(req: NextRequest) {
   // 맥락 데이터 병렬 조회 (실패해도 진행)
   const meta = parseGameMeta(body.gameId);
   const [seriesCtx, standingsCtx] = await Promise.all([
-    meta ? fetchSeriesContext(body.gameId, meta.awayTeamId, meta.homeTeamId).catch(() => null) : Promise.resolve(null),
-    meta ? fetchStandingsContext(meta.awayTeamId, meta.homeTeamId).catch(() => null) : Promise.resolve(null),
+    meta && competition.regular ? fetchSeriesContext(body.gameId, meta.awayTeamId, meta.homeTeamId).catch(() => null) : Promise.resolve(null),
+    meta && competition.regular ? fetchStandingsContext(meta.awayTeamId, meta.homeTeamId).catch(() => null) : Promise.resolve(null),
   ]);
+
+  const postseasonFacts = isPostseason(srId) && canonicalSource.game
+    ? await loadSummaryPostseasonFacts(canonicalSource.game).catch(() => null) : null;
 
   // Gemini 호출 + 승패 검증 (실패 시 1회 재시도)
   const sanitized = sanitizePlayerNames(body);
   const seriesText = seriesCtx?.text ?? null;
   const seriesStatus = seriesCtx?.status ?? null;
-  const prompt = buildPrompt(sanitized, seriesText, standingsCtx);
+  const prompt = buildPrompt(sanitized, seriesText, standingsCtx, competition.regular) + summaryCompetitionInstructions(srId, postseasonFacts);
   const MAX_ATTEMPTS = 2;
 
   for (let attempt = 1; attempt <= MAX_ATTEMPTS; attempt++) {
@@ -716,6 +731,17 @@ export async function POST(req: NextRequest) {
 
       // 정규화
       normalizeSummary(summary);
+
+      if (!competition.regular) {
+        // Structured context is not generated from regular standings or a regular series.
+        summary.standingsImpact = null;
+        summary.seriesContext = postseasonFacts ?? competition.label;
+        if (invalidPostseasonNarrative(summary, postseasonFacts)) {
+          if (attempt < MAX_ATTEMPTS) continue;
+          sanitizePostseasonNarrative(summary, postseasonFacts);
+          if (!summary.headline) summary.headline = `${body.awayTeam} ${finalAwayScore} - ${finalHomeScore} ${body.homeTeam}`;
+        }
+      }
 
       // 스코어 검증
       const headlineStr = (summary.headline || "").toLowerCase();
