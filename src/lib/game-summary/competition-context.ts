@@ -9,28 +9,79 @@ export function summaryCompetitionPolicy(srId: string) {
   };
 }
 
-/** Reject leaked regular-season/unsupported qualification claims anywhere in the narrative. */
+const regularClaim = /순위|승차|승률|[1-9]위|위닝\s*시리즈|스윕/;
+const canonicalRounds = (text: string) => text.replace(/준플레이오프/gi, "준PO").replace(/플레이오프/gi, "PO").replace(/코리안\s*시리즈|KS/gi, "한국시리즈");
+
+/** Compare the claim's subject, destination and counts, never whole-sentence wording. */
+function invalidSentence(text: string, facts: string | null): boolean {
+  if (regularClaim.test(text)) return true;
+  const evidence = canonicalRounds(facts ?? "");
+  const sentence = canonicalRounds(text);
+  const teams = [...evidence.matchAll(/([^\s:·]+) (\d+)승/g)].map(m => ({ name: m[1], wins: Number(m[2]) }));
+  const result = evidence.match(/([^\s.,]+) (준PO|PO|한국시리즈) (진출|우승) 확정/);
+  const loser = evidence.match(/([^\s.,]+) 시즌 종료/)?.[1];
+  const draws = Number(evidence.match(/(\d+)무/)?.[1]);
+  // Clauses can contain both a winner's advancement and a loser's elimination.
+  let carriedSubject: string | undefined;
+  for (const clause of sentence.split(/[,;]|(?:하며|했고|하고)\s+/)) {
+    const mentions = [...clause.matchAll(/진출|탈락|우승|시즌\s*종료/g)];
+    for (const mention of mentions) {
+      if (!result) return true;
+      const before = clause.slice(0, mention.index);
+      const eliminated = /탈락|시즌/.test(mention[0]);
+      const expected = eliminated ? loser : result[1];
+      // Opponent objects ("두산을 꺾고", "두산 꺾고") aren't the advancing subject.
+      const subjects = teams.filter(t => before.includes(t.name) && !new RegExp(`${t.name}(?:을|를)?\\s*(?:꺾|제압|물리|상대로|에(?:게)?\\s*승리)`).test(before));
+      const subject = subjects.sort((a, b) => before.lastIndexOf(b.name) - before.lastIndexOf(a.name))[0]?.name ?? carriedSubject;
+      if (subject && subject !== expected) return true;
+      const destination = [...before.matchAll(/준PO|(?<!준)PO|한국시리즈/g)].at(-1)?.[0];
+      if (!eliminated && destination && destination !== result[2]) return true;
+      if (!eliminated && (mention[0] === "우승") !== (result[3] === "우승")) return true;
+    }
+    const named = teams.filter(t => clause.includes(t.name) && !new RegExp(`${t.name}(?:을|를)?\\s*(?:꺾|제압|물리|상대로|에(?:게)?\\s*승리)`).test(clause));
+    carriedSubject = named.sort((a, b) => clause.lastIndexOf(b.name) - clause.lastIndexOf(a.name))[0]?.name ?? carriedSubject;
+    // Counts refer to the series only when explicitly labelled or attached to a team.
+    if (/시리즈|전적|누적/.test(clause) || teams.some(t => new RegExp(`${t.name}.*\\d+승`).test(clause))) {
+      const counts = [...clause.matchAll(/(\d+)\s*([승패무])/g)];
+      if (counts.length && !teams.length) return true;
+      for (const count of counts) {
+        const prefix = clause.slice(0, count.index);
+        const subject = teams.filter(t => prefix.includes(t.name)).sort((a, b) => prefix.lastIndexOf(b.name) - prefix.lastIndexOf(a.name))[0];
+        const expected = count[2] === "무" ? draws : subject
+          ? count[2] === "승" ? subject.wins : teams.find(t => t.name !== subject.name)?.wins
+          : undefined;
+        if (expected === undefined || Number(count[1]) !== expected) return true;
+      }
+    }
+  }
+  return false;
+}
+
+const sentences = (text: string) => text.match(/(?:[^.!?\n]|(?<=\d)\.(?=\d))+[.!?]?\s*/g) ?? [];
+
+/** Structured series/standings fields are assigned from trusted evidence by the route. */
 export function invalidPostseasonNarrative(summary: Record<string, unknown>, facts: string | null = null): boolean {
-  const values: string[] = [];
-  const visit = (v: unknown): void => {
-    if (typeof v === "string") values.push(v);
-    else if (v && typeof v === "object") Object.values(v).forEach(visit);
+  const visit = (value: unknown): boolean => typeof value === "string"
+    ? sentences(value).some(sentence => invalidSentence(sentence, facts))
+    : !!value && typeof value === "object" && Object.values(value).some(visit);
+  return visit({ ...summary, seriesContext: null, standingsImpact: null });
+}
+
+/** On the final attempt preserve game analysis, removing only offending sentences. */
+export function sanitizePostseasonNarrative(summary: Record<string, unknown>, facts: string | null): void {
+  const clean = (value: unknown): unknown => {
+    if (typeof value === "string") return sentences(value).filter(sentence => !invalidSentence(sentence, facts)).join("").trim();
+    if (Array.isArray(value)) return value.map(clean);
+    if (value && typeof value === "object") return Object.fromEntries(Object.entries(value).map(([key, item]) => [key, clean(item)]));
+    return value;
   };
-  visit({ ...summary, seriesContext: null, standingsImpact: null });
-  if (values.some(text => /순위|승차|승률|[1-9]위|위닝\s*시리즈|스윕/.test(text))) return true;
-  // Qualification/series claims are allowed only as a supplied canonical clause,
-  // not merely because they contain an allowed keyword or winning team's name.
-  const normalize = (text: string) => text.replace(/(?:은|는|이|가|을|를)(?=\s)|(?:했습니다|했다|한다|됐다)|[\s.,·]/g, "");
-  const evidence = facts?.split(/[.,]/).map(normalize).filter(Boolean) ?? [];
-  return values.some(text => text.split(/[.,!?\n]/).some(clause => {
-    if (!/진출|탈락|우승|시즌\s*종료|시리즈.{0,30}(?:승|패|무|리드|마쳤|종료)/.test(clause)) return false;
-    const claim = normalize(clause);
-    return !evidence.some(fact => fact === claim);
-  }));
+  for (const key of Object.keys(summary)) {
+    if (key !== "seriesContext" && key !== "standingsImpact") summary[key] = clean(summary[key]);
+  }
 }
 
 export function summaryCompetitionInstructions(srId: string, facts: string | null): string {
   const policy = summaryCompetitionPolicy(srId);
   if (policy.regular) return "";
-  return policy.instructions + (facts ? `\n## 이 경기 종료 시점의 래더 확정 사실\n${facts}\n위 사실은 별도 시리즈 필드에 그대로 표시됩니다. 다른 필드에서 진출·전적을 언급할 경우 위 확정 사실의 해당 문장을 그대로 사용하세요. 새 해석이나 반대 결과를 만들지 마세요.\n` : "\n래더 사실 조회 불가: 누적 전적·진출 결과를 추정하지 마세요.\n");
+  return policy.instructions + (facts ? `\n## 이 경기 종료 시점의 래더 확정 사실\n${facts}\n위 사실은 별도 시리즈 필드에 그대로 표시됩니다. 다른 필드에서 진출·전적을 언급할 경우 위 확정 사실의 팀·라운드·전적을 유지하세요. 준PO/준플레이오프 등 같은 의미의 표현은 허용됩니다. 새 해석이나 반대 결과를 만들지 마세요.\n` : "\n래더 사실 조회 불가: 누적 전적·진출 결과를 추정하지 마세요.\n");
 }

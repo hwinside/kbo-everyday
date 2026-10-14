@@ -1,6 +1,6 @@
 import { loadSummaryPostseasonFacts } from "@/lib/game-summary/postseason-facts";
 import { isPostseason } from "@/lib/crawler/game-series";
-import { summaryCompetitionPolicy, summaryCompetitionInstructions, invalidPostseasonNarrative } from "@/lib/game-summary/competition-context";
+import { summaryCompetitionPolicy, summaryCompetitionInstructions, invalidPostseasonNarrative, sanitizePostseasonNarrative } from "@/lib/game-summary/competition-context";
 import { resolveGameSeries } from "@/lib/crawler/resolve-game-series";
 import { NextRequest, NextResponse, after } from "next/server";
 import { supabaseAdmin as supabase } from "@/lib/supabase/admin";
@@ -738,8 +738,8 @@ export async function POST(req: NextRequest) {
         summary.seriesContext = postseasonFacts ?? competition.label;
         if (invalidPostseasonNarrative(summary, postseasonFacts)) {
           if (attempt < MAX_ATTEMPTS) continue;
-          reportGenerationFailure(body.gameId, "gemini-parse", "non-regular competition context violation");
-          return NextResponse.json({ error: "competition-context-mismatch" }, { status: 502 });
+          sanitizePostseasonNarrative(summary, postseasonFacts);
+          if (!summary.headline) summary.headline = `${body.awayTeam} ${finalAwayScore} - ${finalHomeScore} ${body.homeTeam}`;
         }
       }
 

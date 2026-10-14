@@ -64,3 +64,15 @@ test("regular prompt is unchanged; news outside regular window cannot treat stan
   assert.doesNotMatch(newsStandingsContext("2026-10-14", "STALE_TABLE"), /STALE_TABLE|유일한 근거/);
   assert.match(newsStandingsContext("2026-10-14", "STALE_TABLE"), /고정 시드/);
 });
+
+test("semantic claim guard checks subjects, round aliases and series counts", () => {
+  const facts = summaryPostseasonFacts(wc, [wc], seeds);
+  for (const text of ["LG는 준플레이오프 진출을 확정했다.", "두산 꺾고 준플레이오프 진출 확정", "다음 라운드에 진출하며", "준플레이오프 진출에 크게 기여", "두산은 탈락했다.", "두산의 추격을 뿌리친 LG는 준플레이오프 진출을 확정했다.", "LG는 시리즈 전적 1승 0패를 기록했다."]) {
+    assert.equal(invalidPostseasonNarrative({ insight: text }, facts), false, text);
+  }
+  for (const text of ["두산 준PO 진출", "두산, 준PO 진출 확정", "LG 플레이오프 진출 확정", "LG 한국시리즈 우승", "LG 시즌 종료", "LG 시리즈 전적 2승 0패", "LG 시리즈 전적 1승 1패", "시리즈 1무"]) {
+    assert.equal(invalidPostseasonNarrative({ gameFlow: { late: text } }, facts), true, text);
+  }
+  const undecided = summaryPostseasonFacts({ ...wc, srId: "3", gameLabel: "준PO1" }, [], seeds);
+  assert.equal(invalidPostseasonNarrative({ insight: "LG는 플레이오프 진출을 확정했다." }, undecided), true);
+});

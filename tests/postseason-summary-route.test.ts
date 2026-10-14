@@ -14,7 +14,7 @@ const compiled = ts.transpileModule(source, { compilerOptions: { module: ts.Modu
 const wc = { gameId: "20261014OBLG0", srId: "4", gameLabel: "WC1", status: "final", awayTeamId: 2, homeTeamId: 1, awayName: "두산", homeName: "LG", awayScore: 1, homeScore: 4 } as KboGame;
 const seeds = [{ rank: 4, teamId: 1, name: "LG" }, { rank: 5, teamId: 2, name: "두산" }];
 
-async function callRoute(game: KboGame, games: KboGame[], missing = false, narrative?: string) {
+async function callRoute(game: KboGame, games: KboGame[], missing = false, narrative?: string, fields: Record<string, unknown> = {}) {
   const calls = { standings: 0, series: 0, facts: 0, generated: 0 };
   const prompts: string[] = [];
   const facts = summaryPostseasonFacts(game, games, seeds);
@@ -45,7 +45,7 @@ async function callRoute(game: KboGame, games: KboGame[], missing = false, narra
       calls.generated++;
       prompts.push(JSON.parse(String(init.body)).contents[0].parts[0].text);
       const draw = game.awayScore === game.homeScore;
-      return Response.json({ candidates: [{ content: { parts: [{ text: JSON.stringify({ headline: draw ? "LG와 두산 무승부" : "LG, 두산에 승리", winner: draw ? "무승부" : "LG", insight: narrative ?? "안정적인 투구가 돋보였다.", standingsImpact: "stale", seriesContext: "stale" }) }] } }] });
+      return Response.json({ candidates: [{ content: { parts: [{ text: JSON.stringify({ headline: draw ? "LG와 두산 무승부" : "LG, 두산에 승리", winner: draw ? "무승부" : "LG", insight: narrative ?? "안정적인 투구가 돋보였다.", standingsImpact: "stale", seriesContext: "stale", ...fields }) }] } }] });
     },
   });
   const response = await routeModule.exports.POST({ json: async () => ({ gameId: game.gameId }) });
@@ -90,6 +90,47 @@ test("POST accepts evidenced qualification but rejects contradictory winner", as
   assert.equal(good.status, 200);
   assert.equal(good.calls.generated, 1);
   const bad = await callRoute(wc, [wc], false, "두산 준PO 진출 확정.");
-  assert.equal(bad.status, 502);
+  assert.equal(bad.status, 200);
+  assert.equal(bad.body.summary.insight, "");
+  assert.match(bad.body.summary.seriesContext, /LG 준PO 진출 확정/);
   assert.equal(bad.calls.generated, 2);
+});
+
+for (const narrative of [
+  "두산 꺾고 준플레이오프 진출 확정",
+  "LG는 두산을 꺾고 준플레이오프 진출을 확정했다.",
+  "다음 라운드에 진출하며",
+  "준플레이오프 진출에 크게 기여",
+]) test(`POST real Gemini paraphrase: ${narrative}`, async () => {
+  const result = await callRoute(wc, [wc], false, narrative);
+  assert.equal(result.status, 200);
+  assert.equal(result.calls.generated, 1);
+  assert.equal(result.body.summary.insight, narrative);
+});
+test("POST final attempt removes only offending sentence, preserving nested analysis and facts", async () => {
+  const result = await callRoute(wc, [wc], false, "안정적인 투구가 돋보였다. 두산 준PO 진출 확정. LG 타선이 활약했다.");
+  assert.equal(result.status, 200);
+  assert.equal(result.calls.generated, 2);
+  assert.match(result.body.summary.insight, /안정적인 투구/);
+  assert.match(result.body.summary.insight, /LG 타선/);
+  assert.doesNotMatch(result.body.summary.insight, /두산 준PO/);
+});
+test("POST unconfirmed advancement is removed after retries, recap remains available", async () => {
+  const game = { ...wc, srId: "3", gameLabel: "준PO1" };
+  const result = await callRoute(game, [game], false, "LG는 플레이오프 진출을 확정했다. 투수진이 활약했다.");
+  assert.equal(result.status, 200);
+  assert.equal(result.calls.generated, 2);
+  assert.equal(result.body.summary.insight, "투수진이 활약했다.");
+  assert.match(result.body.summary.seriesContext, /미확정/);
+});
+
+test("POST sanitizes nested sentences and supplies a score headline if the entire title violates facts", async () => {
+  const result = await callRoute(wc, [wc], false, undefined, {
+    headline: "두산 준PO 진출 확정",
+    gameFlow: { late: "투수진이 활약했다. 두산 준PO 진출 확정. 평균자책점 0.50의 호투였다." },
+  });
+  assert.equal(result.status, 200);
+  assert.equal(result.calls.generated, 2);
+  assert.match(result.body.summary.headline, /1 - 4/);
+  assert.equal(result.body.summary.gameFlow.late, "투수진이 활약했다. 평균자책점 0.50의 호투였다.");
 });
