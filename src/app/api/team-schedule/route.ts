@@ -21,7 +21,8 @@ export async function GET(req: NextRequest) {
   }
 
   try {
-    const allGames = await getMonthGames(month);
+    const { refreshPostseasonSchedule } = await import("@/lib/postseason/schedule");
+    const allGames = await refreshPostseasonSchedule(await getMonthGames(month), month.replace("-", "") + "01", month.replace("-", "") + "31");
 
     // Filter games involving this team
     const teamGames = allGames.filter(
@@ -75,7 +76,7 @@ export async function GET(req: NextRequest) {
 
     return NextResponse.json(
       { team: teamSlug, month, summary, days },
-      { headers: { "Cache-Control": "public, s-maxage=300, stale-while-revalidate=600" } }
+      { headers: { "Cache-Control": "public, s-maxage=30, stale-while-revalidate=30" } }
     );
   } catch (e: unknown) {
     return NextResponse.json(

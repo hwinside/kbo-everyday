@@ -517,7 +517,7 @@ async function enrichNaverLiveGames(
  * KBO를 짧게 시도한 뒤 HTTP/network/schema 실패면 남은 deadline 안에서 Naver로
  * failover한다. 두 소스 모두 실패한 ok:false는 정상 "경기 0"과 구분한다.
  */
-export async function fetchKboLiveGames(
+async function fetchKboLiveGamesUnfiltered(
   date: string,
   deadlineAtMs?: number,
   fetchImpl: typeof fetch = fetch,
@@ -686,7 +686,7 @@ function overlayKboQuasiStatic(naverBase: KboGame[], kboGames: KboGame[]): KboGa
  * ⚠️ 이 변형은 warmup cron(LA broadcast·iOS/Android 위젯·점수알림·시작감지) 전용.
  * game-start-watchdog·admin 관제 등 다른 소비자는 fetchKboLiveGames(KBO-primary) 그대로.
  */
-export async function fetchLiveGamesNaverPrimary(
+async function fetchLiveGamesNaverPrimaryUnfiltered(
   date: string,
   deadlineAtMs?: number,
   fetchImpl: typeof fetch = fetch,
@@ -725,7 +725,7 @@ export async function fetchLiveGamesNaverPrimary(
     ]);
     // Naver schedule 실패/무경기 → KBO-primary(soft-empty 교차확인 포함)로 위임.
     if (naverResult.status !== "fulfilled" || naverResult.value.length === 0) {
-      return fetchKboLiveGames(
+      return fetchKboLiveGamesUnfiltered(
         date,
         deadlineAtMs,
         fetchImpl,
@@ -759,7 +759,7 @@ export async function fetchLiveGamesNaverPrimary(
     };
   } catch {
     // Naver schedule 실패 → KBO-primary fallback(자체 Naver failover 포함).
-    return fetchKboLiveGames(
+    return fetchKboLiveGamesUnfiltered(
       date,
       deadlineAtMs,
       fetchImpl,
@@ -767,4 +767,29 @@ export async function fetchLiveGamesNaverPrimary(
       fetchNaverEvidenceImpl,
     );
   }
+}
+
+// Apply eligibility after every primary/fallback branch, before any LA, widget
+// or game-event consumer sees the rows. A failed check is not a healthy empty day.
+async function eligibleLiveResult(
+  result: Awaited<ReturnType<typeof fetchKboLiveGamesUnfiltered>>, date: string, deadlineAtMs: number,
+) {
+  if (!result.ok) return result;
+  try {
+    const { filterNeededPostseasonGames } = await import("@/lib/postseason/schedule");
+    const games = await filterNeededPostseasonGames(result.games, date, g => g.G_ID, deadlineAtMs);
+    return { ...result, games };
+  } catch {
+    return { ...result, ok: false, games: [], trace: { ...result.trace, source: "none" as const, stage: "dual-fail" as const } };
+  }
+}
+
+export async function fetchKboLiveGames(...args: Parameters<typeof fetchKboLiveGamesUnfiltered>) {
+  const deadline = args[1] ?? Date.now() + 5000;
+  return eligibleLiveResult(await fetchKboLiveGamesUnfiltered(...args), args[0], deadline);
+}
+
+export async function fetchLiveGamesNaverPrimary(...args: Parameters<typeof fetchLiveGamesNaverPrimaryUnfiltered>) {
+  const deadline = args[1] ?? Date.now() + 5000;
+  return eligibleLiveResult(await fetchLiveGamesNaverPrimaryUnfiltered(...args), args[0], deadline);
 }
