@@ -1,32 +1,12 @@
 import { NextResponse } from "next/server";
 import { REGULAR_SEASON_WINDOWS } from "@/lib/constants/season";
 import { fetchNaverGames } from "@/lib/crawler/naver-games";
-import { fetchKboGamesOnly, resolveTeamId } from "@/lib/crawler/kbo-api";
-import { getTeamById } from "@/lib/constants/teams";
-import { buildPostseasonLadder, type Seed, type LadderSnapshot } from "@/lib/postseason/ladder";
+import { fetchKboGamesOnly } from "@/lib/crawler/kbo-api";
+import { loadPostseasonSeeds } from "@/lib/postseason/seeds";
+import { buildPostseasonLadder, type LadderSnapshot } from "@/lib/postseason/ladder";
 
 export const maxDuration = 15;
 let cached: LadderSnapshot | null = null;
-async function loadSeeds(season: number): Promise<Seed[]> {
-  try {
-    const response = await fetch(`https://api-gw.sports.naver.com/statistics/categories/kbo/seasons/${season}/teams?gameType=REGULAR_SEASON`, {
-      headers: { Referer: "https://sports.news.naver.com/" }, signal: AbortSignal.timeout(2500), cache: "no-store",
-    });
-    if (!response.ok) return [];
-    const body = await response.json();
-    const rows = body?.success === true ? body.result?.seasonTeamStats : null;
-    if (!Array.isArray(rows) || rows.length !== 10) return [];
-    const seeds: Seed[] = rows.map((r: { ranking: number; teamId: string; gameCount: number }) => {
-      if (r.gameCount !== 144) throw new Error("Regular standings not final");
-      const teamId = resolveTeamId(r.teamId, "");
-      const name = getTeamById(teamId)?.shortName;
-      if (!name || !Number.isInteger(r.ranking) || r.ranking < 1 || r.ranking > 10) throw new Error("Invalid final standings");
-      return { rank: r.ranking, teamId, name };
-    });
-    if (new Set(seeds.map(s=>s.rank)).size !== 10 || new Set(seeds.map(s=>s.teamId)).size !== 10) return [];
-    return seeds.filter(s=>s.rank <= 5);
-  } catch { return []; }
-}
 export async function GET() {
   const today = new Date().toLocaleDateString("sv-SE", { timeZone: "Asia/Seoul" }).replaceAll("-", "");
   const season = Number(today.slice(0,4));
@@ -35,7 +15,7 @@ export async function GET() {
   try {
     if (cached?.season === season && Date.now()-cached.fetchedAt < 30_000) return NextResponse.json({ active: true, ...cached }, { headers: { "Cache-Control": "no-store" } });
     const [games, seeds] = await Promise.all([
-      fetchNaverGames(window.end, undefined, { toDate: `${season}1130`, signal: AbortSignal.timeout(3000) }), loadSeeds(season),
+      fetchNaverGames(window.end, undefined, { toDate: `${season}1130`, signal: AbortSignal.timeout(3000) }), loadPostseasonSeeds(season),
     ]);
     // Naver's schedule omits game number. Enrich only from KBO labels; never
     // fabricate a number from date order (ties/postponements can change it).

@@ -1,3 +1,6 @@
+import { loadPostseasonSeeds } from "@/lib/postseason/seeds";
+import { isPostseason } from "@/lib/crawler/game-series";
+import { guardPreviewContext, previewPostseasonFacts, previewSeriesInstructions, previewVersion, usesRegularPreviewContext } from "@/lib/ai/preview-series-policy";
 import { resolveGameSeries } from "@/lib/crawler/resolve-game-series";
 import { NextRequest, NextResponse } from "next/server";
 import { supabaseAdmin as supabase } from "@/lib/supabase/admin";
@@ -22,8 +25,6 @@ import {
 
 const GEMINI_API_KEY = process.env.GEMINI_API_KEY;
 const GEMINI_URL = `https://generativelanguage.googleapis.com/v1beta/models/gemini-2.5-flash:generateContent?key=${GEMINI_API_KEY}`;
-
-const PREVIEW_VERSION = 8; // v8: 순위 환각 방지 가드(공식 순위표 기준 규칙 + 조회 실패 fallback) — 기존 캐시 재생성
 
 // Build a set of current roster players (teamShortName:playerName) for filtering, 부상자 제외.
 const currentRosterSet = new Set<string>();
@@ -701,7 +702,9 @@ function formatDiffSignal(diff: LineupDiffSignal, teamShort: string): string {
   return `${teamShort}: ${parts.join(" / ")}\n`;
 }
 
-async function buildPreviewPrompt(req: PreviewRequest): Promise<string> {
+async function buildPreviewPrompt(req: PreviewRequest, game: KboGame): Promise<string> {
+  const srId = game.srId;
+  const seeds = isPostseason(srId) ? await loadPostseasonSeeds(Number(req.gameId.slice(0, 4))) : [];
   const awayShort = getTeamShortName(req.awayTeamId);
   const homeShort = getTeamShortName(req.homeTeamId);
   const awayName = getTeamName(req.awayTeamId);
@@ -722,8 +725,8 @@ async function buildPreviewPrompt(req: PreviewRequest): Promise<string> {
     awayLineup, homeLineup, awayPrevLineup, homePrevLineup,
     awayRecentRecord, homeRecentRecord, h2hRecord,
     awayStarterVsOpp, homeStarterVsOpp] = await Promise.all([
-    getSeriesContext(req.gameId, req.awayTeamId, req.homeTeamId).catch(() => null),
-    getStandingsContext(req.awayTeamId, req.homeTeamId).catch(() => null),
+    usesRegularPreviewContext(srId) ? getSeriesContext(req.gameId, req.awayTeamId, req.homeTeamId).catch(() => null) : null,
+    usesRegularPreviewContext(srId) ? getStandingsContext(req.awayTeamId, req.homeTeamId).catch(() => null) : null,
     getRecentForm(req.gameId, req.awayTeamId).catch(() => []),
     getRecentForm(req.gameId, req.homeTeamId).catch(() => []),
     fetchTodayLineup(req.gameId, req.awayTeamId, true).catch(() => null),
@@ -791,7 +794,7 @@ async function buildPreviewPrompt(req: PreviewRequest): Promise<string> {
 ${awayShort}: ${standingsCtx.awayRank}위 — ${standingsCtx.awayRecord}${standingsCtx.awayRank === 1 ? " (선두)" : ` (${standingsCtx.awayGb}게임차)`}
 ${homeShort}: ${standingsCtx.homeRank}위 — ${standingsCtx.homeRecord}${standingsCtx.homeRank === 1 ? " (선두)" : ` (${standingsCtx.homeGb}게임차)`}
 ${STANDINGS_ACCURACY_RULES}`;
-  } else {
+  } else if (usesRegularPreviewContext(srId)) {
     standingsSection = `
 ${STANDINGS_UNAVAILABLE_RULES}`;
   }
@@ -841,6 +844,8 @@ ${awayPitchers.join("\n")}
 ## ${homeShort} 투수진 (2026 시즌 기록)
 ${homePitchers.join("\n")}
 ${standingsSection}${seriesSection}${recentRecordSection}${h2hSection}${recentFormSection}
+${previewSeriesInstructions(srId)}
+${previewPostseasonFacts(game, seeds)}
 
 ## 작성 규칙
 0. 존댓말(~습니다/~합니다) 절대 금지. 기사체 반말(~했다/~이다/~있다)로만 작성하세요.
@@ -865,8 +870,8 @@ ${standingsSection}${seriesSection}${recentRecordSection}${h2hSection}${recentFo
   "homeWeaknesses": ["약점1", "약점2"],
   "awayKeyPlayers": [{"name": "선수명", "reason": "왜 키플레이어인지 1~2문장"}],
   "homeKeyPlayers": [{"name": "선수명", "reason": "왜 키플레이어인지 1~2문장"}],
-  "seriesContext": "3연전 맥락 요약 (없으면 null)",
-  "standingsImpact": "순위 영향 분석 (예: '4위 싸움에서 중요한 경기') (없으면 null)",
+  "seriesContext": ${usesRegularPreviewContext(srId) ? '"정규시즌 연전 맥락 요약 (없으면 null)"' : "null"},
+  "standingsImpact": ${usesRegularPreviewContext(srId) ? '"순위 영향 분석 (없으면 null)"' : "null"},
   "hotPlayers": ["핫플레이어1 요약", "핫플레이어2 요약"]
 }`;
 }
@@ -875,7 +880,7 @@ function cacheKey(gameId: string) {
   return `preview_${gameId}`; // no version suffix
 }
 
-async function getCached(gameId: string): Promise<{ summary: Record<string, unknown>; outdated: boolean } | null> {
+async function getCached(gameId: string, srId?: unknown): Promise<{ summary: Record<string, unknown>; outdated: boolean } | null> {
   try {
     const { data } = await supabase
       .from("game_summaries")
@@ -883,8 +888,8 @@ async function getCached(gameId: string): Promise<{ summary: Record<string, unkn
       .eq("game_id", cacheKey(gameId))
       .maybeSingle(); // cache/optional lookup: no-rowuB294 uC815uC0C1 u2014 406 uBC29uC9C0
     if (!data?.summary) return null;
-    const outdated = (data.prompt_version ?? 0) < PREVIEW_VERSION;
-    return { summary: data.summary as Record<string, unknown>, outdated };
+    const outdated = (data.prompt_version ?? 0) < previewVersion(srId);
+    return { summary: guardPreviewContext(data.summary as Record<string, unknown>, srId), outdated };
   } catch {
     return null;
   }
@@ -1005,12 +1010,12 @@ function getPreviewAvailability(game: KboGame): PreviewAvailability {
   return { allowed: true, availableFrom: formatKstIso(availableAt) };
 }
 
-async function saveCache(gameId: string, summary: Record<string, unknown>) {
+async function saveCache(gameId: string, summary: Record<string, unknown>, srId: unknown) {
   try {
     await supabase
       .from("game_summaries")
       .upsert(
-        { game_id: cacheKey(gameId), summary, prompt_version: PREVIEW_VERSION, created_at: new Date().toISOString() },
+        { game_id: cacheKey(gameId), summary, prompt_version: previewVersion(srId), created_at: new Date().toISOString() },
         { onConflict: "game_id" }
       );
   } catch { /* ignore */ }
@@ -1041,7 +1046,7 @@ export async function GET(req: NextRequest) {
     });
   }
 
-  const cached = await getCached(gameId);
+  const cached = await getCached(gameId, game.srId);
   if (cached) {
     return NextResponse.json({ preview: cached.summary, source: "cache", outdated: cached.outdated, availableFrom: availability.availableFrom });
   }
@@ -1084,13 +1089,13 @@ export async function POST(req: NextRequest) {
   if (!body.homeStarter && game.homeStarterName) body.homeStarter = game.homeStarterName;
 
   // 캐시 확인
-  const cached = await getCached(body.gameId);
+  const cached = await getCached(body.gameId, game.srId);
   if (cached && !cached.outdated) {
     return NextResponse.json({ preview: cached.summary, source: "cache" });
   }
 
   try {
-    const prompt = await buildPreviewPrompt(body);
+    const prompt = await buildPreviewPrompt(body, game);
 
     const geminiRes = await fetch(GEMINI_URL, {
       method: "POST",
@@ -1134,7 +1139,8 @@ export async function POST(req: NextRequest) {
       }
     }
 
-    await saveCache(body.gameId, preview);
+    preview = guardPreviewContext(preview, game.srId);
+    await saveCache(body.gameId, preview, game.srId);
     return NextResponse.json({ preview, source: "generated" });
   } catch (err) {
     console.error("Game preview generation error:", err);
