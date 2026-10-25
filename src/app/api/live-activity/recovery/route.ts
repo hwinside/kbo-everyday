@@ -1,3 +1,4 @@
+import { observeSafely } from "@/lib/notifications/live-activity-wake-observability";
 import { createHash } from "node:crypto";
 import { sendRecoveryWithReceipt } from "@/lib/notifications/live-activity-recovery-receipt";
 import { NextRequest, NextResponse } from "next/server";
@@ -7,6 +8,7 @@ import { getProviderTokenSafe, sendLiveActivityPushToEnv } from "@/lib/notificat
 // Protocol 1 exists only in the new native implementation (not a JS/app-build guess).
 // No broadcast start, account fanout or fallback token/environment is permitted here.
 export async function POST(req: NextRequest) {
+  const receivedAt = new Date().toISOString();
   let body;
   try { body = await req.json(); } catch {
     return NextResponse.json({ error: "invalid json" }, { status: 400 });
@@ -30,6 +32,15 @@ export async function POST(req: NextRequest) {
     p_game: action === "claim" ? gameId : null,
     p_channel: action === "claim" ? channelId : null,
     p_challenge: action === "claim" ? challenge : null,
+  });
+  if (action === "challenges") await observeSafely(async () => {
+    const { error: observationError } = await supabaseAdmin.rpc("record_live_activity_challenges_request", {
+      p_token: pushToStartToken,
+      p_environment: environment, p_received_at: receivedAt,
+      p_issued_count: error ? null : (data?.challenges ?? []).length,
+      p_rpc_failed: Boolean(error),
+    }).abortSignal(AbortSignal.timeout(1000));
+    if (observationError) throw new Error("challenge observation failed");
   });
   if (error) return NextResponse.json({ error: "recovery unavailable" }, { status: 503 });
   if (action === "challenges") return NextResponse.json({ challenges: data?.challenges ?? [] });
