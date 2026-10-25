@@ -1,3 +1,4 @@
+import { definitionQuestionSubject } from "../../src/lib/baseball-qa/normalize";
 import { RAG_NEUTRAL_HOLD, RAG_RESPONSE_HOLD } from "../../src/lib/baseball-qa/rag/hold-answer";
 /**
  * 야잘알봇 KBO 공식 간행물(tier1) 서빙 회귀.
@@ -45,6 +46,7 @@ import {
   type RagEvidence,
 } from "../../src/lib/baseball-qa/rag/retrieve";
 import { gradeForSourceKind } from "../../src/lib/baseball-qa/rag/contracts";
+import { acceptsIndependentSubject, acceptsDefinitionSubject, acceptsDefinitionEvidence, hasDefinitionAnchor, resolveDefinitionReferent, contextualSubject, resolveIndependentSubject, readIndependentSubject } from "../../src/lib/baseball-qa/rag/term-referent";
 
 let pass = 0;
 const fail: string[] = [];
@@ -310,6 +312,408 @@ check("미배선이면 기존 동작 불변", async () => {
 
 const asyncChecks: { name: string; fn: () => Promise<void> }[] = [];
 function checkAsync(name: string, fn: () => Promise<void>) { asyncChecks.push({ name, fn }); }
+
+// Independent meaning comes from the existing candidate-blind normalizer call,
+// not the same evidence-conditioned generator. Fixtures prove wiring only.
+const WORD_SUBJECT = { quote: "워닝", meaning: "경고" };
+check("ordinary subject requires a literal whole-word definition scope", () => {
+  assert.deepEqual(readIndependentSubject("워닝이 뭐야?", { kind: "ordinary", ...WORD_SUBJECT }), WORD_SUBJECT);
+  for (const [question, subject] of [
+    ["인필드 아웃은 뭐야", { kind: "ordinary", quote: "인필드", meaning: "내야" }],
+    ["지금 도루 순위 알려줘", { kind: "ordinary", quote: "도루", meaning: "베이스 이동" }],
+    ["콜드", { kind: "baseball", quote: "콜드", meaning: "경기 종료" }],
+    ["워닝", { kind: "ordinary", quote: "워닝트랙", meaning: "구역" }],
+    ["워닝", { kind: "ordinary", quote: "워닝", meaning: "<지시>" }],
+    ["워닝 시리즈", { kind: "ordinary", quote: "워닝 시리즈", meaning: "추측" }],
+  ] as const) assert.equal(readIndependentSubject(question, subject), undefined);
+});
+check("only bare followup with previous user full term can release word binding", () => {
+  const glossary = [{ term: "워닝 트랙", aliases: ["워닝트랙"] }];
+  const track = { quote: "트랙", meaning: "길" };
+  assert.equal(contextualSubject("트랙", track, "워닝 트랙이 뭐야?", glossary), undefined);
+  assert.deepEqual(contextualSubject("트랙이 뭐야?", track, "워닝 트랙이 뭐야?", glossary), track);
+  assert.deepEqual(contextualSubject("트랙", track, "야구장에 가요", glossary), track);
+});
+check("R4 no meaning echo; lexical scope survives missing blind label", () => {
+  assert.equal(acceptsIndependentSubject({ status: "GENERAL", subject: "위닝", answer: "위닝은 이김이나 승리를 뜻해요." }, { quote: "위닝", meaning: "이김, 승리" }), true);
+  const glossary = [
+    { term: "워닝 트랙", aliases: ["워닝트랙"] },
+    { term: "콜드게임", aliases: ["콜드 게임"] },
+    { term: "위닝시리즈", aliases: ["위닝 시리즈"] },
+  ];
+  for (const q of ["워닝", "워닝이 뭐야?", "워닝이 무슨 뜻이야?"]) {
+    assert.deepEqual(resolveIndependentSubject(q, undefined, undefined, glossary), { quote: "워닝", meaning: "", compounds: ["워닝 트랙"] });
+  }
+  assert.equal(resolveIndependentSubject("콜드", { quote: "콜드", meaning: "차가움" }, undefined, glossary), undefined);
+  assert.equal(resolveIndependentSubject("위닝은 뭐야?", { quote: "위닝", meaning: "승리" }, undefined, glossary), undefined);
+  assert.equal(resolveIndependentSubject("트랙", { quote: "트랙", meaning: "길" }, "워닝 트랙이 뭐야?", glossary), undefined);
+  assert.equal(resolveIndependentSubject("워닝 시리즈", undefined, undefined, glossary), undefined);
+});
+check("R5 exact canonical and exact alias win over component binding and blind meaning", () => {
+  const glossary = [{ term: "워닝 트랙", aliases: [] }, { term: "워닝", aliases: ["트랙"] }];
+  assert.equal(resolveIndependentSubject("워닝", WORD_SUBJECT, undefined, glossary), undefined);
+  assert.equal(resolveIndependentSubject("트랙", { quote: "트랙", meaning: "길" }, undefined, glossary), undefined);
+});
+check("R6 definition scope is data, not a forced subject enum", () => {
+  for (const [question, expected] of [["희생 플레이가 뭐야?", "희생 플레이"], ["투수가 뭐야?", "투수"], ["인필드 아웃은 뭐야", "인필드 아웃"], ["위닝은 뭐야?", "위닝"]]) {
+    assert.equal(definitionQuestionSubject(question), expected);
+    const request = buildRagLlmRequest(question, [OFFICIAL], RAG_OFFICIAL_SYSTEM_PROMPT);
+    const schema = request.generationConfig.responseSchema as { properties: { subject: { enum?: string[] } }; required: string[] };
+    assert.equal(schema.properties.subject.enum, undefined);
+    assert.ok(schema.required.includes("definitionPlan"));
+    assert.ok(schema.required.includes("definitionEvidence"));
+    assert.equal(request.contents[0].parts[0].text.includes(OFFICIAL.content), /\s/u.test(expected));
+  }
+  for (const question of ["오늘 투수 기록 알려줘", "인필드플라이 좋아?", "콜드"]) assert.equal(definitionQuestionSubject(question), undefined);
+  const followup = buildRagLlmRequest("그게 뭔데?", [OFFICIAL], RAG_OFFICIAL_SYSTEM_PROMPT, {
+    context: { question: "투수가 뭐야?", answer: "투수는 공을 던지는 선수예요." },
+  });
+  assert.ok(!("enum" in (followup.generationConfig.responseSchema as { properties: { subject: object } }).properties.subject), "contextual referents are not literal words");
+  assert.equal(acceptsDefinitionSubject({ subject: "투구" }, "투수가 뭐야?"), false);
+  assert.equal(acceptsDefinitionSubject({ subject: "투수", answer: "투수는 타자에게 공을 던지는 선수예요." }, "투수가 뭐야?"), true);
+  assert.equal(acceptsDefinitionSubject({ subject: "투수", answer: "투구란 투수가 던진 공이에요." }, "투수가 뭐야?"), false, "declared subject cannot conceal a different actual subject");
+  assert.equal(acceptsDefinitionSubject({}, "투수가 뭐야?"), true, "historical missing field is not a new response");
+  const result = validateRagResponse(JSON.stringify({ subject: "투구", status: "GROUNDED", answer: "투구란 투수가 던진 공이에요.", calendarClaims: [] }), {
+    officialQuestion: "투수가 뭐야?", numericEvidence: true, evidence: [OFFICIAL], generalFallback: { question: "투수가 뭐야?" },
+  });
+  assert.equal(result.kind, "insufficient");
+});
+check("R6 lexical anchors reject neighbor and suffix definitions without altering raw evidence", () => {
+  for (const [question, body] of [
+    ["위닝은 뭐야?", "워닝트랙은 펜스 앞 구간이다."],
+    ["쿼터가 뭐야?", "아시아쿼터 선수와 계약을 체결할 수 있다."],
+  ]) {
+    const referent = resolveDefinitionReferent(question, [])!;
+    const evidence = [{ ...OFFICIAL, content: body }];
+    const before = JSON.stringify(evidence);
+    assert.equal(hasDefinitionAnchor(body, referent), false);
+    const request = buildRagLlmRequest(question, evidence, RAG_OFFICIAL_SYSTEM_PROMPT, { definitionReferent: referent });
+    assert.ok(!request.contents[0].parts[0].text.includes(body));
+    const schema = request.generationConfig.responseSchema as { properties: { status: { enum: string[] } } };
+    assert.ok(!schema.properties.status.enum.includes("GROUNDED"));
+    assert.equal(JSON.stringify(evidence), before);
+    const raw = JSON.stringify({ subject: referent.quote, status: "GROUNDED", definitionPlan: "source_definition", answer: `${referent.quote}는 자료의 다른 정의예요.`, calendarClaims: [] });
+    assert.equal(validateRagResponse(raw, { officialQuestion: question, definitionReferent: referent,
+      numericEvidence: true, evidence, generalFallback: { question } }).kind, "insufficient");
+    const general = JSON.stringify({ subject: referent.quote, status: "GENERAL", answer: `${referent.quote}는 일반 단어예요.` });
+    assert.equal(validateRagResponse(general, { officialQuestion: question, definitionReferent: referent,
+      evidence, generalFallback: { question } }).kind, "general");
+  }
+  assert.equal(hasDefinitionAnchor("쿼터는 할당량이다.", { quote: "쿼터", expansions: [] }), true);
+  assert.equal(hasDefinitionAnchor("슈퍼쿼터는 별도 명칭이다.", { quote: "쿼터", expansions: [] }), false);
+  assert.equal(hasDefinitionAnchor("쿼터백은 선수다.", { quote: "쿼터", expansions: [] }), false);
+});
+check("R8 copular endings preserve source predicates without admitting compound continuations", () => {
+  const scope = { quote: "야수", expansions: [] };
+  for (const content of ["포수는 본루 뒤에 자리잡은 야수다.", "투수는 투구하도록 지명된 야수이다.", "포수는 야수이며 수비한다."]) {
+    assert.equal(hasDefinitionAnchor(content, scope), true);
+    assert.ok(buildRagLlmRequest("야수가 뭐야", [{ ...OFFICIAL, content }], RAG_OFFICIAL_SYSTEM_PROMPT)
+      .contents[0].parts[0].text.includes(content));
+  }
+  for (const content of ["야수다움은 별도 표현이다.", "야수선택은 기록 용어다.", "외야수는 수비 선수다."]) {
+    assert.equal(hasDefinitionAnchor(content, scope), false);
+  }
+});
+check("R8 evidence ledger binds source plan to grounded mode, never upgrades a general answer", () => {
+  const content = "야수는 수비를 담당하는 선수이며 투수도 야수에 포함된다.";
+  const visible = [{ evidence: 2, content }];
+  const scope = { quote: "야수", expansions: [] };
+  const source = { definitionPlan: "source_definition", status: "GROUNDED",
+    definitionEvidence: [{ evidence: 2, role: "definition", quote: content }] };
+  assert.equal(acceptsDefinitionEvidence(source, visible, scope), true);
+  for (const status of ["GENERAL", "INSUFFICIENT", "TERM_UNVERIFIED"]) {
+    assert.equal(acceptsDefinitionEvidence({ ...source, status }, visible, scope), false);
+  }
+  for (const definitionPlan of ["general_meaning", "unknown"]) {
+    assert.equal(acceptsDefinitionEvidence({ ...source, definitionPlan, status: definitionPlan === "unknown" ? "INSUFFICIENT" : "GENERAL" }, visible, scope), false);
+  }
+  for (const definitionEvidence of [undefined, [], [...source.definitionEvidence, ...source.definitionEvidence],
+    [{ evidence: 1, role: "definition", quote: content }],
+    [{ evidence: 2, role: "definition", quote: "야수는 투수를 제외한다." }],
+    [{ evidence: 2, role: "definition", quote: "수비를 담당하는 선수" }]]) {
+    assert.equal(acceptsDefinitionEvidence({ ...source, definitionEvidence }, visible, scope), false);
+  }
+  // An anchor is not semantic support. Unknown remains legal after assessing
+  // incidental mentions; never force an unsupported grounded answer.
+  const unknown = { definitionPlan: "unknown", status: "INSUFFICIENT",
+    definitionEvidence: [{ evidence: 2, role: "mention", quote: "" }] };
+  assert.equal(acceptsDefinitionEvidence(unknown, visible, scope), true);
+  assert.equal(acceptsDefinitionEvidence({ ...unknown, status: "GENERAL" }, visible, scope), false);
+  assert.equal(acceptsDefinitionEvidence({ definitionPlan: "general_meaning", status: "GENERAL", definitionEvidence: [] }, []), true);
+});
+check("R10 definition body inherits only its own numbered heading", () => {
+  const quote = "어떤 이유로든지 주심이 종료를 선언한 게임을 가리킨다.";
+  const heading = "14. CALLED GAME (콜드게임·중도종료경기)";
+  const scope = { quote: "콜드", expansions: ["콜드게임"] };
+  const row = { definitionPlan: "source_definition", status: "GROUNDED",
+    definitionEvidence: [{ evidence: 2, role: "definition", quote }] };
+  const accepts = (content: string) => acceptsDefinitionEvidence(row, [{ evidence: 2, content }], scope);
+  assert.equal(accepts(`${heading}\n${quote}`), true);
+  assert.equal(accepts(`${heading}\n어떤 이유로든지\n주심이 종료를 선언한 게임을 가리킨다.`), true);
+  assert.equal(accepts(`15. CATCHER (포수)\n${quote}`), false);
+  assert.equal(accepts(`${heading}\n다른 내용.\n15. CATCHER (포수)\n${quote}`), false);
+  assert.equal(accepts(`콜드게임을 언급한다.\n${quote}`), false);
+  assert.equal(accepts(`${quote}\n${heading}`), false);
+  assert.equal(accepts(`${heading}\n${quote.replace("종료", "재개")}`), false);
+  assert.equal(acceptsDefinitionEvidence({ ...row, definitionPlan: "source_relation",
+    definitionEvidence: [{ evidence: 2, role: "relation", quote }] },
+    [{ evidence: 2, content: `${heading}\n${quote}` }], scope), false);
+});
+
+check("R9 citation accepts layout whitespace only, preserving text and word boundaries", () => {
+  const content = "(콜드게임·중도종료경기)\r\n어떤 이유로든지\t주심이 종료를 선언한 경기다.";
+  const quote = "(콜드게임·중도종료경기) 어떤 이유로든지 주심이 종료를 선언한 경기다.";
+  const visible = [{ evidence: 2, content }, { evidence: 4, content: "무관한 자료" }];
+  const row = { definitionPlan: "source_definition", status: "GROUNDED", definitionEvidence: [
+    { evidence: 2, role: "definition", quote }, { evidence: 4, role: "unrelated", quote: "" },
+  ] };
+  const scope = { quote: "콜드게임", expansions: [] };
+  assert.equal(acceptsDefinitionEvidence(row, visible, scope), true);
+  for (const invalid of [quote.replace("어떤 이유", "어떤이유"), quote.replace("종료", "재개"), quote.replace("·", ","), " "]) {
+    assert.equal(acceptsDefinitionEvidence({ ...row, definitionEvidence: [{ ...row.definitionEvidence[0], quote: invalid }, row.definitionEvidence[1]] }, visible, scope), false);
+  }
+  assert.equal(acceptsDefinitionEvidence({ ...row, definitionEvidence: [row.definitionEvidence[0]] }, visible, scope), false, "omitted unrelated row is still omission");
+  assert.equal(acceptsDefinitionEvidence({ ...row, definitionEvidence: [row.definitionEvidence[0], row.definitionEvidence[0]] }, visible, scope), false, "same-length duplicate must not cover the missing row");
+  for (const role of ["mention", "unrelated"]) {
+    assert.equal(acceptsDefinitionEvidence({ ...row, definitionEvidence: [row.definitionEvidence[0], { evidence: 4, role, quote: "무관한 자료" }] }, visible, scope), false);
+  }
+  assert.equal(acceptsDefinitionSubject({ status: "GROUNDED", subject: "야수", answer: "야수는 수비 선수예요." }, "야수가 뭐야", undefined, ["외야수는 외야를 지키는 선수다."]), false, "legacy subject boundary remains independent of ledger");
+});
+checkAsync("R9 actual pipeline preserves filtered source numbers and binds packaged input", async () => {
+  const content = "콜드게임은\n어떤 이유로든지 주심이 종료를 선언한 경기다.";
+  const quote = content.replace(/\s+/gu, " ");
+  const { deps, calls } = makeDeps({
+    loadGlossary: async () => [{ term: "콜드게임", aliases: [], answer: "주심이 종료한 경기입니다." }],
+    searchOfficialRag: async () => [
+      { ...OFFICIAL, content: "투수는 타자를 상대하여 공을 던지는 수비 선수이다." },
+      { ...OFFICIAL, canonicalUrl: OFFICIAL.canonicalUrl + "#cold", content },
+    ],
+    callOfficialRagLlm: async (question, evidence, extras) => {
+      calls.push("callOfficialRagLlm");
+      assert.equal(evidence.length, 2);
+      const request = buildRagLlmRequest(question, evidence, RAG_OFFICIAL_SYSTEM_PROMPT, extras);
+      const body = request.contents[0].parts[0].text;
+      const instruction = request.systemInstruction.parts[0].text;
+      assert.ok(instruction.includes("실제 제시된 자료 1건을 모두 평가한다."));
+      assert.ok(instruction.includes("원래 자료번호는 [2]이다."));
+      assert.ok(instruction.includes("정의의 구성원 범위를 기억으로 임의 제외하거나"));
+      assert.ok(body.includes("[자료2]"));
+      assert.ok(!body.includes("[자료1]"));
+      const schema = request.generationConfig.responseSchema as { properties: { definitionEvidence: { minItems: number; maxItems: number } }; required: string[] };
+      assert.equal(schema.properties.definitionEvidence.minItems, 1);
+      assert.equal(schema.properties.definitionEvidence.maxItems, 1);
+      assert.ok(schema.required.includes("definitionEvidence"));
+      return { text: JSON.stringify({ status: "GROUNDED", subject: "콜드게임", definitionPlan: "source_definition",
+        definitionEvidence: [{ evidence: 2, role: "definition", quote }],
+        answer: "콜드게임은 주심이 종료를 선언한 경기예요.", calendarClaims: [] }), inputTokens: 1, outputTokens: 1 };
+    },
+  });
+  const result = await answerQuestion("u", "콜드가 뭐야?", deps);
+  assert.equal(result.source, "rag");
+  assert.equal(calls.filter(call => call === "callOfficialRagLlm").length, 1);
+  assert.ok(!calls.includes("callLlm"));
+});
+check("R8 validator uses packaged model input, not extra guard rows, and preserves numeric rejection", () => {
+  const question = "인필드 아웃은 뭐야";
+  const content = "타자 아웃인 경우는 다음과 같다. 인필드 플라이가 선언되었을 경우.";
+  const input = [{ ...OFFICIAL, content }];
+  const row = { definitionPlan: "source_relation", status: "GROUNDED", subject: "인필드 아웃",
+    definitionEvidence: [{ evidence: 1, role: "relation", quote: content }],
+    answer: "인필드 아웃에 관해서는 인필드 플라이가 선언되면 타자가 아웃되는 경우가 있어요.", calendarClaims: [] };
+  const options = { officialQuestion: question, evidence: [...input, OFFICIAL], definitionInputEvidence: input,
+    numericEvidence: true, generalFallback: { question } };
+  assert.equal(validateRagResponse(JSON.stringify(row), options).kind, "grounded");
+  assert.equal(validateRagResponse(JSON.stringify(row), { ...options, definitionInputEvidence: undefined }).kind, "insufficient", "missing generation input must not fall back to guard evidence");
+  assert.equal(validateRagResponse(JSON.stringify({ ...row, status: "GENERAL" }), options).kind, "insufficient");
+  assert.equal(validateRagResponse(JSON.stringify({ ...row, definitionPlan: "unknown", status: "TERM_UNVERIFIED" }), options).kind, "insufficient");
+  const general = { definitionPlan: "general_meaning", definitionEvidence: [], status: "GENERAL", subject: "위닝",
+    answer: "위닝은 3연전에서 2승을 거두는 것이에요." };
+  const rejected = validateRagResponse(JSON.stringify(general), { officialQuestion: "위닝은 뭐야?", evidence: [], definitionInputEvidence: [], generalFallback: { question: "위닝은 뭐야?" } });
+  assert.equal(rejected.kind, "insufficient");
+  if (rejected.kind === "insufficient") assert.equal(rejected.reason, "numeric_not_in_question");
+});
+check("R6 reviewed prefix expands both declared and actual subject, not suffix guesses", () => {
+  const glossary = [{ term: "콜드게임", aliases: ["콜드 게임"] }, { term: "아시아쿼터", aliases: [] }];
+  const referent = resolveDefinitionReferent("콜드가 뭐야?", glossary)!;
+  assert.deepEqual(referent.expansions, ["콜드게임", "콜드 게임"]);
+  assert.deepEqual(resolveDefinitionReferent("쿼터가 뭐야?", glossary)!.expansions, []);
+  const evidence = [{ ...OFFICIAL, content: "콜드게임은 주심이 종료를 선언한 경기다." }];
+  for (const subject of ["콜드", "콜드게임", "콜드 게임"]) {
+    const row = { subject, status: "GROUNDED", definitionPlan: "source_definition", definitionEvidence: [{ evidence: 1, role: "definition", quote: evidence[0].content }], answer: `${subject}은 주심이 종료를 선언한 경기예요.`, calendarClaims: [] };
+    assert.equal(validateRagResponse(JSON.stringify(row), { officialQuestion: "콜드가 뭐야?", definitionReferent: referent,
+      numericEvidence: true, evidence, definitionInputEvidence: evidence, generalFallback: { question: "콜드가 뭐야?" } }).kind, "grounded");
+  }
+  assert.equal(acceptsDefinitionSubject({ subject: "콜드게임", answer: "몰수게임은 다른 경기예요." }, "콜드가 뭐야?", referent), false);
+  const request = buildRagLlmRequest("콜드가 뭐야?", [OFFICIAL, ...evidence], RAG_OFFICIAL_SYSTEM_PROMPT, { definitionReferent: referent });
+  const data = request.contents[0].parts[0].text;
+  assert.ok(data.includes("[자료2]"), "filtering does not renumber calendar/source evidence");
+  assert.ok(data.includes(evidence[0].content));
+  assert.ok(!data.includes(OFFICIAL.content));
+});
+check("R6 descriptive relation need not fabricate a named-term first clause", () => {
+  const question = "인필드 아웃은 뭐야";
+  const row = { status: "GROUNDED", subject: "인필드 아웃", definitionPlan: "source_relation",
+    answer: "인필드 아웃에 대해서는 내야에서 아웃이 되는 상황과 규칙의 조건을 구분해 설명할 수 있어요.", calendarClaims: [] };
+  assert.equal(acceptsDefinitionSubject(row, question), true);
+  assert.equal(acceptsDefinitionSubject({ ...row, definitionPlan: "source_definition" }, question), true, "plan label never decides referent acceptance");
+  assert.equal(acceptsDefinitionSubject({ ...row, answer: "아웃필드는 외야예요." }, question), false, "source_relation cannot waive actual topic binding");
+  assert.equal(acceptsDefinitionSubject({ ...row, subject: "아웃필드" }, question), false);
+  const request = buildRagLlmRequest(question, [OFFICIAL], RAG_OFFICIAL_SYSTEM_PROMPT);
+  assert.ok(request.contents[0].parts[0].text.includes(OFFICIAL.content));
+  assert.equal((request.generationConfig.responseSchema as { propertyOrdering: string[] }).propertyOrdering[0], "definitionEvidence");
+});
+check("R5 empty-meaning binding rejects first-sentence compound definitions, not later examples", () => {
+  const subject = resolveIndependentSubject("워닝", undefined, undefined, [{ term: "워닝 트랙", aliases: ["워닝트랙"] }])!;
+  for (const answer of ["워닝은 야구장에서 워닝트랙을 이르는 말이에요.", "워닝은 워닝 트랙을 뜻하는 야구 용어예요.", "워닝은\n워닝트랙을 이르는 말이에요."]) {
+    assert.equal(acceptsIndependentSubject({ status: "GENERAL", subject: "워닝", answer }, subject), false);
+    assert.equal(validateRagResponse(JSON.stringify({ status: "GENERAL", subject: "워닝", answer }), {
+      officialQuestion: "워닝", independentSubject: subject, generalFallback: { question: "워닝" },
+    }).kind, "insufficient");
+  }
+  assert.equal(acceptsIndependentSubject({ status: "GENERAL", subject: "워닝", answer: "워닝은 경고라는 뜻이에요. 워닝 트랙 같은 이름에도 쓰여요." }, subject), true);
+  const request = buildRagLlmRequest("워닝", [OFFICIAL], RAG_OFFICIAL_SYSTEM_PROMPT, { independentSubject: subject });
+  const data = request.contents[0].parts[0].text;
+  assert.ok(!data.includes(OFFICIAL.content));
+  assert.ok(!data.includes("워닝 트랙"), "do not prime the general definition with excluded compounds either");
+  const schema = request.generationConfig.responseSchema as { properties: { status: { enum: string[] } } };
+  assert.deepEqual(schema.properties.status.enum, ["GENERAL", "INSUFFICIENT"]);
+});
+check("subject schema and independent input transport", () => {
+  const request = buildRagLlmRequest("워닝", [OFFICIAL], RAG_OFFICIAL_SYSTEM_PROMPT, { independentSubject: WORD_SUBJECT });
+  const schema = request.generationConfig.responseSchema as { required: string[]; propertyOrdering: string[] };
+  assert.ok(schema.required.includes("subject"));
+  assert.deepEqual(schema.propertyOrdering.slice(0, 5), ["definitionEvidence", "definitionPlan", "status", "subject", "answer"]);
+  assert.ok(request.contents[0].parts[0].text.includes(JSON.stringify(WORD_SUBJECT)));
+  assert.ok(!request.contents[0].parts[0].text.includes(OFFICIAL.content), "independent general meaning must not see compound evidence");
+  const cold = { ...OFFICIAL, content: "콜드게임은 주심이 종료를 선언한 정식 경기입니다." };
+  const referent = resolveDefinitionReferent("콜드가 뭐야?", [{ term: "콜드게임", aliases: [] }]);
+  const normal = buildRagLlmRequest("콜드가 뭐야?", [cold], RAG_OFFICIAL_SYSTEM_PROMPT, { definitionReferent: referent });
+  assert.ok(normal.contents[0].parts[0].text.includes(cold.content), "reviewed abbreviation keeps matching official evidence");
+});
+for (const [status, subject, answer, accepted] of [
+  ["GENERAL", "워닝", "워닝은 경고를 뜻합니다.", true],
+  ["GROUNDED", "워닝", "워닝은 경고를 뜻합니다.", false],
+  ["GENERAL", "워닝트랙", "워닝트랙은 경고 구역입니다.", false],
+  ["GENERAL", "워닝", "워닝트랙은 경고 구역입니다.", false],
+  ["GENERAL", "워닝", "워닝 트랙은 경고 구역입니다.", false],
+  ["GENERAL", "워닝", "워닝은 펜스 앞 구역입니다.", true], // structural pass, semantic failure belongs in live review
+  ["GENERAL", undefined, "워닝은 경고를 뜻합니다.", false],
+] as const) {
+  check(`독립 주어·실제 첫 문장 ${status}/${subject}/${answer}`, () => {
+    const row = { status, subject, answer, calendarClaims: [] };
+    assert.equal(acceptsIndependentSubject(row, WORD_SUBJECT), accepted);
+    const result = validateRagResponse(JSON.stringify(row), {
+      officialQuestion: "워닝", independentSubject: WORD_SUBJECT,
+      numericEvidence: true, evidence: [OFFICIAL], generalFallback: { question: "워닝" },
+    });
+    assert.equal(result.kind, accepted ? "general" : "insufficient");
+  });
+}
+for (const [question, answer] of [
+  ["콜드", "콜드게임은 중도 종료된 경기입니다."],
+  ["야수가 뭐야", "야수는 내야수와 외야수를 포함합니다."],
+  ["희생 플레이가 뭐야?", "희생번트와 희생플라이가 있습니다."],
+  ["인필드 아웃은 뭐야", "인필드플라이가 적용되면 타자가 아웃됩니다."],
+  ["위닝은 뭐야?", "위닝은 승리를 뜻하며 위닝시리즈에 쓰입니다."],
+  ["오늘 투수 기록 알려줘", "승리투수와 피안타 기록입니다."],
+] as const) check(`독립 단어 판정 부재시 기존 수용 ${question}`, () => {
+  for (const status of ["GENERAL", "GROUNDED"]) {
+    const result = validateRagResponse(JSON.stringify({ status, answer, calendarClaims: [] }), {
+      officialQuestion: question, numericEvidence: true, evidence: [OFFICIAL], generalFallback: { question },
+    });
+    assert.equal(result.kind, status === "GENERAL" ? "general" : "grounded");
+  }
+});
+for (const [status, subject, answer, accepted] of [
+  ["GENERAL", "워닝", "워닝은 경고를 뜻합니다.", true],
+  ["GENERAL", "워닝", "워닝트랙은 경고 구역입니다.", false],
+  ["GROUNDED", "워닝트랙", "워닝트랙은 경고 구역입니다.", false],
+] as const) {
+  checkAsync(`독립 해석 실제 pipeline ${status}/${accepted}`, async () => {
+    const { deps, calls } = makeDeps({
+      normalizeQuestionLlm: async () => ({ text: null, independentSubject: WORD_SUBJECT, inputTokens: 1, outputTokens: 1 }),
+      searchOfficialRag: async () => [OFFICIAL],
+      callOfficialRagLlm: async (_question, _evidence, extras) => {
+        calls.push("callOfficialRagLlm");
+        assert.deepEqual(extras?.independentSubject, WORD_SUBJECT);
+        return { text: JSON.stringify({ status, subject, answer, calendarClaims: [] }), inputTokens: 1, outputTokens: 1 };
+      },
+    });
+    const result = await answerQuestion("u", "워닝", deps);
+    assert.equal(result.answer.includes(answer), accepted);
+    assert.equal(calls.filter(call => call === "callOfficialRagLlm").length, 1);
+    assert.ok(!calls.includes("callLlm"), "no second answer generation");
+  });
+}
+
+checkAsync("R4 missing blind subject still binds canonical spaced component in pipeline", async () => {
+  const { deps } = makeDeps({
+    loadGlossary: async () => [{ term: "워닝 트랙", aliases: ["워닝트랙"], answer: "펜스 앞 구역입니다." }],
+    normalizeQuestionLlm: async () => ({ text: null, inputTokens: 1, outputTokens: 1 }),
+    searchOfficialRag: async () => [OFFICIAL],
+    callOfficialRagLlm: async (_q, _e, extras) => {
+      assert.deepEqual(extras?.independentSubject, { quote: "워닝", meaning: "", compounds: ["워닝 트랙"] });
+      return { text: JSON.stringify({ status: "GROUNDED", subject: "워닝", answer: "워닝트랙은 펜스 앞 구역입니다.", calendarClaims: [] }), inputTokens: 1, outputTokens: 1 };
+    },
+  });
+  const result = await answerQuestion("u", "워닝", deps);
+  assert.equal(result.source, "unsure");
+});
+
+checkAsync("R6 pipeline carries reviewed prefix evidence contract through generation and validation", async () => {
+  const { deps, calls } = makeDeps({
+    loadGlossary: async () => [{ term: "콜드게임", aliases: ["콜드 게임"], answer: "주심이 종료한 경기입니다." }],
+    searchOfficialRag: async () => [{ ...OFFICIAL, content: "콜드게임은 주심이 종료를 선언한 경기다." }],
+    callOfficialRagLlm: async (_q, _e, extras) => {
+      calls.push("callOfficialRagLlm");
+      assert.deepEqual(extras?.definitionReferent, { quote: "콜드", expansions: ["콜드게임", "콜드 게임"] });
+      return { text: JSON.stringify({ status: "GROUNDED", subject: "콜드게임", definitionPlan: "source_definition",
+        definitionEvidence: [{ evidence: 1, role: "definition", quote: "콜드게임은 주심이 종료를 선언한 경기다." }],
+        answer: "콜드게임은 주심이 종료를 선언한 경기예요.", calendarClaims: [] }), inputTokens: 1, outputTokens: 1 };
+    },
+  });
+  const result = await answerQuestion("u", "콜드가 뭐야?", deps);
+  assert.equal(result.source, "rag");
+  assert.equal(calls.filter(call => call === "callOfficialRagLlm").length, 1);
+  assert.ok(!calls.includes("callLlm"));
+});
+checkAsync("R6 provider forcing requested subject cannot serve neighbor definition as GROUNDED", async () => {
+  const neighbor = { ...OFFICIAL, content: "워닝트랙은 외야 안전 펜스 바로 앞에 조성된 일정한 폭의 구간이다." };
+  assert.equal(selectEvidence([neighbor]).length, 1, "fixture must reach the official provider, not the empty-search fallback");
+  const { deps, calls } = makeDeps({
+    searchOfficialRag: async () => [neighbor],
+    callOfficialRagLlm: async (_question, evidence, extras) => {
+      calls.push("callOfficialRagLlm");
+      assert.ok(evidence.some(row => row.content === neighbor.content), "raw evidence remains available to the request builder");
+      assert.deepEqual(extras?.definitionReferent, { quote: "위닝", expansions: [] });
+      return { text: JSON.stringify({ status: "GROUNDED", subject: "위닝",
+        definitionPlan: "source_definition", answer: "위닝은 펜스 앞 구간이에요.", calendarClaims: [] }), inputTokens: 1, outputTokens: 1 };
+    },
+  });
+  const result = await answerQuestion("u", "위닝은 뭐야?", deps);
+  assert.equal(calls.filter(call => call === "callOfficialRagLlm").length, 1);
+  assert.ok(!calls.includes("callLlm"), "must not pass via the generic fallback");
+  assert.equal(result.source, "unsure");
+  assert.ok(!result.answer.includes("위닝은 펜스 앞 구간"), "rejected neighbor definition is never served");
+});
+
+checkAsync("R8 provider cannot serve a source-definition plan as unsupported GENERAL", async () => {
+  const content = "야수는 수비를 담당하는 선수이며 투수도 야수에 포함된다.";
+  const { deps, calls } = makeDeps({
+    searchOfficialRag: async () => [{ ...OFFICIAL, content }],
+    callOfficialRagLlm: async () => {
+      calls.push("callOfficialRagLlm");
+      return { text: JSON.stringify({ status: "GENERAL", subject: "야수", definitionPlan: "source_definition",
+        definitionEvidence: [{ evidence: 1, role: "definition", quote: content }],
+        answer: "야수는 투수를 제외한 수비 선수예요.", calendarClaims: [] }), inputTokens: 1, outputTokens: 1 };
+    },
+  });
+  const result = await answerQuestion("u", "야수가 뭐야", deps);
+  assert.equal(calls.filter(call => call === "callOfficialRagLlm").length, 1);
+  assert.ok(!calls.includes("callLlm"));
+  assert.equal(result.source, "unsure");
+  assert.ok(!result.answer.includes("투수를 제외"));
+});
 
 // Synthetic adversarial fixtures: exact provider status must not waive event identity.
 for (const [name, question, content, answer, expected] of [
