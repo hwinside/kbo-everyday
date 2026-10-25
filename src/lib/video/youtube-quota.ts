@@ -23,6 +23,7 @@ import type { SupabaseClient } from "@supabase/supabase-js";
  */
 export const YT_UNITS_SEARCH = 100;
 export const YT_UNITS_VIDEOS_LIST = 1;
+export const YT_UNITS_PLAYLIST_ITEMS = 1;
 
 /**
  * 프로젝트의 절대 quota 상한(하드 리밋). Google 기본 프로젝트 한도 = 10,000/day.
@@ -71,9 +72,11 @@ export interface QuotaCounter {
   searches: number;
   /** 실제 시도한 videos.list 호출 수 */
   videoLists: number;
+  /** 실제 시도한 playlistItems.list 호출 수 */
+  playlistItems: number;
 }
 export function newQuotaCounter(): QuotaCounter {
-  return { units: 0, searches: 0, videoLists: 0 };
+  return { units: 0, searches: 0, videoLists: 0, playlistItems: 0 };
 }
 /** search.list 1회 시도 기록 */
 export function countSearch(c: QuotaCounter | undefined): void {
@@ -86,6 +89,12 @@ export function countVideoList(c: QuotaCounter | undefined): void {
   if (!c) return;
   c.videoLists += 1;
   c.units += YT_UNITS_VIDEOS_LIST;
+}
+/** playlistItems.list 1회 시도 기록 (uploads 폴링, 1 unit) */
+export function countPlaylistItems(c: QuotaCounter | undefined): void {
+  if (!c) return;
+  c.playlistItems += 1;
+  c.units += YT_UNITS_PLAYLIST_ITEMS;
 }
 
 /**
