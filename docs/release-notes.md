@@ -4,6 +4,21 @@
 
 ---
 
+## 2026-08-03 05:46 KST — 야잘알봇 캐릭터·헤더 바로가기·답변 상태 (#1039/#1057/#1058)
+
+- **환경:** prod/web (Vercel) + Supabase migration
+- **Commit:** `0107a562276e8f2aa9ae8e0dfdc766c70faf232c` (#1039) → `04fed9c0b2a30e1a6a4f56b23169077f5e023736` (#1057) → `1c435016b8d8ccba4831544ebdf3efab679786a3` (#1058 최종)
+- **변경사항:** 일반 사용자 쪽지함 목록·대화 헤더의 야잘알 캐릭터 공개, 로그인 홈·뉴스 헤더에서 쪽지 아이콘 왼쪽 한 탭 진입, 비로그인 버튼 DOM 0·직접 URL 이탈, 서버 payload(`reply_kind` + `match_path`) 기반 답변 상태(`answering`/`praised`/`unknown`/`idle`) 표시
+- **DB:** `20260802_ops_message_payload.sql` 선적용. `admin_send_ops_message` 8인자 RPC 단일화, payload까지 dedup 동일성에 포함. 운영 실측 `anon=false`·`authenticated=false`·`service_role=true`, migration ledger 1건
+- **리스크/롤백:** 중간. UI 문제 시 #1058→#1057→#1039 역순 revert. DB 롤백은 8인자 RPC 제거 후 7인자 시그니처 복원 필요
+- **확인 항목:**
+  - [x] 삼순 exact GO 결속 후 순차 squash merge
+  - [x] Vercel Production `dpl_EwTEjeCqKdrUmPwjrxfpWiZugSdX` READY·`keubo.fan` alias
+  - [x] 전용 테스트 계정 End-User QA: 헤더 진입 21/21, 답변 상태·payload 15/15, 공개 아바타·390px 레이아웃 36/36
+  - [x] 테스트 대화·메시지·프로필·auth 잔존 0
+
+---
+
 ## 2026-07-31 13:52 KST — 쇼츠 scope 필터(#973) + 예고선발 공개 알림(#974) [CS 제안]
 
 - **환경:** prod/web (Vercel)
@@ -429,5 +444,3 @@ Rollback
 - 롤백 커밋/방법: `git revert 772aa02` (필요 시 직전 릴리즈로 단계적 revert)
 
 ---
-
-
