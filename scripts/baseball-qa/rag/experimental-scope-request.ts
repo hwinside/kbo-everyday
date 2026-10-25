@@ -1,3 +1,4 @@
+import { renderClosedScope, CLOSED_EXTRA_UNITS } from './experimental-scope-boundary';
 import type { RagEvidence, buildRagLlmRequest } from '../../../src/lib/baseball-qa/rag/retrieve';
 import type { OfficialEvidenceBundle } from '../../../src/lib/baseball-qa/rag/official-sibling-evidence';
 import { OFFICIAL_SIBLING_ANCHOR_BODY_LABEL } from '../../../src/lib/baseball-qa/rag/official-sibling-evidence';
@@ -6,7 +7,7 @@ import { parseScope, renderScope, sha256, EXTRA_UNITS } from './experimental-sco
 
 type Request = ReturnType<typeof buildRagLlmRequest>;
 const identity = (r: RagEvidence) => JSON.stringify([r.canonicalUrl, r.revision, r.sectionPath]);
-export function scopeRequest(base: Request, evidence: RagEvidence[], bundle?: OfficialEvidenceBundle) {
+export function scopeRequest(base: Request, evidence: RagEvidence[], bundle?: OfficialEvidenceBundle, mode: 'labels' | 'closed' = 'labels') {
   const trace: { index: number; reason: string; rawContentSha256?: string; relation?: ReturnType<typeof parseScope>['relation'] }[] = [];
   const unchanged = (reason: string) => ({ request: base, applied: 0, addedUnits: 0, trace, reason });
   if (!bundle || JSON.stringify(evidence) !== JSON.stringify(bundle.modelEvidence)) return unchanged('missing-or-mismatched-bundle');
@@ -25,7 +26,7 @@ export function scopeRequest(base: Request, evidence: RagEvidence[], bundle?: Of
     if (raw.sourceKind !== 'kbo_ebook' || raw.sourceGrade !== 'tier1' || !parsed.relation) {
       trace.push({ index, reason: parsed.reason }); continue;
     }
-    const rendered = renderScope(raw, parsed.relation);
+    const rendered = (mode === 'closed' ? renderClosedScope : renderScope)(raw, parsed.relation);
     const originalView = officialModelEvidenceContent(raw);
     const transformedView = rendered.content + originalView.slice(raw.content.length);
     let oldView = officialModelEvidenceContent(model), newView: string;
@@ -52,7 +53,7 @@ export function scopeRequest(base: Request, evidence: RagEvidence[], bundle?: Of
     trace.push({ index, reason: 'applied', rawContentSha256: sha256(raw.content), relation: parsed.relation });
   }
   if (!applied) return unchanged('no-applicable-span');
-  if (applied > 7 || text.length - before.length !== applied * EXTRA_UNITS) return unchanged('render-budget');
+  if (applied > 6 || text.length - before.length !== applied * (mode === 'closed' ? CLOSED_EXTRA_UNITS : EXTRA_UNITS)) return unchanged('render-budget');
   const request = structuredClone(base);
   request.contents[0].parts[0].text = text;
   return {request, applied, addedUnits: text.length - before.length, trace, reason: 'applied'};
