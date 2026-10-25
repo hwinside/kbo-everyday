@@ -29,6 +29,7 @@ type ClaimedDelivery = {
 
 export type LineupDeliveryResult = {
   snapshotCompleted: boolean;
+  deliveryStatus: "pending" | "delivered" | "partial" | "failed";
   fcmAcceptedDelta: number;
   fcmAcceptedTotal: number;
   pending: number;
@@ -50,6 +51,7 @@ export type LineupDeliveryTarget = {
 
 const EMPTY: LineupDeliveryResult = {
   snapshotCompleted: false,
+  deliveryStatus: "pending",
   fcmAcceptedDelta: 0,
   fcmAcceptedTotal: 0,
   pending: 0,
@@ -89,13 +91,25 @@ export async function finalizeLineupSnapshot(
     expired?: number;
   } | null;
   if (!row) return { ...EMPTY, fcmAcceptedDelta };
+  const accepted = Number(row.accepted ?? 0);
+  const pending = Number(row.pending ?? 0);
+  const permanentFailed = Number(row.permanent_failed ?? 0);
+  const expired = Number(row.expired ?? 0);
+  const deliveryStatus = pending > 0
+    ? "pending"
+    : accepted > 0 && (permanentFailed > 0 || expired > 0)
+      ? "partial"
+      : accepted === 0 && (permanentFailed > 0 || expired > 0)
+        ? "failed"
+        : "delivered";
   return {
     snapshotCompleted: Boolean(row.snapshot_completed),
+    deliveryStatus,
     fcmAcceptedDelta,
-    fcmAcceptedTotal: Number(row.accepted ?? 0),
-    pending: Number(row.pending ?? 0),
-    permanentFailed: Number(row.permanent_failed ?? 0),
-    expired: Number(row.expired ?? 0),
+    fcmAcceptedTotal: accepted,
+    pending,
+    permanentFailed,
+    expired,
   };
 }
 
@@ -107,7 +121,7 @@ export type DueLineupSnapshot = {
   payload: PushPayload;
 };
 
-/** lineup_notified=false 이면서 스냅샷이 열린 (game,team) 상태를 deadline 순으로 반환. payload 는 스냅샷 시점 값 재사용. */
+/** delivery_status=pending 이면서 스냅샷이 열린 (game,team) 상태를 deadline 순으로 반환. payload 는 스냅샷 시점 값 재사용. */
 export async function listDueLineupSnapshots(requestDeadlineAtMs?: number, limit = 200): Promise<DueLineupSnapshot[]> {
   const remaining = remainingMs(requestDeadlineAtMs, "lineup delivery list-due");
   // query-guard: bounded -- SQL RPC 가 p_limit 을 500행으로 clamp.
