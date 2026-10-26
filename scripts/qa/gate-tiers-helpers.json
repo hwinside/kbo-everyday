@@ -154,6 +154,7 @@
     "qa:player-search-backfill",
     "qa:player-stats-failover",
     "qa:player-stats-legacy-telegram-suppression",
+    "qa:naver-standings-legacy-telegram-suppression",
     "qa:player-stats-ui",
     "qa:players-myteam",
     "qa:players-myteam:mutations",
