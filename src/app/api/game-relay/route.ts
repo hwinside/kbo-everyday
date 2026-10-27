@@ -1075,7 +1075,9 @@ export async function GET(req: NextRequest) {
   // One shared KBO snapshot feeds polling and the existing Realtime publisher.
   // Return full snapshots: official scorer corrections may change an older inning.
   try {
-    const kbo = await loadKboLiveText(gameId, { signal: req.signal });
+    const kbo = await loadKboLiveText(gameId, {
+      signal: AbortSignal.any([req.signal, AbortSignal.timeout(2800)]),
+    });
     const innings = parseInningRelays(kbo.rows);
     if (!innings.length) throw new Error("KBO innings unavailable");
     return buildRelayJsonResponse({
