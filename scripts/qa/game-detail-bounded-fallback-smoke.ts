@@ -7,6 +7,7 @@
 import assert from "node:assert/strict";
 import { readFileSync } from "node:fs";
 import { NextRequest } from "next/server";
+import { resetBoundedNaverCacheForTest } from "../../src/lib/crawler/naver-bounded-fetch";
 
 const GAME_ID = "20260729WOLG0";
 const nativeTimeout = AbortSignal.timeout.bind(AbortSignal);
@@ -303,6 +304,7 @@ async function scenario(
     | "sub-pos",
   state: GameState,
 ) {
+  resetBoundedNaverCacheForTest(); // each scenario models an independent upstream state
   const signals = new Set<AbortSignal>();
   const srIds: string[] = [];
   const degradationEvents: Array<{ apiName: string; reason: string }> = [];

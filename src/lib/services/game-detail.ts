@@ -1,3 +1,4 @@
+import { fetchBoundedNaverResponse } from "@/lib/crawler/naver-bounded-fetch";
 import { isAllStarGameId } from "@/lib/constants/teams";
 import { resolveNaverGameId } from "@/lib/crawler/naver-game-id";
 import { normalizeSeriesId } from "@/lib/crawler/game-series";
@@ -483,7 +484,7 @@ function countNaverRecordExtraBaseHits(batter: Record<string, unknown>): {
 
 export async function fetchNaverRecord(
   kboGameId: string,
-  opts?: { signal?: AbortSignal; includeRelayCounts?: boolean },
+  opts?: { signal?: AbortSignal; includeRelayCounts?: boolean; boundedCache?: boolean },
 ): Promise<{
   boxScore: GameDetailResponse["boxScore"];
   linescore: GameDetailResponse["linescore"];
@@ -494,7 +495,9 @@ export async function fetchNaverRecord(
     // 2루타/3루타가 단타로 뭉개진다. relay textRelayData에서 결과 텍스트를
     // 카운트해서 batter별 h2b/h3b/hr를 보강.
     const [res, relayCounts] = await Promise.all([
-      fetch(`${NAVER_API}/${nId}/record`, {
+      opts?.boundedCache && opts.signal
+        ? fetchBoundedNaverResponse(`${NAVER_API}/${nId}/record`, 30_000, opts.signal)
+        : fetch(`${NAVER_API}/${nId}/record`, {
         headers: { "User-Agent": "Mozilla/5.0 (compatible; KboEveryday/1.0)" },
         next: { revalidate: 30 },
         signal: opts?.signal,
@@ -571,7 +574,7 @@ export async function fetchNaverDetailLineup(
   kboGameId: string,
   opts?: { signal?: AbortSignal },
 ): Promise<GameDetailResponse["lineup"]> {
-  const snap = await fetchNaverLineup(kboGameId, { signal: opts?.signal });
+  const snap = await fetchNaverLineup(kboGameId, { signal: opts?.signal, boundedCache: true });
   if (!snap) return null;
   const toEntries = (side: NaverLineupSide): LineupEntry[] =>
     side.batters.map((b) => ({
@@ -666,11 +669,12 @@ export async function getGameDetailRouteResult(params: {
   const naverRecordPromise = fetchNaverRecord(gameId, {
     signal: deadlineSignal,
     includeRelayCounts: false,
+    boundedCache: true,
   });
-  // 라인업도 record 와 같이 eager 준비(revalidate 60 캐시로 fanout 억제). KBO blackhole 로
+  // 라인업도 record 와 같이 eager 준비(프로세스 내 fresh-only 60초 캐시). KBO blackhole 로
   // deadline 이 전부 소진돼도 병렬로 이미 settle 된 결과를 회수할 수 있게 한다.
   const naverLineupPromise = fetchNaverDetailLineup(gameId, { signal: deadlineSignal });
-  const naverStartersPromise = fetchNaverPreviewStarters(gameId, { signal: deadlineSignal });
+  const naverStartersPromise = fetchNaverPreviewStarters(gameId, { signal: deadlineSignal, boundedCache: true });
   const reasonFor = (error: unknown): DegradationReason => {
     const e = error as { name?: string; message?: string };
     if (e?.name === "TimeoutError" || /timeout|deadline/i.test(e?.message ?? "")) return "timeout";
