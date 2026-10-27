@@ -26,6 +26,23 @@ test('blank, truncated, changed tables fail closed instead of successful empty p
   assert.throws(() => parseKboLiveText(gameId, v1.replaceAll('tblScoreBoard2', 'changed'), v2));
   assert.throws(() => parseKboLiveText(gameId, v1, v2.replaceAll('병살', 'changed')));
 });
+test('PO1 actual pinch hitters and defensive replacements retain all late-inning at-bats', async () => {
+  const { parseInningRelays } = await import('../src/app/api/game-relay/route');
+  const score = readFileSync(new URL('./fixtures/kbo-live/po1-view1.html', import.meta.url), 'utf8');
+  const text = readFileSync(new URL('./fixtures/kbo-live/po1-view2.html', import.meta.url), 'utf8');
+  const snapshot = parseKboLiveText('20261026HTSS0', score, text);
+  const innings = parseInningRelays(snapshot.rows);
+  const bottom8 = innings.find(i => i.inning === 8 && i.half === 'bottom')!;
+  const top9 = innings.find(i => i.inning === 9 && i.half === 'top')!;
+  assert.deepEqual(bottom8.plays.map(p => p.batterName), ['김영웅', '김현준', '김도환']);
+  assert.deepEqual(top9.plays.map(p => p.batterName), ['김태군', '박민', '박정우']);
+  assert.ok(bottom8.plays[1].pitches?.length);
+  assert.ok(top9.plays[0].pitches?.length);
+  assert.equal(bottom8.plays[1].batOrder, 8);
+  assert.equal(bottom8.plays[2].batOrder, 9);
+  assert.ok(snapshot.rows.flatMap(r => r.textOptions ?? []).filter(o => o.type === 8).every(o => !o.text.includes('교체')));
+  assert.ok(snapshot.rows.some(r => r.title.includes('대타 김도환 : 2루수 김상준')));
+});
 test('same-length scorer correction replaces original result', async () => {
   const { parseInningRelays } = await import('../src/app/api/game-relay/route');
   const corrected = parseInningRelays(parseKboLiveText(gameId, v1, v2.replace('구자욱 : 삼진 아웃', '구자욱 : 볼넷')).rows);

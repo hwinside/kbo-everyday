@@ -36,7 +36,18 @@ export function parseKboLiveText(gameId: string, scoreHtml: string, textHtml: st
       if (/^\d+회(초|말)\s+.+?\s+공격$/.test(text)) {
         chronological.push({ title: text, titleStyle: '0' }); batter = undefined; continue;
       }
-      const start = /^(?:\d+번타자|대타)\s+(.+)$/.exec(text);
+      // Replacement notices are not batter names. Only an offensive pinch-hit
+      // replacement of the active batter opens a replacement batter marker;
+      // defensive changes must leave the active at-bat untouched.
+      const replacement = /^(\d+번타자|대타)\s+([^:]+?)\s*:\s*대타\s+(.+?)\s+\(으\)로 교체$/.exec(text);
+      if (replacement && replacement[2].trim() === batter) {
+        chronological.push({ title: text, titleStyle: '8', textOptions: [{ seqno: chronological.length, text, type: 2 }] });
+        batter = replacement[3].trim();
+        const marker = `${replacement[1]} ${batter}`;
+        chronological.push({ title: marker, titleStyle: '8', textOptions: [{ seqno: chronological.length, text: marker, type: 8 }] });
+        continue;
+      }
+      const start = /^(?:\d+번타자|대타)\s+([^:]+)$/.exec(text);
       const pitch = /^(\d+)구\s+/.exec(text);
       let type = 2;
       if (start) { batter = start[1]; type = 8; }
