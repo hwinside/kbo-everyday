@@ -444,7 +444,7 @@ export async function publishGameTick(
     let payload: LivePollEnvelope = envelope;
     if (channel === "relay") {
       state.relayChanges += 1;
-      const wantFull = !state.publishedFull || state.relayChanges % RELAY_FRAME_FULL_EVERY === 1;
+      const wantFull = (envelope.data as GameRelayResponse).source === "kbo" || !state.publishedFull || state.relayChanges % RELAY_FRAME_FULL_EVERY === 1;
       if (wantFull) {
         kind = "relay-full";
       } else {

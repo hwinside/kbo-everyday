@@ -1,3 +1,4 @@
+import { loadKboLiveText } from '@/lib/crawler/kbo-live-text';
 import { NextRequest, NextResponse, after } from "next/server";
 import {
   markApiRecovered,
@@ -184,6 +185,7 @@ export interface RelayLinescore {
 }
 
 export interface GameRelayResponse {
+  source?: "kbo" | "naver";
   gameId: string;
   currentInning: number;
   innings: InningRelay[];
@@ -1069,6 +1071,25 @@ export async function GET(req: NextRequest) {
   // 매 폴링마다 전체 이닝을 재전송할 필요가 없다 → origin transfer 절감.
   // 값이 없거나 0 이하이면 종전대로 전체 이닝을 반환한다(첫 로드/self-heal).
   const sinceInning = parseInt(req.nextUrl.searchParams.get("since") || "0") || 0;
+
+  // One shared KBO snapshot feeds polling and the existing Realtime publisher.
+  // Return full snapshots: official scorer corrections may change an older inning.
+  try {
+    const kbo = await loadKboLiveText(gameId, {
+      signal: AbortSignal.any([req.signal, AbortSignal.timeout(2800)]),
+    });
+    const innings = parseInningRelays(kbo.rows);
+    if (!innings.length) throw new Error("KBO innings unavailable");
+    return buildRelayJsonResponse({
+      gameId, source: "kbo", currentInning: Math.max(...innings.map(i => i.inning)),
+      innings, linescore: kbo.linescore, updatedAt: kbo.updatedAt,
+    }, edgeCacheHeadersForRemaining(
+      10_000 - (Date.now() - Date.parse(kbo.updatedAt)), RELAY_EDGE_TTL_SECONDS,
+    ), false);
+  } catch {
+    // Busy admission throttles KBO only; it must not suppress Naver recovery.
+    // Preserve the established Naver fallback and failure contract. Never return empty 200.
+  }
 
   let naverGameId: string;
   try {

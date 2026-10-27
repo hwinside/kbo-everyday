@@ -1,3 +1,4 @@
+import { loadKboLiveText } from '@/lib/crawler/kbo-live-text';
 import { fetchBoundedNaverResponse } from "@/lib/crawler/naver-bounded-fetch";
 import { isAllStarGameId } from "@/lib/constants/teams";
 import { resolveNaverGameId } from "@/lib/crawler/naver-game-id";
@@ -658,6 +659,7 @@ export async function getGameDetailRouteResult(params: {
 
   const seasonId = params.seasonId || gameId.slice(0, 4);
   const deadlineSignal = AbortSignal.timeout(USER_FACING_GAME_DETAIL_DEADLINE_MS);
+  const kboLiveTextPromise = loadKboLiveText(gameId, { signal: deadlineSignal, srId: normalizeSeriesId(params.overrideSrId) }).catch(() => null);
   const dateStr = gameId.slice(0, 8);
   const kboSessionPromise = fetchKboSessionCookie(deadlineSignal);
 
@@ -785,6 +787,14 @@ export async function getGameDetailRouteResult(params: {
     let boxScore = parseBoxScore(boxScoreRes);
     if (boxScore) boxScoreSource = "kbo";
     let linescore = kboLinescore;
+    const kboLiveText = await untilDeadline(kboLiveTextPromise, deadlineSignal, null);
+    if (kboLiveText) {
+      linescore = kboLiveText.linescore;
+      if (!boxScore || ![...boxScore.awayBatters, ...boxScore.homeBatters].some(b => b.atBats > 0)) {
+        boxScore = kboLiveText.boxScore;
+        boxScoreSource = "kbo";
+      }
+    }
 
     // 이닝별 셀이 하나라도 채워졌는지. 경기 종료 전환 순간 KBO 스코어보드가
     // R/H/E 합계만 먼저 주고 이닝 셀은 비워 내려주는 타이밍 창이 있어,
