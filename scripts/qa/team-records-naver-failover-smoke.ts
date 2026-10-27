@@ -188,7 +188,8 @@ function kboFetchStub(variant: KboVariant = "full"): typeof fetch {
     } else {
       return new Response("not found", { status: 404 });
     }
-    return new Response(body, { status: 200 });
+    const controls = '<input type="hidden" name="__VIEWSTATE" value="test"><input type="hidden" name="__EVENTVALIDATION" value="test"><select name="ctl$ddlSeason"><option selected="selected" value="2026">2026</option></select><select name="ctl$ddlSeries"><option selected="selected" value="0">regular</option></select>';
+    return new Response(controls + body, { status: 200 });
   }) as unknown as typeof fetch;
 }
 
