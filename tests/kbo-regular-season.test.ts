@@ -35,3 +35,15 @@ test('Basic2 is read only after Basic1 establishes regular season session', asyn
   await fetchRegularSeasonHtml(url.replace('Basic1','Basic2'),2026,new AbortController().signal,fake);
   assert.deepEqual(calls,[url,url,url.replace('Basic1','Basic2')]);
 });
+
+for (const [year, series] of [[2025, 0], [2026, 5]]) test(`Basic2 rejects detail scope ${year}/${series} after valid Basic1`, async () => {
+  let calls = 0;
+  const fake = (async () => {
+    calls++;
+    return new Response(calls === 1 ? page(2026, 5) : calls === 2 ? page(2026, 0) : page(year, series), {
+      headers: { 'Set-Cookie': 'ASP.NET_SessionId=abc; Path=/' },
+    });
+  }) as typeof fetch;
+  await assert.rejects(fetchRegularSeasonHtml(url.replace('Basic1', 'Basic2'), 2026, new AbortController().signal, fake), /detail season\/series mismatch/);
+  assert.equal(calls, 3);
+});

@@ -1516,11 +1516,54 @@ async function verifySystemPromptContract() {
   });
 }
 
+/** Validate this checkout's handlers, not the previously deployed production revision.
+ * Keep server.makeDeps -> real fetchers -> HTTP response parsing unchanged.
+ * Only team-records transport is replaced; standings and upstream fetches remain live.
+ */
+async function installLocalTeamRoutes() {
+  const [{ NextRequest }, records] = await Promise.all([
+    import("next/server"),
+    import("../../src/app/api/team-records/route"),
+  ]);
+  const nativeFetch = globalThis.fetch;
+  const origin = new URL(process.env.NEXT_PUBLIC_APP_URL || "https://keubo.fan").origin;
+  const hits = new Set<string>();
+  globalThis.fetch = (async (input, init) => {
+    const url = new URL(input instanceof Request ? input.url : String(input));
+    if (url.origin !== origin || url.pathname !== "/api/team-records") {
+      return nativeFetch(input, init);
+    }
+    assert.equal(init?.method ?? "GET", "GET");
+    hits.add(url.pathname);
+    const signal = init?.signal ?? (input instanceof Request ? input.signal : undefined);
+    signal?.throwIfAborted();
+    let onAbort: (() => void) | undefined;
+    try {
+      return await Promise.race([
+        records.GET(new NextRequest(url)),
+        new Promise<never>((_, reject) => {
+          onAbort = () => reject(signal?.reason ?? new DOMException("Aborted", "AbortError"));
+          signal?.addEventListener("abort", onAbort, { once: true });
+          if (signal?.aborted) onAbort();
+        }),
+      ]);
+    } finally {
+      if (onAbort) signal?.removeEventListener("abort", onAbort);
+    }
+  }) as typeof fetch;
+  return () => {
+    globalThis.fetch = nativeFetch;
+    assert.deepEqual([...hits].sort(), ["/api/team-records"], "local handler wiring was bypassed");
+  };
+}
+
 async function main() {
   if (process.env.QA_TEAM_CONTRACT_SELFTEST === "1") {
     verifyTeamSnapshotContractSelftest();
     return;
   }
+  const restoreRoutes = await installLocalTeamRoutes();
+  try {
   players = await loadRosterPlayers();
   assert.ok(
     players.length > 100,
@@ -1548,6 +1591,9 @@ async function main() {
     `✅ team question contract: ${pass} PASS ` +
     `(10개 구단 표기 변형 answerQuestion 실행 + 교차조합 거절 + 범위밖/인젝션 차단 + 지원밖 지표 안내 + 룰 회귀)`,
   );
+  } finally {
+    restoreRoutes();
+  }
 }
 
 main().catch((error) => {
