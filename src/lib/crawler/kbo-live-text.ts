@@ -104,7 +104,10 @@ export async function loadKboLiveText(gameId: string, opts: { signal?: AbortSign
   // Respect the caller's absolute deadline; only standalone relay calls own a timer.
   const signal = opts.signal ?? AbortSignal.timeout(2800);
   const command = opts.command ?? redis;
-  const key = `kbo:live-text:v1:${gameId}`;
+  const environment = process.env.VERCEL_ENV ?? 'development';
+  if (!['production', 'preview', 'development'].includes(environment)) throw new Error('Invalid KBO cache environment');
+  // Snapshot and admission share this namespace; Preview never reads/writes production keys.
+  const key = `kbo:live-text:v1:${environment}:${gameId}`;
   const cached = await command(['GET', key], signal);
   if (typeof cached === 'string') {
     const data = JSON.parse(cached) as KboLiveText;

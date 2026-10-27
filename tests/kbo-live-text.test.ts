@@ -111,6 +111,36 @@ test('standalone collection retains one 2800ms deadline shared across all IO', a
   await loadKboLiveText(gameId, { command, fetcher, srId: '5' });
   assert.equal(timeout.mock.callCount(), 1);
 });
+test('shared Redis isolates production, preview and local snapshots and admission keys', async () => {
+  const original = process.env.VERCEL_ENV;
+  const h = harness();
+  const keys = new Set<string>();
+  const command: RedisCommand = async (args, signal) => {
+    if (args[0] === 'GET' || args[0] === 'SET') keys.add(String(args[1]));
+    if (args[0] === 'EVAL') {
+      assert.equal(args[3], `${args[4]}:admission`);
+      keys.add(String(args[3])); keys.add(String(args[4]));
+    }
+    return h.command(args, signal);
+  };
+  try {
+    for (const environment of ['production', 'preview', undefined]) {
+      if (environment === undefined) delete process.env.VERCEL_ENV;
+      else process.env.VERCEL_ENV = environment;
+      await loadKboLiveText(gameId, { ...h, command, srId: '5' });
+      await loadKboLiveText(gameId, { ...h, command, srId: '5' });
+    }
+    assert.equal(h.count(), 6, 'each environment collects its own two views; warm reads do not collect');
+    assert.deepEqual([...keys].sort(), ['production', 'preview', 'development'].flatMap(e => [
+      `kbo:live-text:v1:${e}:${gameId}`, `kbo:live-text:v1:${e}:${gameId}:admission`,
+    ]).sort());
+    process.env.VERCEL_ENV = 'invalid';
+    await assert.rejects(loadKboLiveText(gameId, { ...h, command, srId: '5' }), /Invalid KBO cache environment/);
+  } finally {
+    if (original === undefined) delete process.env.VERCEL_ENV;
+    else process.env.VERCEL_ENV = original;
+  }
+});
 test('aborted collection cannot publish snapshot', async () => {
   const h = harness(); const ac = new AbortController();
   const fetcher = (async () => { ac.abort(); return new Response(v2); }) as typeof fetch;
