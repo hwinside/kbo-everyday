@@ -215,7 +215,7 @@ export default function GameDetailPage() {
   const relayPollInterval = liveGame?.isLive ? 3000 : 30000;
   // game-events는 첫 poll/매 15초/final 전환 때 relay와 같은 Edge Request의
   // NDJSON frame으로 받는다. 이벤트 기능·cadence는 유지하면서 별도 client poll을 제거한다.
-  const { data: gameRelay, events: gameEvents } = useGameRelay(
+  const { data: gameRelay, events: gameEvents, isDelayed: isRelayDelayed } = useGameRelay(
     gameId,
     liveGame?.isLive ?? false,
     relayPollInterval,
@@ -549,6 +549,13 @@ export default function GameDetailPage() {
           {(gameDetail?.meta?.stadium || liveGame?.stadium || game.stadium) && (
             <span>{gameDetail?.meta?.stadium || liveGame?.stadium || game.stadium}</span>
           )}
+        </div>
+      )}
+
+      {isRelayDelayed && (d.isLive || liveIsFinal) && (
+        <div role="status" className="mx-4 my-2 rounded-lg bg-bg-tertiary px-3 py-2 text-sm text-text-secondary">
+          네이버 중계 연결 지연 중 · 자동으로 다시 연결합니다.
+          {gameRelay && <span className="block text-xs">마지막으로 받은 중계 내용을 표시하고 있습니다.</span>}
         </div>
       )}
 
