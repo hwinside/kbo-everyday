@@ -10,6 +10,7 @@
 // 스냅샷은 side 별 "선발투수 정확히 1 + 타자 정확히 9" 검증을 통과한 **완전 라인업**일 때만
 // 존재한다(confirmed=true). 부분 응답·조회 실패는 null — 확정알림 오발송 방지 fail-close.
 
+import { fetchBoundedNaverResponse } from "./naver-bounded-fetch";
 import { resolveNaverGameId } from "@/lib/crawler/naver-game-id";
 
 const NAVER_API = "https://api-gw.sports.naver.com/schedule/games";
@@ -148,13 +149,16 @@ export function parseNaverPreviewLineup(json: unknown): NaverLineupSnapshot | nu
  */
 export async function fetchNaverLineup(
   kboGameId: string,
-  opts?: { signal?: AbortSignal; timeoutMs?: number; srId?: string; requireGameIdentity?: boolean },
+  opts?: { signal?: AbortSignal; timeoutMs?: number; boundedCache?: boolean; srId?: string; requireGameIdentity?: boolean },
 ): Promise<NaverLineupSnapshot | null> {
   try {
     const signal =
       opts?.signal ?? (opts?.timeoutMs != null ? AbortSignal.timeout(opts.timeoutMs) : undefined);
     const nId = await resolveNaverGameId(kboGameId, { signal, srId: opts?.srId });
-    const res = await fetch(`${NAVER_API}/${nId}/preview`, {
+    const url = `${NAVER_API}/${nId}/preview`;
+    const res = opts?.boundedCache && signal
+      ? await fetchBoundedNaverResponse(url, 60_000, signal)
+      : await fetch(url, {
       headers: { "User-Agent": "Mozilla/5.0 (compatible; KboEveryday/1.0)" },
       next: { revalidate: 60 },
       signal,
@@ -177,13 +181,16 @@ export async function fetchNaverLineup(
  */
 export async function fetchNaverPreviewStarters(
   kboGameId: string,
-  opts?: { signal?: AbortSignal; timeoutMs?: number; srId?: string },
+  opts?: { signal?: AbortSignal; timeoutMs?: number; boundedCache?: boolean; srId?: string },
 ): Promise<NaverPreviewStarters | null> {
   try {
     const signal =
       opts?.signal ?? (opts?.timeoutMs != null ? AbortSignal.timeout(opts.timeoutMs) : undefined);
     const nId = await resolveNaverGameId(kboGameId, { signal, srId: opts?.srId });
-    const res = await fetch(`${NAVER_API}/${nId}/preview`, {
+    const url = `${NAVER_API}/${nId}/preview`;
+    const res = opts?.boundedCache && signal
+      ? await fetchBoundedNaverResponse(url, 60_000, signal)
+      : await fetch(url, {
       headers: { "User-Agent": "Mozilla/5.0 (compatible; KboEveryday/1.0)" },
       next: { revalidate: 60 },
       signal,
