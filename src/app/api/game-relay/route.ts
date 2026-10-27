@@ -1,4 +1,4 @@
-import { loadKboLiveText, KboCollectionBusyError } from '@/lib/crawler/kbo-live-text';
+import { loadKboLiveText } from '@/lib/crawler/kbo-live-text';
 import { NextRequest, NextResponse, after } from "next/server";
 import {
   markApiRecovered,
@@ -1083,13 +1083,11 @@ export async function GET(req: NextRequest) {
     return buildRelayJsonResponse({
       gameId, source: "kbo", currentInning: Math.max(...innings.map(i => i.inning)),
       innings, linescore: kbo.linescore, updatedAt: kbo.updatedAt,
-    }, NO_STORE_HEADERS, false);
-  } catch (error) {
-    if (error instanceof KboCollectionBusyError) {
-      return NextResponse.json({ error: "relay_collection_pending" }, {
-        status: 503, headers: { ...NO_STORE_HEADERS, "Retry-After": "1" },
-      });
-    }
+    }, edgeCacheHeadersForRemaining(
+      10_000 - (Date.now() - Date.parse(kbo.updatedAt)), RELAY_EDGE_TTL_SECONDS,
+    ), false);
+  } catch {
+    // Busy admission throttles KBO only; it must not suppress Naver recovery.
     // Preserve the established Naver fallback and failure contract. Never return empty 200.
   }
 
