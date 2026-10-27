@@ -10,7 +10,7 @@
  *      단일 연도 suffix (…LGWO02026) — 과차단/이중변환 양쪽 회귀 검출
  *   4) /api/game-detail GET: 긴 ID → 400
  *   5) single-flight: 동일 key 동시 요청 → 업스트림 inning=1 fetch 정확히 1회
- *   6) 실패 후 재시도: 실패 promise가 맵에 박제되지 않고 다음 요청은 새 업스트림 시도
+ *   6) 실패 후 재시도: 5초 동안 503 유지·업스트림 억제, 만료 후 새 시도로 복구
  *   7) 복구 알림 게이트: degraded 200에서는 복구 미발송(삼순 Blocker 1),
  *      완전 정상에서 1회만 발송(중복 금지)
  *   8) NACK 순서 계약(삼순 2차 ②): claim→alert 전송 실패(NACK)→정상 200→drainer
@@ -117,6 +117,7 @@ async function main() {
     // 최소 유효 스키마: textRelays 배열(빈 배열 = 정당한 빈 이닝). 이닝별 실패/지연/
     // 텔레그램 인터셉트를 한 스텁에서 제어한다.
     let inning1Calls = 0;
+    let naverAttempts = 0;
     let upstreamMode: {
       currentInning: number;
       failInnings: Set<number>;
@@ -177,6 +178,7 @@ async function main() {
       if (!url.includes("api-gw.sports.naver.com")) {
         throw new Error("unexpected network call in qa gate: " + url);
       }
+      naverAttempts++;
       if (upstreamMode.delayMs) await new Promise((r) => setTimeout(r, upstreamMode.delayMs));
       if (upstreamMode.failAll) {
         const err = new Error("stubbed total outage");
@@ -211,17 +213,29 @@ async function main() {
       `${c1.status}/${c2.status}/${c3.status}`);
     check("업스트림 inning=1 fetch 정확히 1회", inning1Calls === 1, `${inning1Calls}회`);
 
-    console.log("[6] 실패 후 재시도: 실패 promise 박제 없음");
+    console.log("[6] 실패 후 재시도: 짧은 cooldown 후 복구, 실패 박제 없음");
     upstreamMode = { currentInning: 1, failInnings: new Set(), failAll: true };
     const f1 = await relayRoute.GET(
       new NextRequest("http://localhost/api/game-relay?gameId=20260811RTRY0"),
     );
     check("전면 실패 → 503", f1.status === 503, `got ${f1.status}`);
+    check("실패 응답 Retry-After=5", f1.headers.get("Retry-After") === "5");
+    check("실패 응답 no-store", Boolean(f1.headers.get("Cache-Control")?.includes("no-store")));
     upstreamMode = { currentInning: 1, failInnings: new Set() };
+    const attemptsAfterFailure = naverAttempts;
+    const cooling = await relayRoute.GET(
+      new NextRequest("http://localhost/api/game-relay?gameId=20260811RTRY0"),
+    );
+    check("cooldown 중 빈 200 대신 503 유지", cooling.status === 503);
+    check("cooldown 중 업스트림 호출 추가 없음", naverAttempts === attemptsAfterFailure);
+    // 실시간을 사용해 producer GET과 gate의 동일 만료 경계를 검증한다.
+    await new Promise(resolve => setTimeout(resolve, 5100));
     const f2 = await relayRoute.GET(
       new NextRequest("http://localhost/api/game-relay?gameId=20260811RTRY0"),
     );
-    check("복구 후 재요청 → 200(실패 고정 없음)", f2.status === 200, `got ${f2.status}`);
+    check("cooldown 만료 후 재요청 → 200(실패 고정 없음)", f2.status === 200, `got ${f2.status}`);
+    check("만료 후 실제 업스트림 재시도", naverAttempts > attemptsAfterFailure);
+    check("복구 응답에 Retry-After 없음", f2.headers.get("Retry-After") === null);
 
     console.log("[7] 복구 알림: degraded에서는 미발송, 완전 정상에서 1회만");
     // 사전: 이 인스턴스가 경보를 보낸 상태를 주입
