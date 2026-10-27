@@ -1518,19 +1518,20 @@ async function verifySystemPromptContract() {
 
 /** Validate this checkout's handlers, not the previously deployed production revision.
  * Keep server.makeDeps -> real fetchers -> HTTP response parsing unchanged.
- * Only team-records transport is replaced; standings and upstream fetches remain live.
+ * Only local API transport is replaced; upstream fetches remain live.
  */
 async function installLocalTeamRoutes() {
-  const [{ NextRequest }, records] = await Promise.all([
+  const [{ NextRequest }, records, standings] = await Promise.all([
     import("next/server"),
     import("../../src/app/api/team-records/route"),
+    import("../../src/app/api/standings/route"),
   ]);
   const nativeFetch = globalThis.fetch;
   const origin = new URL(process.env.NEXT_PUBLIC_APP_URL || "https://keubo.fan").origin;
   const hits = new Set<string>();
   globalThis.fetch = (async (input, init) => {
     const url = new URL(input instanceof Request ? input.url : String(input));
-    if (url.origin !== origin || url.pathname !== "/api/team-records") {
+    if (url.origin !== origin || !["/api/team-records", "/api/standings"].includes(url.pathname)) {
       return nativeFetch(input, init);
     }
     assert.equal(init?.method ?? "GET", "GET");
@@ -1540,7 +1541,7 @@ async function installLocalTeamRoutes() {
     let onAbort: (() => void) | undefined;
     try {
       return await Promise.race([
-        records.GET(new NextRequest(url)),
+        url.pathname === "/api/team-records" ? records.GET(new NextRequest(url)) : standings.GET(),
         new Promise<never>((_, reject) => {
           onAbort = () => reject(signal?.reason ?? new DOMException("Aborted", "AbortError"));
           signal?.addEventListener("abort", onAbort, { once: true });
@@ -1553,7 +1554,7 @@ async function installLocalTeamRoutes() {
   }) as typeof fetch;
   return () => {
     globalThis.fetch = nativeFetch;
-    assert.deepEqual([...hits].sort(), ["/api/team-records"], "local handler wiring was bypassed");
+    assert.deepEqual([...hits].sort(), ["/api/standings", "/api/team-records"], "local handler wiring was bypassed");
   };
 }
 

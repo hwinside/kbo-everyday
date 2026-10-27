@@ -463,7 +463,7 @@ export async function fetchStandings(): Promise<TeamStanding[]> {
           "Referer": "https://sports.news.naver.com/",
           "User-Agent": "Mozilla/5.0 (compatible; KboEveryday/1.0)",
         },
-        signal: AbortSignal.timeout(5000),
+        signal: AbortSignal.timeout(1500),
         cache: "no-store",
       }
     );
@@ -526,6 +526,7 @@ export async function fetchStandings(): Promise<TeamStanding[]> {
           };
           return names[id] === teamName;
         })?.[1] ?? 0,
+        ranking: parseInt(cells[0], 10),
         games: parseInt(cells[2]) || 0,
         wins: parseInt(cells[3]) || 0,
         losses: parseInt(cells[4]) || 0,
