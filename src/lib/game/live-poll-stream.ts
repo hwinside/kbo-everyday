@@ -4,6 +4,7 @@ export interface LivePollEnvelope {
   channel: LivePollChannel;
   ok: boolean;
   status: number;
+  retryAfter?: string | null;
   data: unknown;
 }
 
@@ -67,6 +68,7 @@ async function responseEnvelope(
       channel,
       ok: response.ok,
       status: response.status,
+      retryAfter: response.headers.get("retry-after"),
       data,
     };
   } catch (error) {
