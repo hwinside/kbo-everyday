@@ -4,6 +4,7 @@ import { fetchNaverGames } from "@/lib/crawler/naver-games";
 import type { KboGame } from "@/lib/crawler/kbo-api";
 import { fetchKboGamesOnly } from "@/lib/crawler/kbo-api";
 import { resolveNaverGameId } from "@/lib/crawler/naver-game-id";
+import { confirmKboOffday } from "@/lib/crawler/kbo-offday";
 
 const KBO_MAIN = "https://www.koreabaseball.com/ws/Main.asmx";
 const KBO_BROWSER_UA =
@@ -58,7 +59,7 @@ export type LiveGamesSource = "kbo" | "naver" | "none";
 
 export type LiveGamesTrace = {
   source: LiveGamesSource;
-  stage: "kbo" | "kbo-empty-confirmed" | "naver" | "dual-fail";
+  stage: "kbo" | "kbo-empty-confirmed" | "kbo-offday-confirmed" | "naver" | "dual-fail";
   sourceAtMs: number;
   fetchedAtMs: number;
   deadlineAtMs: number;
@@ -531,8 +532,8 @@ async function fetchKboLiveGamesUnfiltered(
 }> {
   const sourceAtMs = Date.now();
   const absoluteDeadlineAtMs = deadlineAtMs ?? sourceAtMs + 5_000;
-  // KBO 200 + 빈 game 배열(soft-empty)은 장애 중 "가짜 무경기"일 수 있어 Naver 교차확인
-  // 전까지 authoritative 로 인정하지 않는다(삼순 2차 리뷰 P1).
+  // A bare empty scoreboard can be degraded. Require either a successful KBO
+  // calendar gap witness or the existing Naver cross-check before accepting it.
   let kboEmptyResult: {
     ok: true;
     games: KboRawGame[];
@@ -597,6 +598,20 @@ async function fetchKboLiveGamesUnfiltered(
             deadlineAtMs: absoluteDeadlineAtMs,
           },
         };
+        // A successful empty scoreboard plus an independent KBO calendar gap
+        // proves an off day without depending on the blocked Naver endpoint.
+        // Never run this path on HTTP/schema failure, partial games, or a
+        // targeted game lookup. Unknown calendar evidence retains failover.
+        if (games.length === 0 && !requiredGameId && result.json?.code === "100") {
+          const confirmed = await runSourceBeforeDeadline(
+            signal => confirmKboOffday(date, signal, fetchImpl),
+            Math.min(absoluteDeadlineAtMs, Date.now() + KBO_PRIMARY_BUDGET_MS),
+          );
+          if (confirmed) return {
+            ...kboEmptyResult,
+            trace: { ...kboEmptyResult.trace, stage: "kbo-offday-confirmed", fetchedAtMs: Date.now() },
+          };
+        }
       }
     }
   } catch {
@@ -628,7 +643,7 @@ async function fetchKboLiveGamesUnfiltered(
       },
     };
   } catch {
-    // KBO soft-empty(200+빈 배열)는 Naver가 "실제로 무경기"임을 정상 확인해 준 경우에만
+    // KBO calendar로 확인하지 못한 soft-empty는 Naver가 무경기를 정상 확인한 경우에만
     // authoritative로 인정한다. Naver 확인 자체가 실패하면 dual-source 불확실이므로
     // ok:false fail-close — soft-empty가 검증 없이 정상 무경기로 둔갑해 watchdog이
     // 0경기 blackhole에 빠지는 경로를 차단한다(삼순 3차 리뷰 P0).
