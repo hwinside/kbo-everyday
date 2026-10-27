@@ -52,6 +52,8 @@ export async function runGameStartWatchdog(
 ): Promise<GameStartWatchdogResult> {
   const fetched = await deps.fetchGames(deadlineAtMs);
   if (!fetched.ok) throw new Error("kbo_fetch_failed");
+  // A confirmed empty slate has no transitions to notify or state to mutate.
+  if (fetched.games.length === 0) return { scheduled: 0, live: 0, evidenceRequested: 0, started: 0 };
 
   const relevant = fetched.games.filter((game) =>
     Boolean(game.G_ID)
