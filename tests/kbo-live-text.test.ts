@@ -79,6 +79,38 @@ test('failure keeps shared cooldown closed and Redis failure never bypasses admi
   await assert.rejects(loadKboLiveText(gameId, { ...h, command, srId: '5' }));
   assert.equal(h.count(), 2);
 });
+test('caller deadline is shared by Redis and both KBO views without another timer', async (t) => {
+  const h = harness(); const ac = new AbortController();
+  const timeout = t.mock.method(AbortSignal, 'timeout', () => { throw new Error('unexpected nested deadline'); });
+  const command: RedisCommand = async (args, signal) => {
+    assert.equal(signal, ac.signal);
+    return h.command(args, signal);
+  };
+  const fetcher: typeof fetch = async (url, init) => {
+    assert.equal(init?.signal, ac.signal);
+    return h.fetcher(url, init);
+  };
+  await loadKboLiveText(gameId, { command, fetcher, srId: '5', signal: ac.signal });
+  assert.equal(h.count(), 2);
+  assert.equal(timeout.mock.callCount(), 0);
+});
+test('standalone collection retains one 2800ms deadline shared across all IO', async (t) => {
+  const h = harness(); const ac = new AbortController();
+  const timeout = t.mock.method(AbortSignal, 'timeout', (ms: number) => {
+    assert.equal(ms, 2800);
+    return ac.signal;
+  });
+  const command: RedisCommand = async (args, signal) => {
+    assert.equal(signal, ac.signal);
+    return h.command(args, signal);
+  };
+  const fetcher: typeof fetch = async (url, init) => {
+    assert.equal(init?.signal, ac.signal);
+    return h.fetcher(url, init);
+  };
+  await loadKboLiveText(gameId, { command, fetcher, srId: '5' });
+  assert.equal(timeout.mock.callCount(), 1);
+});
 test('aborted collection cannot publish snapshot', async () => {
   const h = harness(); const ac = new AbortController();
   const fetcher = (async () => { ac.abort(); return new Response(v2); }) as typeof fetch;

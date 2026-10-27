@@ -101,7 +101,8 @@ async function redis(args: (string | number)[], signal: AbortSignal): Promise<un
 /** Shared admission remains closed for 10s even on upstream failure. No local fallback on Redis failure. */
 export async function loadKboLiveText(gameId: string, opts: { signal?: AbortSignal; srId?: string; command?: RedisCommand; fetcher?: typeof fetch } = {}): Promise<KboLiveText> {
   if (!isCanonicalKboGameId(gameId)) throw new Error('invalid game id');
-  const signal = opts.signal ? AbortSignal.any([opts.signal, AbortSignal.timeout(2800)]) : AbortSignal.timeout(2800);
+  // Respect the caller's absolute deadline; only standalone relay calls own a timer.
+  const signal = opts.signal ?? AbortSignal.timeout(2800);
   const command = opts.command ?? redis;
   const key = `kbo:live-text:v1:${gameId}`;
   const cached = await command(['GET', key], signal);
