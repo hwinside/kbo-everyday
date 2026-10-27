@@ -554,7 +554,7 @@ export default function GameDetailPage() {
 
       {isRelayDelayed && (d.isLive || liveIsFinal) && (
         <div role="status" className="mx-4 my-2 rounded-lg bg-bg-tertiary px-3 py-2 text-sm text-text-secondary">
-          네이버 중계 연결 지연 중 · 자동으로 다시 연결합니다.
+          중계 연결 지연 중 · 자동으로 다시 연결합니다.
           {gameRelay && <span className="block text-xs">마지막으로 받은 중계 내용을 표시하고 있습니다.</span>}
         </div>
       )}
