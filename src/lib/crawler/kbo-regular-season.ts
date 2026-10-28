@@ -25,6 +25,15 @@ function form(html: string) {
   return { body, seasonName, seriesName };
 }
 
+async function readHtml(response: Response, signal: AbortSignal): Promise<string> {
+  signal.throwIfAborted();
+  return new Promise<string>((resolve, reject) => {
+    const abort = () => reject(signal.reason);
+    signal.addEventListener('abort', abort, { once: true });
+    response.text().then(resolve, reject).finally(() => signal.removeEventListener('abort', abort));
+  });
+}
+
 export async function fetchRegularSeasonHtml(
   url: string, season: number, signal: AbortSignal, fetchImpl: typeof fetch = fetch,
 ): Promise<string> {
@@ -33,7 +42,7 @@ export async function fetchRegularSeasonHtml(
   const selectionUrl = url.replace("/Hitter/Basic2.aspx", "/Hitter/Basic1.aspx");
   const initial = await fetchImpl(selectionUrl, { headers, signal, cache: "no-store" });
   if (!initial.ok) throw new Error(`KBO GET HTTP ${initial.status}`);
-  let html = await initial.text();
+  let html = await readHtml(initial, signal);
   const state = form(html);
   if (selectionUrl === url && state.body.get(state.seasonName) === String(season) && state.body.get(state.seriesName) === "0") return html;
   if (!state.body.get("__VIEWSTATE") || !state.body.get("__EVENTVALIDATION")) throw new Error("KBO form tokens missing");
@@ -48,7 +57,7 @@ export async function fetchRegularSeasonHtml(
     body: state.body.toString(), signal, cache: "no-store",
   });
   if (!response.ok) throw new Error(`KBO POST HTTP ${response.status}`);
-  html = await response.text();
+  html = await readHtml(response, signal);
   const selected = form(html);
   if (selected.body.get(selected.seasonName) !== String(season) || selected.body.get(selected.seriesName) !== "0") {
     throw new Error("KBO season/series selection mismatch");
@@ -61,9 +70,61 @@ export async function fetchRegularSeasonHtml(
     }
     const detail = await fetchImpl(url, { headers: { ...headers, Cookie: [...cookies.values()].join("; ") }, signal, cache: "no-store" });
     if (!detail.ok) throw new Error(`KBO detail HTTP ${detail.status}`);
-    html = await detail.text();
+    html = await readHtml(detail, signal);
     const detailState = form(html);
     if (detailState.body.get(detailState.seasonName) !== String(season) || detailState.body.get(detailState.seriesName) !== "0") throw new Error("KBO detail season/series mismatch");
   }
   return html;
+}
+
+/** Collect every page in one verified regular-season WebForms session.
+ * A missing/looping pager or season change fails the entire collection.
+ */
+export async function fetchRegularSeasonPages(
+  url: string, season: number, signal: AbortSignal, fetchImpl: typeof fetch = fetch,
+): Promise<string[]> {
+  const cookies = new Map<string, string>();
+  const sessionFetch: typeof fetch = async (input, init) => {
+    const response = await fetchImpl(input, init);
+    for (const cookie of response.headers.getSetCookie()) {
+      const pair = cookie.split(';')[0];
+      cookies.set(pair.split('=')[0], pair);
+    }
+    return response;
+  };
+  let html = await fetchRegularSeasonHtml(url, season, signal, sessionFetch);
+  const pages: string[] = [];
+  const seenPlayerIds = new Set<string>();
+  while (pages.length < 40) {
+    signal.throwIfAborted();
+    const state = form(html);
+    if (state.body.get(state.seasonName) !== String(season) || state.body.get(state.seriesName) !== '0') {
+      throw new Error('KBO paged season/series mismatch');
+    }
+    const links = [...html.matchAll(/<a\b([^>]*)>([\s\S]*?)<\/a>/gi)].map(m => ({ a: attributes(m[1]), label: m[2].replace(/<[^>]+>/g, '').trim() }));
+    const current = links.find(link => /ucPager_btnNo/.test(link.a.id ?? '') && /(?:^|\s)on(?:\s|$)/.test(link.a.class ?? ''));
+    if (!current || Number(current.label) !== pages.length + 1) throw new Error('KBO pager missing, skipped or repeated');
+    const tbody = html.match(/<tbody[^>]*>([\s\S]*?)<\/tbody>/i)?.[1];
+    if (!tbody || !/<tr\b/i.test(tbody)) throw new Error('KBO page table empty');
+    for (const match of tbody.matchAll(/playerId=(\d+)/g)) {
+      if (seenPlayerIds.has(match[1])) throw new Error('KBO duplicate player across pages');
+      seenPlayerIds.add(match[1]);
+    }
+    pages.push(html);
+    const next = links.find(link => /ucPager_btnNo/.test(link.a.id ?? '') && Number(link.label) === pages.length + 1)
+      ?? links.find(link => /ucPager_btnNext$/.test(link.a.id ?? '') && link.a.href?.includes('__doPostBack'));
+    if (!next) return pages;
+    const target = next.a.href?.match(/__doPostBack\('([^']+)'/)?.[1];
+    if (!target || !cookies.size) throw new Error('KBO pager target/session missing');
+    state.body.set('__EVENTTARGET', target);
+    state.body.set('__EVENTARGUMENT', '');
+    const response = await sessionFetch(url, {
+      method: 'POST', signal, cache: 'no-store',
+      headers: { 'User-Agent': 'Mozilla/5.0', Referer: url, 'Content-Type': 'application/x-www-form-urlencoded', Cookie: [...cookies.values()].join('; ') },
+      body: state.body.toString(),
+    });
+    if (!response.ok) throw new Error(`KBO page HTTP ${response.status}`);
+    html = await readHtml(response, signal);
+  }
+  throw new Error('KBO page limit exceeded');
 }

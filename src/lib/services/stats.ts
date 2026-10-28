@@ -1,3 +1,4 @@
+import { fetchRegularSeasonHtml, fetchRegularSeasonPages } from "@/lib/crawler/kbo-regular-season";
 import batterStats2025 from "@/lib/constants/stats-2025-batters.json";
 import pitcherStats2025 from "@/lib/constants/stats-2025-pitchers.json";
 import batterStats2026 from "@/lib/constants/stats-2026-batters.json";
@@ -19,8 +20,6 @@ import {
 
 const KBO_BASE = "https://www.koreabaseball.com";
 const RUNNER_URL = `${KBO_BASE}/Record/Player/Runner/Basic.aspx?sort=SB_CN`;
-const RUNNER_PAGER_PREFIX =
-  "ctl00$ctl00$ctl00$cphContents$cphContents$cphContents$ucPager$";
 const RUNNER_CRAWL_TIMEOUT_MS = 5_000;
 const RUNNER_MIN_PAGES = 9;
 const RUNNER_MIN_ROWS = 250;
@@ -40,28 +39,17 @@ interface PlayerStat {
 type RunnerStat = { sb: number; cs: number };
 type RunnerSource = "live" | "static-fallback";
 
-function readTextWithSignal(response: Response, signal: AbortSignal): Promise<string> {
-  return new Promise<string>((resolve, reject) => {
-    const onAbort = () => reject(new DOMException("aborted", "AbortError"));
-    signal.addEventListener("abort", onAbort, { once: true });
-    response.text().then(resolve, reject).finally(() => {
-      signal.removeEventListener("abort", onAbort);
-    });
-  });
-}
-
 async function fetchHtml(url: string, signal?: AbortSignal): Promise<string> {
-  const res = await fetch(url, {
-    headers: {
-      "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36",
-      "Referer": KBO_BASE,
-    },
-    next: { revalidate: 0 },  // 캐싱은 인메모리 캐시에서 관리 (getCacheTtl)
-    signal,
-  });
-  if (!res.ok) throw new Error(`KBO stats HTTP ${res.status}`);
-  if (!signal) return res.text();
-  return readTextWithSignal(res, signal);
+  const boundedSignal = signal ?? AbortSignal.timeout(STATS_KBO_BUDGET_MS);
+  if (url.includes('/HitterBasic/') && new URL(url).searchParams.get('sort') === 'GAME_CN') {
+    const pages = await fetchRegularSeasonPages(url, 2026, boundedSignal);
+    return `<table><tbody>${pages.map(html => {
+      const body = html.match(/<tbody[^>]*>([\s\S]*?)<\/tbody>/i)?.[1];
+      if (!body) throw new Error('KBO player page table missing');
+      return body;
+    }).join('')}</tbody></table>`;
+  }
+  return fetchRegularSeasonHtml(url, 2026, boundedSignal);
 }
 
 export type ParsedTableRow = string[] & { playerId?: string };
@@ -142,112 +130,16 @@ export function mergeBasicRows(tables: ParsedTableRow[][]): ParsedTableRow[] {
   return [...merged.values()];
 }
 
-function decodeHtmlAttribute(value: string): string {
-  return value
-    .replace(/&amp;/g, "&")
-    .replace(/&#39;/g, "'")
-    .replace(/&quot;/g, '"')
-    .replace(/&lt;/g, "<")
-    .replace(/&gt;/g, ">");
-}
-
-function runnerPostbackBody(html: string, eventTarget: string): URLSearchParams {
-  const body = new URLSearchParams();
-  for (const match of html.matchAll(/<input\b[^>]*type=["']hidden["'][^>]*>/gi)) {
-    const tag = match[0];
-    const name = tag.match(/\bname=["']([^"']+)["']/i)?.[1];
-    const value = tag.match(/\bvalue=["']([^"']*)["']/i)?.[1] ?? "";
-    if (name) body.set(decodeHtmlAttribute(name), decodeHtmlAttribute(value));
-  }
-  if (!body.get("__VIEWSTATE") || !body.get("__EVENTVALIDATION")) {
-    throw new Error("Runner WebForms hidden fields missing");
-  }
-  body.set("__EVENTTARGET", eventTarget);
-  body.set("__EVENTARGUMENT", "");
-  return body;
-}
-
-function runnerCurrentPage(html: string): number {
-  const page = html.match(/ucPager_btnNo\d+["'][^>]*class=["']on["'][^>]*>(\d+)</i)?.[1];
-  if (!page) throw new Error("Runner current page missing");
-  return Number(page);
-}
-
-function runnerNextTarget(html: string, currentPage: number): string | null {
-  for (const match of html.matchAll(
-    /<a\b[^>]*href=["'][^"']*__doPostBack\((?:&#39;|')([^'&]+)(?:&#39;|')[^>]*>([\s\S]*?)<\/a>/gi,
-  )) {
-    const target = decodeHtmlAttribute(match[1]);
-    const label = match[2].replace(/<[^>]+>/g, "").trim();
-    if (target.startsWith(RUNNER_PAGER_PREFIX) && Number(label) === currentPage + 1) {
-      return target;
-    }
-  }
-  return html.includes(`${RUNNER_PAGER_PREFIX}btnNext`)
-    ? `${RUNNER_PAGER_PREFIX}btnNext`
-    : null;
-}
-
-/**
- * KBO Runner WebForms 전 페이지를 같은 ASP.NET session으로 순차 수집한다.
- * 한 페이지라도 실패하면 부분 결과를 반환하지 않아 호출측이 static 전체 fallback으로 전환한다.
- */
 export async function fetchAllRunnerRows(
-  fetchImpl: typeof fetch = fetch,
-  externalSignal?: AbortSignal,
+  fetchImpl: typeof fetch = fetch, externalSignal?: AbortSignal,
 ): Promise<ParsedTableRow[]> {
-  const controller = new AbortController();
-  const timeout = setTimeout(() => controller.abort(), RUNNER_CRAWL_TIMEOUT_MS);
   const signal = externalSignal
-    ? AbortSignal.any([controller.signal, externalSignal])
-    : controller.signal;
-  try {
-    let response = await fetchImpl(RUNNER_URL, {
-      headers: {
-        "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36",
-        "Referer": RUNNER_URL,
-      },
-      signal,
-    });
-    if (!response.ok) throw new Error(`Runner GET HTTP ${response.status}`);
-    const cookie = response.headers.get("set-cookie")?.split(";")[0];
-    if (!cookie) throw new Error("Runner ASP.NET session cookie missing");
-
-    let html = await readTextWithSignal(response, signal);
-    const rows: ParsedTableRow[] = [];
-    const seenPages = new Set<number>();
-    while (true) {
-      const page = runnerCurrentPage(html);
-      if (seenPages.has(page)) throw new Error(`Runner pager loop at page ${page}`);
-      if (page !== seenPages.size + 1) {
-        throw new Error(`Runner pager skipped: expected ${seenPages.size + 1}, got ${page}`);
-      }
-      seenPages.add(page);
-      rows.push(...parseTable(html));
-
-      const eventTarget = runnerNextTarget(html, page);
-      if (!eventTarget) break;
-      response = await fetchImpl(RUNNER_URL, {
-        method: "POST",
-        headers: {
-          "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36",
-          "Referer": RUNNER_URL,
-          "Content-Type": "application/x-www-form-urlencoded",
-          "Cookie": cookie,
-        },
-        body: runnerPostbackBody(html, eventTarget).toString(),
-        signal,
-      });
-      if (!response.ok) throw new Error(`Runner page ${page + 1} POST HTTP ${response.status}`);
-      html = await readTextWithSignal(response, signal);
-    }
-    if (seenPages.size < RUNNER_MIN_PAGES || rows.length < RUNNER_MIN_ROWS) {
-      throw new Error(`Runner full crawl incomplete: ${seenPages.size} pages, ${rows.length} rows`);
-    }
-    return rows;
-  } finally {
-    clearTimeout(timeout);
-  }
+    ? AbortSignal.any([externalSignal, AbortSignal.timeout(RUNNER_CRAWL_TIMEOUT_MS)])
+    : AbortSignal.timeout(RUNNER_CRAWL_TIMEOUT_MS);
+  const pages = await fetchRegularSeasonPages(RUNNER_URL, 2026, signal, fetchImpl);
+  const rows = pages.flatMap(parseTable);
+  if (pages.length < RUNNER_MIN_PAGES || rows.length < RUNNER_MIN_ROWS) throw new Error('Runner full crawl incomplete');
+  return rows;
 }
 
 async function fetchBatterStats(signal?: AbortSignal): Promise<{
