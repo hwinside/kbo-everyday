@@ -99,7 +99,9 @@ async function parseKboRaw(raw: Record<string, unknown>): Promise<KboGame> {
   const mod = await import("@/lib/crawler/kbo-api");
   const orig = globalThis.fetch;
   globalThis.fetch = (async () =>
-    new Response(JSON.stringify({ game: [raw] }), { status: 200, headers: { "content-type": "application/json" } })) as typeof fetch;
+    // code "100" = KBO success envelope. Production parser fail-closes on any other code,
+    // so the fixture must carry it or this selftest exercises the error path instead of the parser.
+    new Response(JSON.stringify({ code: "100", game: [raw] }), { status: 200, headers: { "content-type": "application/json" } })) as typeof fetch;
   try {
     const games = await mod.fetchKboGamesOnly("20260815", "0,1");
     if (games.length !== 1) throw new Error(`파싱 결과 ${games.length}건 — fixture 전제가 깨졌다`);

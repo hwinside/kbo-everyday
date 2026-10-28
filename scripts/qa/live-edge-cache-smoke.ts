@@ -510,6 +510,7 @@ async function main() {
           // 조기 반환하고 최종 return 을 못 태운다(이게 mutation F 가 GREEN 이었던 이유).
           return new Response(
             JSON.stringify({
+              code: "100",
               game: [
                 {
                   G_ID: gameId,
@@ -755,6 +756,7 @@ async function main() {
       const makeGameList = () =>
         new Response(
           JSON.stringify({
+            code: "100",
             game: [{
               G_ID: gameId, GAME_STATE_SC: "2", AWAY_NM: "LG", HOME_NM: "키움",
               GAME_TB_SC: "T", T_P_NM: batterName, B_P_NM: pitcherName,
@@ -870,7 +872,7 @@ async function main() {
       globalThis.fetch = (async (input: RequestInfo | URL) => {
         const url = String(input instanceof Request ? input.url : input);
         if (url.includes("GetKboGameList")) {
-          return new Response(JSON.stringify({ game: [{
+          return new Response(JSON.stringify({ code: "100", game: [{
             G_ID: gameId, GAME_STATE_SC: "2", AWAY_NM: "LG", HOME_NM: "키움",
             GAME_TB_SC: "T", T_P_NM: batterName, B_P_NM: pitcherName,
             GAME_INN_NO: 5, OUT_CN: 1, BALL_CN: 2, STRIKE_CN: 1, SR_ID: "1",
@@ -934,6 +936,7 @@ async function main() {
         if (url.includes("GetKboGameList")) {
           return new Response(
             JSON.stringify({
+              code: "100",
               game: [{
                 G_ID: gameId, GAME_STATE_SC: "2", AWAY_NM: "LG", HOME_NM: "키움",
                 GAME_TB_SC: "T", GAME_INN_NO: 5, OUT_CN: 1, BALL_CN: 2, STRIKE_CN: 1,

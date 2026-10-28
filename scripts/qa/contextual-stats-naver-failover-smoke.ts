@@ -107,7 +107,7 @@ async function main() {
   // T1: KBO 정상 응답은 공용 helper에서 그대로 사용한다.
   {
     const raw = naverGameToRaw(naverGame(true, "KBO타자", "KBO투수"));
-    const kboFetch = (async () => response({ game: [raw] })) as typeof fetch;
+    const kboFetch = (async () => response({ code: "100", game: [raw] })) as typeof fetch;
     let naverCalls = 0;
     const naverFetch = (async () => {
       naverCalls += 1;
@@ -125,7 +125,7 @@ async function main() {
 
   // T2: KBO 200-empty도 authoritative empty로 확정하지 않고 Naver를 사용한다.
   {
-    const kboFetch = (async () => response({ game: [] })) as typeof fetch;
+    const kboFetch = (async () => response({ code: "100", game: [] })) as typeof fetch;
     let naverCalls = 0;
     const naverFetch = (async () => {
       naverCalls += 1;
@@ -147,7 +147,7 @@ async function main() {
       ...naverGameToRaw(naverGame(true, "다른타자", "다른투수")),
       G_ID: "20260731XXYY0",
     };
-    const kboFetch = (async () => response({ game: [otherRaw] })) as typeof fetch;
+    const kboFetch = (async () => response({ code: "100", game: [otherRaw] })) as typeof fetch;
     let naverCalls = 0;
     const naverFetch = (async () => {
       naverCalls += 1;
@@ -310,7 +310,7 @@ async function main() {
             ? input.href
             : (input as Request).url;
       if (url.includes("GetKboGameList")) {
-        return new Response(JSON.stringify({ game: [liveRaw(gameId)] }), {
+        return new Response(JSON.stringify({ code: "100", game: [liveRaw(gameId)] }), {
           status: 200,
           headers: { "content-type": "application/json" },
         });
