@@ -709,6 +709,7 @@ export default function GameDetailPage() {
                     }}
                     lineupConfirmed={!!d.detailLineup && d.detailLineup.isToday === true}
                     gameRelay={gameRelay}
+                    isRelayDelayed={isRelayDelayed}
                     currentPitcher={d.currentPitcher}
                     currentBatter={d.currentBatter}
                     balls={d.currentBalls}

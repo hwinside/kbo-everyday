@@ -2,6 +2,7 @@
 
 import { useState, useEffect, useCallback, useRef } from "react";
 import { resolveGameLiveDate } from "@/lib/game-live-date";
+import { withRequestDeadline, LIVE_REQUEST_TIMEOUT_MS } from "@/lib/polling/request-deadline";
 import { useVisibilityAwareInterval } from "@/lib/hooks/useVisibilityAwareInterval";
 import { shouldCommitResponse, type SourceSnapshot } from "@/lib/source-snapshot";
 
@@ -133,14 +134,14 @@ export function useLiveGame(gameId?: string, pollInterval = 30000) {
       const controller = new AbortController();
       abortControllerRef.current = controller;
       try {
-        const res = await fetch(`/api/game-live?date=${gameDate}`, {
-          signal: controller.signal,
-        });
-        const data = await res.json() as LiveGamePayload;
-        commitPayloadRef.current(
-          res.ok ? data : { ...data, error: data.error || `HTTP ${res.status}` },
-          responseGeneration,
-        );
+        const payload = await withRequestDeadline(controller, async () => {
+          const res = await fetch(`/api/game-live?date=${gameDate}`, {
+            signal: controller.signal,
+          });
+          const data = await res.json() as LiveGamePayload;
+          return res.ok ? data : { ...data, error: data.error || `HTTP ${res.status}` };
+        }, LIVE_REQUEST_TIMEOUT_MS);
+        if (!controller.signal.aborted) commitPayloadRef.current(payload, responseGeneration);
       } catch (e: unknown) {
         if (
           mountedRef.current
@@ -198,6 +199,17 @@ export function useLiveGame(gameId?: string, pollInterval = 30000) {
   // pollInterval<=0 이면 폴링 비활성 (비경기시간 등) — loading만 해제.
   useEffect(() => {
     if (pollInterval <= 0) setLoading(false);
+  }, [pollInterval]);
+
+  // Register before the poller's listener: abort settles its single-flight promise,
+  // then the poller's queued resume performs exactly one fresh request.
+  useEffect(() => {
+    if (pollInterval <= 0 || typeof document === "undefined") return;
+    const onVisibilityChange = () => {
+      if (document.visibilityState === "visible") abortControllerRef.current?.abort();
+    };
+    document.addEventListener("visibilitychange", onVisibilityChange);
+    return () => document.removeEventListener("visibilitychange", onVisibilityChange);
   }, [pollInterval]);
 
   // 백그라운드 탭은 폴링 정지, 복귀 시 즉시 1회 갱신(보는 유저 실시간성 유지).

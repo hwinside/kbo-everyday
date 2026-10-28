@@ -52,6 +52,7 @@ interface KgwanTabProps {
   starterNames?: { away: string; home: string };
   lineupConfirmed?: boolean;
   gameRelay?: GameRelayResponse | null;
+  isRelayDelayed?: boolean;
   currentPitcher?: string | null;
   currentBatter?: string | null;
   balls?: number;
@@ -325,6 +326,7 @@ function LiveView({
   awayTeamId,
   gameEvents,
   gameRelay,
+  isRelayDelayed = false,
   currentPitcher,
   currentBatter,
   boxScore,
@@ -337,6 +339,7 @@ function LiveView({
   awayTeamId: number;
   gameEvents: GameEvent[];
   gameRelay?: GameRelayResponse | null;
+  isRelayDelayed?: boolean;
   currentPitcher?: string | null;
   currentBatter?: string | null;
   boxScore: GameDetailResponse["boxScore"] | null;
@@ -378,6 +381,12 @@ function LiveView({
 
   return (
     <div className="flex flex-col h-full">
+      {/* Keep the delay notice visible beside the content being read. */}
+      {isRelayDelayed && (
+        <div role="status" className="rounded-lg bg-amber-50 px-3 py-2 text-xs text-amber-800 dark:bg-amber-950/30 dark:text-amber-200">
+          중계 연결 지연 중 · 자동으로 다시 연결합니다.
+        </div>
+      )}
       {/* Live relay */}
       {hasRelay ? (
         <div className="bg-bg-tertiary border-b border-border max-h-[40vh] overflow-y-auto">
@@ -1045,6 +1054,7 @@ export default function KgwanTab({
   starterNames,
   lineupConfirmed,
   gameRelay,
+  isRelayDelayed = false,
   currentPitcher,
   currentBatter,
   balls,
@@ -1075,6 +1085,7 @@ export default function KgwanTab({
           awayTeamId={awayTeamId}
           gameEvents={gameEvents}
           gameRelay={gameRelay}
+          isRelayDelayed={isRelayDelayed}
           currentPitcher={currentPitcher}
           currentBatter={currentBatter}
           boxScore={boxScore}

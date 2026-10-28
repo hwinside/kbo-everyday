@@ -15,6 +15,7 @@ import {
   consumeLivePollStream,
   type LivePollEnvelope,
 } from "@/lib/game/live-poll-stream";
+import { withRequestDeadline, RELAY_REQUEST_TIMEOUT_MS } from "@/lib/polling/request-deadline";
 import { relayRetryDelayMs } from "@/lib/game/relay-retry";
 import { resolveGameLiveDate } from "@/lib/game-live-date";
 import { supabase } from "@/lib/supabase/client";
@@ -158,7 +159,7 @@ export function useGameRelay(
     // B안: realtime 프레임이 신선하면 이 tick 은 억제(edge request 0). 첫 로드는
     // 항상 폴링해 빈 화면을 만들지 않고, final 종결 fetch 는 억제 대상이 아니다.
     if (
-      isLive && !isFinal
+      isLive && !isFinal && !opts?.forceEmbed
       && shouldSuppressPoll({
         lastRelayFreshAtMs: lastRelayFreshAtRef.current,
         nowMs: Date.now(),
@@ -216,15 +217,25 @@ export function useGameRelay(
         if (!wantEvents || !eventsTailTimeoutMs || eventsReceived || eventsTailTimeout) return;
         eventsTailTimeout = setTimeout(() => controller.abort(), eventsTailTimeoutMs);
       };
+      // A late failure must not hide newer Realtime data or affect another game.
+      // A client deadline abort still owns this slot, so it may surface the delay notice;
+      // a user/supersede abort must stay silent.
+      const ownsDelayState = (fromDeadline: boolean) =>
+        (fromDeadline || !controller.signal.aborted)
+        && shouldApplyPollResponse(myGeneration, relayGenerationRef.current)
+        && shouldApplyRelayResponse({ mounted: mountedRef.current,
+          requestSeq: mySeq, currentSeq: requestSeqRef.current,
+          requestGameId, activeGameId: activeGameIdRef.current });
       const markDelayed = (retryAfter?: string | null) => {
-        // A late failure must not hide newer Realtime data or affect another game.
-        if (controller.signal.aborted
-          || !shouldApplyPollResponse(myGeneration, relayGenerationRef.current)
-          || !shouldApplyRelayResponse({ mounted: mountedRef.current,
-            requestSeq: mySeq, currentSeq: requestSeqRef.current,
-            requestGameId, activeGameId: activeGameIdRef.current })) return;
+        if (!ownsDelayState(false)) return;
         const failures = retryRef.current.failures + 1;
         retryRef.current = { failures, notBefore: Date.now() + relayRetryDelayMs(failures, retryAfter) };
+        setIsDelayed(true);
+      };
+      // Deadline aborts show the notice but keep the next poll prompt: the upstream never
+      // answered, so upstream backoff would be guesswork and would stall recovery.
+      const markDeadlineDelayed = () => {
+        if (!ownsDelayState(true)) return;
         setIsDelayed(true);
       };
       try {
@@ -263,6 +274,7 @@ export function useGameRelay(
         if (since > 0) params.set("since", String(since));
 
         const applyRelay = (json: GameRelayResponse) => {
+          if (controller.signal.aborted) return;
           // parse 후 재확인: gameId 가 headers 통과와 body 파싱 사이에 전환됐을 수 있다(late-body).
           // seq 일치 + 활성 gameId 일치 + 마운트 상태일 때만 setData(삼순 blocker ②).
           // P0-3: 이 poll 이 시작한 뒤 Realtime 이 더 최신 relay 를 적용했으면(generation 증가)
@@ -299,6 +311,7 @@ export function useGameRelay(
         };
 
         const applyEvents = (envelope: LivePollEnvelope) => {
+          if (controller.signal.aborted) return;
           eventsReceived = true;
           clearEventsTailTimeout();
           const payload = envelope.data as GameEventsPayload;
@@ -330,6 +343,7 @@ export function useGameRelay(
         ) => {
           if (
             !onFrame
+            || controller.signal.aborted
             || !mountedRef.current
             || activeGameIdRef.current !== requestGameId
           ) return;
@@ -346,39 +360,48 @@ export function useGameRelay(
           onFrame(envelope.data);
         };
 
-        if (include.length > 0) {
-          const res = await fetch(`/api/game-relay-events?${params}`, { signal: controller.signal });
-          if (!res.ok) {
-            if (res.status >= 500) markDelayed(res.headers.get("retry-after"));
-            settleRelay(false);
-            releaseRelaySlot();
-            return false;
-          }
-          await consumeLivePollStream(res, (envelope) => {
-            if (envelope.channel === "relay") {
-              if (envelope.ok) applyRelay(envelope.data as GameRelayResponse);
-              else {
-                const error = (envelope.data as { error?: string } | null)?.error;
-                if (envelope.status >= 500 || error?.startsWith("relay_upstream_")) markDelayed(envelope.retryAfter);
-                settleRelay(false);
-                releaseRelaySlot();
-                armEventsTailTimeout();
-              }
-            } else if (envelope.channel === "events") {
-              applyEvents(envelope);
-            } else if (envelope.channel === "live") {
-              applyFrame(liveFrameOwnerSeqRef, options?.onLiveFrame, envelope, myLiveGeneration, liveGenerationRef);
-            } else if (envelope.channel === "detail") {
-              applyFrame(detailFrameOwnerSeqRef, options?.onDetailFrame, envelope, myDetailGeneration, detailGenerationRef);
+        await withRequestDeadline(controller, async () => {
+          if (include.length > 0) {
+            const res = await fetch(`/api/game-relay-events?${params}`, { signal: controller.signal });
+            if (!res.ok) {
+              if (res.status >= 500) markDelayed(res.headers.get("retry-after"));
+              settleRelay(false);
+              releaseRelaySlot();
+              return false;
             }
-          });
-        } else {
-          const res = await fetch(`/api/game-relay?${params}`, { signal: controller.signal });
-          if (res.ok) applyRelay((await res.json()) as GameRelayResponse);
-          else if (res.status >= 500) markDelayed(res.headers.get("retry-after"));
+            await consumeLivePollStream(res, (envelope) => {
+              if (controller.signal.aborted) return;
+              if (envelope.channel === "relay") {
+                if (envelope.ok) applyRelay(envelope.data as GameRelayResponse);
+                else {
+                  const error = (envelope.data as { error?: string } | null)?.error;
+                  if (envelope.status >= 500 || error?.startsWith("relay_upstream_")) markDelayed(envelope.retryAfter);
+                  settleRelay(false);
+                  releaseRelaySlot();
+                  armEventsTailTimeout();
+                }
+              } else if (envelope.channel === "events") {
+                applyEvents(envelope);
+              } else if (envelope.channel === "live") {
+                applyFrame(liveFrameOwnerSeqRef, options?.onLiveFrame, envelope, myLiveGeneration, liveGenerationRef);
+              } else if (envelope.channel === "detail") {
+                applyFrame(detailFrameOwnerSeqRef, options?.onDetailFrame, envelope, myDetailGeneration, detailGenerationRef);
+              }
+            });
+          } else {
+            const res = await fetch(`/api/game-relay?${params}`, { signal: controller.signal });
+            if (res.ok) applyRelay((await res.json()) as GameRelayResponse);
+            else if (res.status >= 500) markDelayed(res.headers.get("retry-after"));
+          }
+        }, RELAY_REQUEST_TIMEOUT_MS);
+
+      } catch (error) {
+        // Aborted / superseded requests are ignored; our own deadline only flags the delay.
+        if (!relaySucceeded) {
+          if ((error as Error | null)?.name === "TimeoutError"
+            || (controller.signal.reason as Error | undefined)?.name === "TimeoutError") markDeadlineDelayed();
+          else markDelayed();
         }
-      } catch {
-        if (!relaySucceeded) markDelayed(); // Aborted / superseded requests are ignored.
       } finally {
         clearEventsTailTimeout();
         abortControllersRef.current.delete(controller);
@@ -527,7 +550,13 @@ export function useGameRelay(
           })()
         : scheduleJitteredRelayPolling({ fetchRelay, interval }).cleanup;
       const onVisibilityChange = () => {
-        if (document.visibilityState === "visible") fetchRelay(undefined, { forceEmbed: true });
+        if (document.visibilityState !== "visible") return;
+        // Invalidate the old slot before abort: late cleanup must not clear the new one.
+        ++requestSeqRef.current;
+        for (const controller of controllers) controller.abort();
+        inFlightRef.current = false;
+        inFlightPromiseRef.current = null;
+        void fetchRelay(undefined, { forceEmbed: true });
       };
       document.addEventListener("visibilitychange", onVisibilityChange);
       return () => {
@@ -541,9 +570,10 @@ export function useGameRelay(
     if (isFinal) {
       let cancelled = false;
       let finalFetchQueued = false;
+      let finalResumeQueued = false;
       // 삼순 blocker 2: hidden 중 live→final 전환이면 첫 시도가 skip 되므로 finalFetched 를
       // 미리 고정하지 않는다. live 요청이 진행 중이면 완료 뒤 종료 스냅샷을 한 번 더 받는다.
-      const fetchFinalRelay = async () => {
+      const fetchFinalRelay = async (): Promise<void> => {
         const visible = typeof document === "undefined" || document.visibilityState !== "hidden";
         if (
           finalFetchQueued
@@ -562,12 +592,19 @@ export function useGameRelay(
           finalFetchedRef.current = afterFinalFetch(finalFetchedRef.current, ok);
         } finally {
           finalFetchQueued = false;
+          if (finalResumeQueued) {
+            finalResumeQueued = false;
+            if (!cancelled) void fetchFinalRelay();
+          }
         }
       };
       fetchFinalRelay();
       const retryTimer = setInterval(fetchFinalRelay, 15000);
       const onVisibilityChange = () => {
-        if (document.visibilityState === "visible") fetchFinalRelay();
+        if (document.visibilityState !== "visible") return;
+        for (const controller of controllers) controller.abort();
+        if (finalFetchQueued) finalResumeQueued = true;
+        else void fetchFinalRelay();
       };
       document.addEventListener("visibilitychange", onVisibilityChange);
       return () => {
@@ -583,7 +620,7 @@ export function useGameRelay(
       mountedRef.current = false;
       for (const controller of controllers) controller.abort();
     };
-  }, [fetchRelay, interval, isLive, isFinal]);
+  }, [fetchRelay, gameId, interval, isLive, isFinal]);
 
   return { data, events, isLoading, isDelayed };
 }
