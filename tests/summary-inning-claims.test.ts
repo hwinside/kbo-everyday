@@ -23,8 +23,8 @@ test('actual public GET hides unverified/unsafe cache and strips internal eviden
   const { GET } = await import('../src/app/api/game-summary/route');
   const original = globalThis.fetch;
   try {
-    for (const mode of ['legacy', 'unsafe', 'safe']) {
-      const summary = { headline: mode === 'unsafe' ? '문보경의 1회 2점 홈런' : 'LG 역전승', ...(mode === 'legacy' ? {} : { _verifiedPlayerNames: ['문보경'] }) };
+    for (const mode of ['legacy', 'unsafe', 'empty-roster-unsafe', 'safe']) {
+      const summary = { headline: mode.includes('unsafe') ? '문보경의 1회 2점 홈런' : 'LG 역전승', ...(mode === 'legacy' ? {} : { _verifiedPlayerNames: mode === 'empty-roster-unsafe' ? [] : ['문보경'] }) };
       globalThis.fetch = (async () => Response.json({ summary, prompt_version: 15 })) as typeof fetch;
       const response = await GET(new NextRequest('https://summary.test/api/game-summary?gameId=20261026LGHT0'));
       const body = await response.json();
@@ -32,4 +32,14 @@ test('actual public GET hides unverified/unsafe cache and strips internal eviden
       else assert.equal(body.summary, null);
     }
   } finally { globalThis.fetch = original; }
+});
+
+test('empty roster cannot verify inning prose but inning-free summary remains available', () => {
+  for (const names of [[], [' ', '']]) {
+    assert.equal(hasUnsupportedPlayerInning({ headline: '문보경의 1회 투런' }, names), true);
+    assert.equal(hasUnsupportedPlayerInning({ mvpBatter: { name: '문보경', reason: '3회 역전포' } }, names), true);
+    assert.equal(hasUnsupportedPlayerInning({ headline: 'LG 승리' }, names), false);
+  }
+  assert.equal(hasVerifiedInningClaims({ headline: '문보경의 1회 투런', _verifiedPlayerNames: [] }), false);
+  assert.equal(hasVerifiedInningClaims({ headline: 'LG 승리', _verifiedPlayerNames: [] }), true);
 });
