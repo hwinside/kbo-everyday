@@ -597,8 +597,8 @@ function runSelfTest() {
       name: "events always-on combined mutant",
       apply: () => mutate(
         "src/app/api/game-relay-events/route.ts",
-        "  if (!eventsDisabled && (rawInclude === null || include.has(\"events\"))) {\n    tasks.push({ channel: \"events\", task: getEvents(internalRequest(req, \"/api/game-events\", signal)) });\n  }\n",
-        "  tasks.push({ channel: \"events\", task: getEvents(internalRequest(req, \"/api/game-events\", signal)) });\n",
+        'if (!eventsDisabled && (rawInclude === null || include.has("events")))',
+        'if (!eventsDisabled)',
       ),
     },
     {
