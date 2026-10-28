@@ -1,3 +1,4 @@
+import { hasUnsupportedPlayerInning, hasVerifiedInningClaims } from "@/lib/game-summary/inning-claims";
 import { loadSummaryPostseasonFacts } from "@/lib/game-summary/postseason-facts";
 import { isPostseason } from "@/lib/crawler/game-series";
 import { summaryCompetitionPolicy, summaryCompetitionInstructions, invalidPostseasonNarrative, sanitizePostseasonNarrative } from "@/lib/game-summary/competition-context";
@@ -34,7 +35,7 @@ import {
 } from "@/lib/game-summary/failure-observability";
 const GEMINI_API_KEY = process.env.GEMINI_API_KEY;
 const GEMINI_URL = `https://generativelanguage.googleapis.com/v1beta/models/gemini-2.5-flash:generateContent?key=${GEMINI_API_KEY}`;
-const PROMPT_VERSION = 14; // 포스트시즌 문맥 분리 — 이전 저장 요약 재생성
+const PROMPT_VERSION = 15; // 포스트시즌 문맥 분리 — 이전 저장 요약 재생성
 
 // (2026-08-29 LG:롯데 콜드게임 인시던트, 삼순 A안) 생성 단계 실패의 durable 관측.
 // 기존엔 console.error 만 남아 Vercel 로그 보존창을 놔치면 실패 지점을 소급 판정할 수
@@ -427,13 +428,13 @@ ${contextSection}
 ## 출력 형식 (JSON 객체 하나만 출력. 마크다운/설명 텍스트 절대 금지.)
 {
   "winner": "${winnerTeam || '무승부'}",
-  "headline": "신문 1면 헤드라인. 핵심 이벤트+점수+팀명. 임팩트 있게. 매번 다른 구조로. 반드시 ${result}을 정확히 반영. ★ 시리즈 상태가 completed인 경우: '발판 마련/위닝시리즈/추격의 발판/리드 굳힘/스윕 직전' 같은 진행형 시리즈 표현을 헤드라인에 절대 넣지 마라. 이 경기가 시리즈 마지막 경기면 확정된 결과(승리/패배)만 반영. (예: '오스틴 끝내기 2점포! LG, 9회 대역전극', '원태인 7이닝 1실점 역투, 삼성 투수전 제압')",
+  "headline": "신문 1면 헤드라인. 핵심 이벤트+점수+팀명. 임팩트 있게. 매번 다른 구조로. 반드시 ${result}을 정확히 반영. ★ 시리즈 상태가 completed인 경우: '발판 마련/위닝시리즈/추격의 발판/리드 굳힘/스윕 직전' 같은 진행형 시리즈 표현을 헤드라인에 절대 넣지 마라. 이 경기가 시리즈 마지막 경기면 확정된 결과(승리/패배)만 반영. (예: 'LG, 9회 2점으로 끝내기 역전승', '원태인 7이닝 1실점 역투, 삼성 투수전 제압')",
   "gameFlow": {
     "early": "초반(1~3회) 경기 흐름. 선발 투수 상태, 선취점 상황. 이닝별 점수 참고. 2~3문장.",
     "mid": "중반(4~6회) 경기 흐름. 전환점, 추가 득점, 투수 교체 등. 2~3문장.",
     "late": "후반(7~9회+) 경기 흐름. 추격/역전/마무리. 2~3문장."
   },
-  "turningPoint": "이 경기의 결정적 승부처. 구체적 상황+숫자+왜 경기를 갈랐는지 해석. 무승부여도 가장 팽팽했던 순간. 3~4문장. 반드시 작성. 빈 문자열 절대 금지. ★ 주자 상황(만루/주자 수)·출루 과정(연속 안타/볼넷/진루타)은 박스스코어에 없으니 절대 지어내지 마라. 득점 타임라인의 이닝·팀 득점과 선수 타점/홈런 수로만 서술하라 (예: '8회말 문보경이 3타점 홈런으로 4-2 역전을 만들었다' OK / '2사 만루에서 3점 홈런' NG).",
+  "turningPoint": "이 경기의 결정적 승부처. 구체적 상황+숫자+왜 경기를 갈랐는지 해석. 무승부여도 가장 팽팽했던 순간. 3~4문장. 반드시 작성. 빈 문자열 절대 금지. ★ 주자 상황(만루/주자 수)·출루 과정(연속 안타/볼넷/진루타)은 박스스코어에 없으니 절대 지어내지 마라. 득점 타임라인의 이닝·팀 득점과 선수 타점/홈런 수로만 서술하라 (예: '8회말 LG가 3점을 더해 4-2로 역전했다' OK / '8회말 문보경의 홈런' 또는 '2사 만루에서 3점 홈런' NG).",
   "mvpBatter": {
     "name": "선수 이름",
     "stats": "구체적 기록 (예: 4타수 3안타 1홈런 3타점)",
@@ -476,7 +477,7 @@ async function getCached(gameId: string): Promise<{ summary: Record<string, unkn
       .select("summary, prompt_version")
       .eq("game_id", cacheKey(gameId))
       .maybeSingle(); // cache/optional lookup: no-rowuB294 uC815uC0C1 u2014 406 uBC29uC9C0
-    if (!data?.summary) return null;
+    if (!data?.summary || !hasVerifiedInningClaims(data.summary as Record<string, unknown>)) return null;
     const outdated = (data.prompt_version ?? 0) < PROMPT_VERSION;
     return { summary: data.summary as Record<string, unknown>, outdated };
   } catch {
@@ -546,6 +547,7 @@ function normalizeSummary(s: Record<string, unknown>): Record<string, unknown> {
 
 function publicSummary(s: Record<string, unknown>): Record<string, unknown> {
   const copy = structuredClone(s);
+  delete copy._verifiedPlayerNames;
   delete copy._cacheFingerprint;
   delete copy._cachedAwayScore;
   delete copy._cachedHomeScore;
@@ -799,11 +801,17 @@ export async function POST(req: NextRequest) {
         (summary.mvpBatter as Record<string, unknown> | undefined)?.reason,
         (summary.mvpPitcher as Record<string, unknown> | undefined)?.reason,
       ].filter((s): s is string => typeof s === "string");
-      const consistencyViolation = narrativeParts.some(hasBaseRunnerContradiction);
+      const playerNames = [...allBatters, ...allPitchers].map(player => player.name).filter(Boolean);
+      const unsupportedInning = hasUnsupportedPlayerInning(summary, playerNames);
+      // An empty roster is not evidence of a bad summary — postseason and
+      // boxscore-less games legitimately arrive with no player rows, and
+      // rejecting them unconditionally blocked every such summary with a 422.
+      // Without names only inning-free prose can pass the attribution guard.
+      const consistencyViolation = unsupportedInning || narrativeParts.some(hasBaseRunnerContradiction);
       if (consistencyViolation) {
-        console.error(`Consistency violation (attempt ${attempt}): bases-loaded homer arithmetic. headline="${summary.headline}"`);
+        console.error(`Consistency violation (attempt ${attempt}): unsupported inning attribution or arithmetic. headline="${summary.headline}"`);
         if (attempt === MAX_ATTEMPTS) {
-          reportGenerationFailure(body.gameId, "consistency-violation", "bases-loaded homer arithmetic in narrative");
+          reportGenerationFailure(body.gameId, "consistency-violation", "unsupported player-inning attribution or bases-loaded arithmetic");
           return NextResponse.json({ error: "Generated summary internal contradiction after retries, discarded" }, { status: 422 });
         }
         continue;
@@ -843,6 +851,7 @@ export async function POST(req: NextRequest) {
       }
 
       // DB JSON 내부에만 보관하고 API 응답에서는 별도 fingerprint 필드로 분리한다.
+      summary._verifiedPlayerNames = playerNames;
       summary._cacheFingerprint = generationFingerprint;
       const saveResult = await saveCache(body.gameId, summary, generationToken);
       if (saveResult !== "saved") {
