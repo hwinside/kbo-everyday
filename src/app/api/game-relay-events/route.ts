@@ -7,12 +7,12 @@ import { createLivePollStream } from "@/lib/game/live-poll-stream";
 
 export const dynamic = "force-dynamic";
 
-function internalRequest(req: NextRequest, pathname: string): NextRequest {
+function internalRequest(req: NextRequest, pathname: string, signal: AbortSignal): NextRequest {
   const url = new URL(req.url);
   url.pathname = pathname;
   return new NextRequest(url, {
     headers: req.headers,
-    signal: req.signal,
+    signal,
   });
 }
 
@@ -42,21 +42,24 @@ export async function GET(req: NextRequest) {
     );
   }
 
+  const deadlineAtMs = Date.now() + 2800;
+  const controller = new AbortController();
+  const signal = AbortSignal.any([req.signal, controller.signal, AbortSignal.timeout(2700)]);
   const include = parseInclude(req);
   const rawInclude = req.nextUrl.searchParams.get("include");
   const tasks: Array<{ channel: "relay" | "events" | "live" | "detail"; task: Promise<Response> }> = [
-    { channel: "relay", task: getRelay(internalRequest(req, "/api/game-relay")) },
+    { channel: "relay", task: getRelay(internalRequest(req, "/api/game-relay", signal)) },
   ];
   if (rawInclude === null || include.has("events")) {
-    tasks.push({ channel: "events", task: getEvents(internalRequest(req, "/api/game-events")) });
+    tasks.push({ channel: "events", task: getEvents(internalRequest(req, "/api/game-events", signal)) });
   }
   if (include.has("live")) {
-    tasks.push({ channel: "live", task: getLive(internalRequest(req, "/api/game-live")) });
+    tasks.push({ channel: "live", task: getLive(internalRequest(req, "/api/game-live", signal)) });
   }
   if (include.has("detail")) {
-    tasks.push({ channel: "detail", task: getDetail(internalRequest(req, "/api/game-detail")) });
+    tasks.push({ channel: "detail", task: getDetail(internalRequest(req, "/api/game-detail", signal)) });
   }
-  const stream = createLivePollStream(tasks);
+  const stream = createLivePollStream(tasks, { deadlineAtMs, onClose: () => controller.abort() });
 
   return new Response(stream, {
     status: 200,
