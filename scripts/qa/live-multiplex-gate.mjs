@@ -240,7 +240,7 @@ function assertRouteIncludeWiring() {
   const src = stripComments(read("src/app/api/game-relay-events/route.ts"));
   ok("route parses include allowlist", /function parseInclude\(req: NextRequest\)[\s\S]*trimmed === "events" \|\| trimmed === "live" \|\| trimmed === "detail"/.test(src));
   ok("route creates events task only when included or include is absent",
-    /const rawInclude = req\.nextUrl\.searchParams\.get\("include"\);[\s\S]*if \(rawInclude === null \|\| include\.has\("events"\)\)\s*\{\s*tasks\.push\(\{ channel: "events", task: getEvents\(internalRequest\(req, "\/api\/game-events", signal\)\) \}\);\s*\}/.test(src));
+    /const rawInclude = req\.nextUrl\.searchParams\.get\("include"\);[\s\S]*if \(!eventsDisabled && \(rawInclude === null \|\| include\.has\("events"\)\)\)\s*\{\s*tasks\.push\(\{ channel: "events", task: getEvents\(internalRequest\(req, "\/api\/game-events", signal\)\) \}\);\s*\}/.test(src));
   ok("route creates live task only when included",
     /if \(include\.has\("live"\)\)\s*\{\s*tasks\.push\(\{ channel: "live", task: getLive\(internalRequest\(req, "\/api\/game-live", signal\)\) \}\);\s*\}/.test(src));
   ok("route creates detail task only when included",
@@ -597,8 +597,8 @@ function runSelfTest() {
       name: "events always-on combined mutant",
       apply: () => mutate(
         "src/app/api/game-relay-events/route.ts",
-        "  if (rawInclude === null || include.has(\"events\")) {\n    tasks.push({ channel: \"events\", task: getEvents(internalRequest(req, \"/api/game-events\", signal)) });\n  }\n",
-        "  tasks.push({ channel: \"events\", task: getEvents(internalRequest(req, \"/api/game-events\", signal)) });\n",
+        'if (!eventsDisabled && (rawInclude === null || include.has("events")))',
+        'if (!eventsDisabled)',
       ),
     },
     {
