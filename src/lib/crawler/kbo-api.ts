@@ -244,6 +244,13 @@ function isRawKboGameSane(raw: Partial<KboGameRaw> | null | undefined): boolean 
 export const USER_FACING_GAMES_TIMEOUT_MS = 3500;
 
 /**
+ * Default full-series srId for scoreboard lookups. Must stay in sync with
+ * naver-games' NAVER_SERVICEABLE_SR_IDS so the Naver reserve remains reachable;
+ * the off-day calendar (kbo-offday) may query a wider list independently.
+ */
+const DEFAULT_FULL_SERIES_SR_ID = "0,1,3,4,5,7,9";
+
+/**
  * KBO GetKboGameList 만 호출/파싱(폴백 없음). 성공 시 KboGame[](빈 배열 포함),
  * !ok/스키마 열화/per-game 결측이면 throw. 외부 KBO 호출을 단일 헬퍼로 중앙화한다
  * (헤더/URL 변경 시 1곳만 수정 — 2026-05-20 Referer 정책 변경 교훈).
@@ -251,7 +258,7 @@ export const USER_FACING_GAMES_TIMEOUT_MS = 3500;
  */
 export async function fetchKboGamesOnly(
   date: string,
-  srId = "0,1,3,4,5,7,8,9",
+  srId = "0,1,3,4,5,7,9",
   opts?: { timeoutMs?: number; signal?: AbortSignal },
 ): Promise<KboGame[]> {
   const res = await fetch(`${KBO_BASE}/ws/Main.asmx/GetKboGameList`, {
@@ -282,7 +289,7 @@ export async function fetchKboGamesOnly(
 
 async function fetchGamesUnfiltered(
   date: string,
-  srId = "0,1,3,4,5,7,8,9",
+  srId = "0,1,3,4,5,7,9",
   opts?: { timeoutMs?: number; deadlineAtMs?: number },
 ): Promise<KboGame[]> {
   const deadlineAtMs = opts?.deadlineAtMs
@@ -352,7 +359,10 @@ async function fetchGamesUnfiltered(
   if (games.length === 0) {
     // Only a successful, full-series empty scoreboard can be corroborated by
     // the independent KBO calendar. Keep budget for the existing failover.
-    if (srId === "0,1,3,4,5,7,8,9") {
+    // Match the default full-series list only. Widening the default would make
+    // every caller's srId unserviceable for naver-games (NAVER_SERVICEABLE_SR_IDS)
+    // and silently disable the Naver reserve on KBO failure.
+    if (srId === DEFAULT_FULL_SERIES_SR_ID) {
       const remainingMs = deadlineAtMs - Date.now();
       if (remainingMs > 1) {
         try {
