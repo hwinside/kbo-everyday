@@ -1,7 +1,8 @@
 import { createHash } from "node:crypto";
 import { NextRequest } from "next/server";
 import { RELAY_DEGRADED_HEADER } from "./relay-degraded-header";
-import { fetchNaverGames } from "@/lib/crawler/naver-games";
+import { fetchKboLiveGames } from "@/lib/notifications/kbo-live-games";
+import { isKboGameCancelled } from "@/lib/crawler/kbo-status";
 import { toDeltaResponse } from "@/lib/game/relay-delta";
 import type { GameRelayResponse } from "@/app/api/game-relay/route";
 import type { LivePollEnvelope } from "@/lib/game/live-poll-stream";
@@ -236,8 +237,9 @@ export async function saveStatesAndSelectPersistable(params: {
 
 /** 오늘 라이브 상태인 경기 gameId 목록. 실패는 그대로 throw (cron 이 5xx 로 노출). */
 export async function listLiveGameIds(date: string): Promise<string[]> {
-  const games = await fetchNaverGames(date);
-  return games.filter((g) => g.status === "live").map((g) => g.gameId);
+  const result = await fetchKboLiveGames(date, Date.now() + 2500);
+  if (!result.ok) throw new Error("publisher game discovery failed");
+  return result.games.filter(g => g.GAME_STATE_SC === "2" && !isKboGameCancelled(g.CANCEL_SC_ID)).map(g => g.G_ID);
 }
 
 /** route handler 를 내부 호출하기 위한 NextRequest (공용 self-fetch 없음). */

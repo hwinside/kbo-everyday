@@ -66,7 +66,17 @@ function pitcherRouteHtml(): string {
       ? `<td><a href="/Record/Player/PitcherDetail/Basic.aspx?playerId=${row.kboId}">${cell}</a></td>`
       : `<td>${cell}</td>`).join("")}</tr>`;
   }).join("");
-  return `<html><tbody>${rows}</tbody></html>`;
+  // KBO 기록실은 WebForms 선택 폼(숨은 토큰 + 시즌·시리즈 select)으로 응답한다.
+  // 라우트가 그 폼 흐름을 타므로(#1583) fixture 도 같은 형상을 갖춰야 하고,
+  // 없으면 실제 동작과 무관하게 라우트가 500 으로 닫힌다.
+  const controls = `<input type="hidden" name="__VIEWSTATE" value="vs" />` +
+    `<input type="hidden" name="__EVENTVALIDATION" value="ev" />` +
+    `<select name="ctl00$ctl00$ctl00$cphContents$cphContents$cphContents$ddlSeason$ddlSeason">` +
+    `<option value="2026" selected>2026</option></select>` +
+    `<select name="ctl00$ctl00$ctl00$cphContents$cphContents$cphContents$ddlSeries$ddlSeries">` +
+    `<option value="0" selected>정규시즌</option></select>`;
+  return `<html><form>${controls}<a id="ucPager_btnNo1" class="on" href="#">1</a>` +
+    `<tbody>${rows}</tbody></form></html>`;
 }
 
 const SERVED: Record<CareerTable, SeasonRecordRow[]> = {
