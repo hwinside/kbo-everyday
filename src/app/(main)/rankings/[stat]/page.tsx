@@ -144,6 +144,7 @@ function RankingContent() {
       {/* 뱃지 설명 */}
       <GlassCard className="p-4 mb-3">
         <p className="text-sm text-text-secondary">{def.criteria}</p>
+        <p className="mt-1 text-xs text-text-tertiary">정규시즌 기록 기준 · 포스트시즌 제외</p>
       </GlassCard>
 
       {/* Legend */}

@@ -3,7 +3,8 @@ import { parseKboGameListPayload } from "@/lib/notifications/widget-fast-loop";
 import { fetchNaverGames } from "@/lib/crawler/naver-games";
 import type { KboGame } from "@/lib/crawler/kbo-api";
 import { fetchKboGamesOnly } from "@/lib/crawler/kbo-api";
-import { naverGameId } from "@/lib/crawler/naver-record";
+import { resolveNaverGameId } from "@/lib/crawler/naver-game-id";
+import { confirmKboOffday } from "@/lib/crawler/kbo-offday";
 
 const KBO_MAIN = "https://www.koreabaseball.com/ws/Main.asmx";
 const KBO_BROWSER_UA =
@@ -58,7 +59,7 @@ export type LiveGamesSource = "kbo" | "naver" | "none";
 
 export type LiveGamesTrace = {
   source: LiveGamesSource;
-  stage: "kbo" | "kbo-empty-confirmed" | "naver" | "dual-fail";
+  stage: "kbo" | "kbo-empty-confirmed" | "kbo-offday-confirmed" | "naver" | "dual-fail";
   sourceAtMs: number;
   fetchedAtMs: number;
   deadlineAtMs: number;
@@ -92,6 +93,7 @@ type NaverLiveEvidence = {
 type NaverLiveEvidenceFetcher = (
   gameId: string,
   signal: AbortSignal,
+  srId?: string,
 ) => Promise<NaverLiveEvidence>;
 
 /**
@@ -256,9 +258,11 @@ type NaverRelayLineupSide = {
 export async function fetchNaverLiveEvidence(
   gameId: string,
   signal: AbortSignal,
+  srId?: string,
 ): Promise<NaverLiveEvidence> {
+  const naverId = await resolveNaverGameId(gameId, { srId, signal });
   const response = await fetch(
-    `https://api-gw.sports.naver.com/schedule/games/${naverGameId(gameId)}/relay?inning=1`,
+    `https://api-gw.sports.naver.com/schedule/games/${naverId}/relay?inning=1`,
     {
       headers: { "User-Agent": "Mozilla/5.0 (compatible; KboEveryday/1.0)" },
       cache: "no-store",
@@ -343,6 +347,7 @@ export function naverGameToRaw(game: KboGame): KboRawGame {
         : "1";
   return {
     G_ID: game.gameId,
+    SR_ID: game.srId,
     G_DT: game.date,
     G_TM: game.time,
     S_NM: game.stadium,
@@ -433,7 +438,7 @@ async function enrichNaverLiveGames(
       // ⓓ relay 보호 예산 — evidence 조회는 절대 deadline 이 아니라 per-game 상한 안에서만.
       // relay 열화 시 빠르게 실패 확정하고 남은 예산으로 frames 폴백을 태운다.
       const evidence = await runSourceBeforeDeadline(
-        (signal) => fetchNaverEvidenceImpl(game.gameId, signal),
+        (signal) => fetchNaverEvidenceImpl(game.gameId, signal, game.srId),
         Math.min(absoluteDeadlineAtMs, Date.now() + RELAY_EVIDENCE_BUDGET_MS),
       );
       if (needsFirstPitchCheck && !evidence.hasRealPlay) {
@@ -513,7 +518,7 @@ async function enrichNaverLiveGames(
  * KBO를 짧게 시도한 뒤 HTTP/network/schema 실패면 남은 deadline 안에서 Naver로
  * failover한다. 두 소스 모두 실패한 ok:false는 정상 "경기 0"과 구분한다.
  */
-export async function fetchKboLiveGames(
+async function fetchKboLiveGamesUnfiltered(
   date: string,
   deadlineAtMs?: number,
   fetchImpl: typeof fetch = fetch,
@@ -527,8 +532,8 @@ export async function fetchKboLiveGames(
 }> {
   const sourceAtMs = Date.now();
   const absoluteDeadlineAtMs = deadlineAtMs ?? sourceAtMs + 5_000;
-  // KBO 200 + 빈 game 배열(soft-empty)은 장애 중 "가짜 무경기"일 수 있어 Naver 교차확인
-  // 전까지 authoritative 로 인정하지 않는다(삼순 2차 리뷰 P1).
+  // A bare empty scoreboard can be degraded. Require either a successful KBO
+  // calendar gap witness or the existing Naver cross-check before accepting it.
   let kboEmptyResult: {
     ok: true;
     games: KboRawGame[];
@@ -593,6 +598,20 @@ export async function fetchKboLiveGames(
             deadlineAtMs: absoluteDeadlineAtMs,
           },
         };
+        // A successful empty scoreboard plus an independent KBO calendar gap
+        // proves an off day without depending on the blocked Naver endpoint.
+        // Never run this path on HTTP/schema failure, partial games, or a
+        // targeted game lookup. Unknown calendar evidence retains failover.
+        if (games.length === 0 && !requiredGameId && result.json?.code === "100") {
+          const confirmed = await runSourceBeforeDeadline(
+            signal => confirmKboOffday(date, signal, fetchImpl),
+            Math.min(absoluteDeadlineAtMs, Date.now() + KBO_PRIMARY_BUDGET_MS),
+          );
+          if (confirmed) return {
+            ...kboEmptyResult,
+            trace: { ...kboEmptyResult.trace, stage: "kbo-offday-confirmed", fetchedAtMs: Date.now() },
+          };
+        }
       }
     }
   } catch {
@@ -624,7 +643,7 @@ export async function fetchKboLiveGames(
       },
     };
   } catch {
-    // KBO soft-empty(200+빈 배열)는 Naver가 "실제로 무경기"임을 정상 확인해 준 경우에만
+    // KBO calendar로 확인하지 못한 soft-empty는 Naver가 무경기를 정상 확인한 경우에만
     // authoritative로 인정한다. Naver 확인 자체가 실패하면 dual-source 불확실이므로
     // ok:false fail-close — soft-empty가 검증 없이 정상 무경기로 둔갑해 watchdog이
     // 0경기 blackhole에 빠지는 경로를 차단한다(삼순 3차 리뷰 P0).
@@ -682,7 +701,7 @@ function overlayKboQuasiStatic(naverBase: KboGame[], kboGames: KboGame[]): KboGa
  * ⚠️ 이 변형은 warmup cron(LA broadcast·iOS/Android 위젯·점수알림·시작감지) 전용.
  * game-start-watchdog·admin 관제 등 다른 소비자는 fetchKboLiveGames(KBO-primary) 그대로.
  */
-export async function fetchLiveGamesNaverPrimary(
+async function fetchLiveGamesNaverPrimaryUnfiltered(
   date: string,
   deadlineAtMs?: number,
   fetchImpl: typeof fetch = fetch,
@@ -721,7 +740,7 @@ export async function fetchLiveGamesNaverPrimary(
     ]);
     // Naver schedule 실패/무경기 → KBO-primary(soft-empty 교차확인 포함)로 위임.
     if (naverResult.status !== "fulfilled" || naverResult.value.length === 0) {
-      return fetchKboLiveGames(
+      return fetchKboLiveGamesUnfiltered(
         date,
         deadlineAtMs,
         fetchImpl,
@@ -755,7 +774,7 @@ export async function fetchLiveGamesNaverPrimary(
     };
   } catch {
     // Naver schedule 실패 → KBO-primary fallback(자체 Naver failover 포함).
-    return fetchKboLiveGames(
+    return fetchKboLiveGamesUnfiltered(
       date,
       deadlineAtMs,
       fetchImpl,
@@ -763,4 +782,29 @@ export async function fetchLiveGamesNaverPrimary(
       fetchNaverEvidenceImpl,
     );
   }
+}
+
+// Apply eligibility after every primary/fallback branch, before any LA, widget
+// or game-event consumer sees the rows. A failed check is not a healthy empty day.
+async function eligibleLiveResult(
+  result: Awaited<ReturnType<typeof fetchKboLiveGamesUnfiltered>>, date: string, deadlineAtMs: number,
+) {
+  if (!result.ok) return result;
+  try {
+    const { filterNeededPostseasonGames } = await import("@/lib/postseason/schedule");
+    const games = await filterNeededPostseasonGames(result.games, date, g => g.G_ID, deadlineAtMs);
+    return { ...result, games };
+  } catch {
+    return { ...result, ok: false, games: [], trace: { ...result.trace, source: "none" as const, stage: "dual-fail" as const } };
+  }
+}
+
+export async function fetchKboLiveGames(...args: Parameters<typeof fetchKboLiveGamesUnfiltered>) {
+  const deadline = args[1] ?? Date.now() + 5000;
+  return eligibleLiveResult(await fetchKboLiveGamesUnfiltered(...args), args[0], deadline);
+}
+
+export async function fetchLiveGamesNaverPrimary(...args: Parameters<typeof fetchLiveGamesNaverPrimaryUnfiltered>) {
+  const deadline = args[1] ?? Date.now() + 5000;
+  return eligibleLiveResult(await fetchLiveGamesNaverPrimaryUnfiltered(...args), args[0], deadline);
 }

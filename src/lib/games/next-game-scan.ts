@@ -1,4 +1,10 @@
 /** Bounded calendar scan shared by the API and deterministic failure tests. */
+export function isVerifiedEmptyNextGameResult(value: unknown): boolean {
+  if (!value || typeof value !== "object") return false;
+  const result = value as { game?: unknown; failedDates?: unknown };
+  return result.game === null && Array.isArray(result.failedDates) && result.failedDates.length === 0;
+}
+
 export function scanDates(from: string, to: string): string[] | null {
   const parse = (value: string) => {
     if (!/^\d{8}$/.test(value)) return NaN;

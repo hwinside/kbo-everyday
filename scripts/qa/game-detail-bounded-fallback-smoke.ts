@@ -7,6 +7,7 @@
 import assert from "node:assert/strict";
 import { readFileSync } from "node:fs";
 import { NextRequest } from "next/server";
+import { resetBoundedNaverCacheForTest } from "../../src/lib/crawler/naver-bounded-fetch";
 
 const GAME_ID = "20260729WOLG0";
 const nativeTimeout = AbortSignal.timeout.bind(AbortSignal);
@@ -303,6 +304,7 @@ async function scenario(
     | "sub-pos",
   state: GameState,
 ) {
+  resetBoundedNaverCacheForTest(); // each scenario models an independent upstream state
   const signals = new Set<AbortSignal>();
   const srIds: string[] = [];
   const degradationEvents: Array<{ apiName: string; reason: string }> = [];
@@ -612,11 +614,11 @@ async function main() {
     [{ apiName: "game-detail-dual-source-outage", reason: "timeout" }],
   );
 
-  const retry = await scenario("srId 0 empty → 1 blackhole", "sr-retry-blackhole", "normal", "final");
-  assert.deepEqual(retry.srIds.filter((v) => v === "0" || v === "1"), ["0", "1"]);
+  const retry = await scenario("known srId 0 empty → Naver without unrelated series probe", "sr-retry-blackhole", "normal", "final");
+  assert.deepEqual(retry.srIds, ["0"], "known series must not probe an unrelated series");
   assert.equal(retry.body.status, "final");
   assert.equal(retry.body.lineup?.isToday, true, "srId 재시도 실패해도 Naver preview 폴백");
-  assert.deepEqual(retry.degradationEvents, [{ apiName: "kbo-game-detail", reason: "timeout" }]);
+  assert.deepEqual(retry.degradationEvents, [{ apiName: "kbo-game-detail", reason: "schema-error" }]);
 
   const httpError = await scenario("KBO HTTP 503 + Naver normal", "http-error", "normal", "final");
   assert.equal(httpError.body.status, "final");

@@ -84,7 +84,7 @@ export async function GET(req: NextRequest) {
     for (const res of results) {
       if (res.status !== "fulfilled") continue;
       for (const g of res.value) {
-        if (g.status !== "final") continue;
+        if (g.srId !== "0" || g.status !== "final") continue;
         if (g.homeTeamId) baseline.set(g.homeTeamId, (baseline.get(g.homeTeamId) ?? 0) + 1);
         if (g.awayTeamId) baseline.set(g.awayTeamId, (baseline.get(g.awayTeamId) ?? 0) + 1);
       }

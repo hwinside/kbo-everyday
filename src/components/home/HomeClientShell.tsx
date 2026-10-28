@@ -1,4 +1,5 @@
 "use client";
+import PostseasonLadder from "./PostseasonLadder";
 
 import { useState, useEffect, useCallback, useMemo, useRef } from "react";
 import { useRouter } from "next/navigation";
@@ -16,6 +17,7 @@ import { TEAMS, getTeamById, isAllStarGameId } from "@/lib/constants/teams";
 import { useLiveGame, type LiveGameData } from "@/lib/hooks/useLiveGame";
 import { isNativeRuntime } from "@/lib/capacitor/platform";
 import { startHomeNextGamePoller } from "@/lib/polling/home-next-game-poller";
+import { isVerifiedEmptyNextGameResult } from "@/lib/games/next-game-scan";
 import { getTeamBorderColorById } from "@/lib/utils/team-border-color";
 import { getTeamBgColorById, getTeamColor } from "@/lib/utils/team";
 import { useHomeInit, type HomeGame } from "@/hooks/useHomeInit";
@@ -26,7 +28,7 @@ import { isPhotoArticle } from "@/lib/news-relevance";
 import type { HomeSectionKey } from "@/lib/store/home-sections-pref";
 import type { HomeCommunityFeedMode } from "@/lib/supabase/useHomePopularFeed";
 import { widgetResultPitchers } from "@/lib/widget-result-pitchers";
-import { setWidgetFavPlayers, setWidgetMyTeam, updateGameWidget } from "@/lib/capacitor/game-notification";
+import { clearGameWidget, setWidgetFavPlayers, setWidgetMyTeam, updateGameWidget } from "@/lib/capacitor/game-notification";
 import { writeHomeWidgetSnapshot, type HomeWidgetGame } from "@/lib/native-live-activity";
 import { latestRelayLine } from "@/lib/notifications/relay-line";
 import HeaderAvatar from "@/components/home/HeaderAvatar";
@@ -82,6 +84,8 @@ const ID_TO_KBO_CODE: Record<number, string> = {
 };
 
 interface ApiGameData {
+  srId?: string;
+  gameLabel?: string;
   gameId: string;
   awayTeamId: number;
   homeTeamId: number;
@@ -150,6 +154,8 @@ function formatApiDate(date: string): string {
 function mapApiGame(g: ApiGameData): HomeGame {
   return {
     id: g.gameId,
+    srId: g.srId,
+    gameLabel: g.gameLabel,
     homeTeamId: g.homeTeamId,
     awayTeamId: g.awayTeamId,
     time: g.time,
@@ -424,6 +430,21 @@ export default function HomeClientShell({ initialGames, initialLiveGames, initia
         if (!res.ok) throw new Error(`Next game lookup: ${res.status}`);
         const data = await res.json();
         const date = data.date as string | undefined;
+        if (!data.game && !isVerifiedEmptyNextGameResult(data)) {
+          throw new Error("Next-game absence not verified: partial or invalid scan");
+        }
+        if (!data.game && !isOvernight) {
+          // Initial todayGames may still be loading. Confirm today's absence too,
+          // so a future-empty result cannot clear a current live/final widget.
+          const todayDate = formatKSTDateOffset(0);
+          const todayResponse = await fetch(`/api/games?date=${formatApiDate(todayDate)}`, { signal });
+          if (!todayResponse.ok) throw new Error("Today's schedule not verified");
+          const todayData = await todayResponse.json();
+          if (!Array.isArray(todayData.games)) throw new Error("Invalid today's schedule");
+          const todayGame = (todayData.games as ApiGameData[]).map(mapApiGame)
+            .find(g => g.homeTeamId === teamId || g.awayTeamId === teamId);
+          if (todayGame) return { game: todayGame, date: todayDate };
+        }
         return {
           game: data.game ? mapApiGame(data.game as ApiGameData) : null,
           date: date ? `${date.slice(0, 4)}-${date.slice(4, 6)}-${date.slice(6, 8)}` : undefined,
@@ -438,9 +459,11 @@ export default function HomeClientShell({ initialGames, initialLiveGames, initia
       findGame: (games) => findWidgetGame(games, teamId),
       onResult: (candidate, date) => {
         setNextWidgetGame(candidate ? { ...candidate, dateISO: date } : null);
+        // Only a successful empty lookup may clear stale native data; not transport failure.
+        if (!candidate && !isOvernight) void clearGameWidget();
       },
     });
-  }, [myTeamId, todayGames]);
+  }, [myTeamId, todayGames, isOvernight]);
 
   // 최애선수 목록 → 네이티브 prefs 동기화(선수 카드 위젯 config 선택 목록)
   useEffect(() => {
@@ -496,6 +519,7 @@ export default function HomeClientShell({ initialGames, initialLiveGames, initia
     const androidNext =
       rolloverNextGame
         ? {
+            gameId: rolloverNextGame.id,
             away: ID_TO_KBO_CODE[rolloverNextGame.awayTeamId] ?? "",
             home: ID_TO_KBO_CODE[rolloverNextGame.homeTeamId] ?? "",
             stadium: rolloverNextGame.stadium ?? "",
@@ -768,6 +792,8 @@ export default function HomeClientShell({ initialGames, initialLiveGames, initia
         const allStarLive = allLiveData.find((g) => g.gameId === allStarGame.id);
         return <AllStarGameCard game={allStarGame} live={allStarLive} />;
       })()}
+
+      <PostseasonLadder />
 
       {/* 팀 카드 (필수, 토글 없음) — 경기카드(MyTeamHero)를 안에 종속 임베드(④=B) */}
       {myTeam && (

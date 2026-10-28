@@ -50,7 +50,7 @@ async function main() {
     ok("kbo-games 이벤트는 in-memory buffer에 남지 않음", getRecentFallbackBufferSizeForTest() === 0);
 
     for (let i = 0; i < 3; i++) {
-      await trackFallback("naver-standings", "timeout", { errorMessage: `control-${i}` });
+      await trackFallback("kbo-boxscore", "timeout", { errorMessage: `control-${i}` });
     }
     ok("다른 legacy API 이벤트 저장 유지", insertCalls === 8);
     ok("다른 legacy API 경보 동작은 유지", telegramCalls === 1);

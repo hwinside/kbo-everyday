@@ -846,17 +846,33 @@ export async function markChannelBornGroups(params: {
 
 /** start p2s 발송 chunk 크기 — chunk당 APNs 동시 발송 + 마킹 1배치(≤200) 내구 저장. */
 export const START_SEND_CHUNK_SIZE = 100;
+/** 선점 왕복은 기존 200명 단위 유지. 종료 시 미발송 선점 잔존 상한도 200명. */
+export const START_CLAIM_CHUNK_SIZE = 200;
 
 export async function runStartSendChunks<T>(params: {
   items: readonly T[];
   chunkSize: number;
+  claimChunkSize?: number;
+  /** 발송 직전 유계 배치만 선점. 충돌 항목은 제외하며 null이면 이후 chunk도 중단한다. */
+  prepareChunk?: (items: readonly T[]) => Promise<readonly T[] | null>;
   /** 항목 1건 발송 — 실패는 내부에서 집계(throw 금지 계약, 실배선은 자체 catch). */
   sendOne: (item: T) => Promise<void>;
   /** 직전 chunk 성공분 내구 저장 — 다음 chunk 발송 시작 전에 반드시 완료. */
   persistChunk: () => Promise<void>;
 }): Promise<void> {
-  for (let i = 0; i < params.items.length; i += params.chunkSize) {
-    await Promise.all(params.items.slice(i, i + params.chunkSize).map(params.sendOne));
-    await params.persistChunk();
+  const claimSize = params.claimChunkSize ?? params.chunkSize;
+  if (!Number.isInteger(claimSize) || claimSize <= 0 ||
+      !Number.isInteger(params.chunkSize) || params.chunkSize <= 0) {
+    throw new RangeError("chunk sizes must be positive integers");
+  }
+  for (let i = 0; i < params.items.length; i += claimSize) {
+    const candidates = params.items.slice(i, i + claimSize);
+    const chunk = params.prepareChunk ? await params.prepareChunk(candidates) : candidates;
+    if (chunk === null) return;
+    // 충돌만 있는 배치 뒤에도 미선점 대상이 있을 수 있으므로 조기 break하지 않는다.
+    for (let j = 0; j < chunk.length; j += params.chunkSize) {
+      await Promise.all(chunk.slice(j, j + params.chunkSize).map(params.sendOne));
+      await params.persistChunk();
+    }
   }
 }

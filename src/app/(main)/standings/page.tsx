@@ -1,4 +1,6 @@
 "use client";
+
+import { isRegularSeasonFinal } from "@/lib/constants/season";
 import { ChevronLeft, Check } from "lucide-react";
 import HeaderProfileLink from "@/components/ui/HeaderProfileLink";
 import { getTeamBorderColorById } from "@/lib/utils/team-border-color";
@@ -135,7 +137,8 @@ export default function StandingsPage() {
       // 오늘 팀별 final 경기수
       const todayFinals = new Map<number, number>();
       if (Array.isArray(gamesData?.games)) {
-        for (const g of gamesData.games as { homeTeamId?: number; awayTeamId?: number; status?: string }[]) {
+        for (const g of gamesData.games as { homeTeamId?: number; awayTeamId?: number; status?: string; srId?: string }[]) {
+          if (g.srId !== "0") continue;
           if (g.status !== "final") continue;
           if (g.homeTeamId) todayFinals.set(g.homeTeamId, (todayFinals.get(g.homeTeamId) ?? 0) + 1);
           if (g.awayTeamId) todayFinals.set(g.awayTeamId, (todayFinals.get(g.awayTeamId) ?? 0) + 1);
@@ -146,7 +149,8 @@ export default function StandingsPage() {
       // 경기가 시작된 팀 (live=경기중, final=종료). 반영 전이면 '반짝이는 점' 대상.
       const startedTeams = new Set<number>();
       if (Array.isArray(gamesData?.games)) {
-        for (const g of gamesData.games as { homeTeamId?: number; awayTeamId?: number; status?: string }[]) {
+        for (const g of gamesData.games as { homeTeamId?: number; awayTeamId?: number; status?: string; srId?: string }[]) {
+          if (g.srId !== "0") continue;
           if (g.homeTeamId) teamsWithGameToday.add(g.homeTeamId);
           if (g.awayTeamId) teamsWithGameToday.add(g.awayTeamId);
           if (g.status === "live" || g.status === "final") {
@@ -239,6 +243,7 @@ export default function StandingsPage() {
         </button>
       ))}
       </div>
+      <p className="text-xs text-text-secondary mt-3">{season} {season === 2025 || isRegularSeasonFinal() ? "정규시즌 최종 순위·기록" : "정규시즌 순위·기록"}</p>
       <div className="flex gap-2 mt-2 mb-3">
       {([
         { id: "team" as MainTab, label: "구단 순위" },

@@ -1,0 +1,26 @@
+[
+  {
+    "file": "empty-list.json",
+    "url": "https://www.koreabaseball.com/ws/Main.asmx/GetKboGameList",
+    "body": "leId=1&srId=0%2C1%2C3%2C4%2C5%2C7%2C8%2C9&date=20261028",
+    "status": 200,
+    "recordedAt": "2026-10-27T15:21:33.412053+00:00",
+    "normalization": "CRLF to LF; final newline only; payload unchanged"
+  },
+  {
+    "file": "offday-calendar.json",
+    "url": "https://www.koreabaseball.com/ws/Main.asmx/GetKboGameDate",
+    "body": "leId=1&srId=0%2C1%2C3%2C4%2C5%2C7%2C8%2C9&date=20261028",
+    "status": 200,
+    "recordedAt": "2026-10-27T15:21:33.485336+00:00",
+    "normalization": "CRLF to LF; final newline only; payload unchanged"
+  },
+  {
+    "file": "gameday-calendar.json",
+    "url": "https://www.koreabaseball.com/ws/Main.asmx/GetKboGameDate",
+    "body": "leId=1&srId=0%2C1%2C3%2C4%2C5%2C7%2C8%2C9&date=20261027",
+    "status": 200,
+    "recordedAt": "2026-10-27T15:21:33.565509+00:00",
+    "normalization": "CRLF to LF; final newline only; payload unchanged"
+  }
+]

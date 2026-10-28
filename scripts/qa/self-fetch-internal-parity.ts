@@ -266,7 +266,7 @@ type TodayFixtureState = "live" | "scheduled" | "final" | "cancelled" | "no-box"
 
 function installTodayFetch(rawState: TodayFixtureState): typeof fetch {
   const original = globalThis.fetch;
-  globalThis.fetch = (async (input: string | URL | Request) => {
+  globalThis.fetch = (async (input: string | URL | Request, init?: RequestInit) => {
     const url = String(input);
     // no-box: 경기 목록은 live 로 주되, game-detail 내부 fetch(스코어보드·박스·naver)는
     // 전부 장애 → boxScore 결손 분기(HIDDEN + s-maxage=20)가 실제로 타진다.
@@ -277,6 +277,11 @@ function installTodayFetch(rawState: TodayFixtureState): typeof fetch {
     }
     // cancelled: 목록 단계에서 상태가 확정되므로 상세 fetch 는 scheduled 픽스처로 충분하다.
     const state: "live" | "scheduled" | "final" = rawState === "cancelled" ? "scheduled" : rawState;
+    // Session bootstrap belongs to the mocked KBO upstream too. Real network
+    // latency here otherwise consumes the detail deadline before fixture APIs run.
+    if (url === "https://www.koreabaseball.com/Schedule/GameCenter/Main.aspx") {
+      return new Response("", { status: 200 });
+    }
     if (url.includes("GetKboGameList")) return json(kboList(rawState === "cancelled" ? "cancelled" : state));
     if (url.includes("GetScoreBoard")) return json(scoreboard(state));
     if (url.includes("GetLineUpAnalysis")) return json(state === "scheduled" ? [] : lineup());
@@ -285,7 +290,7 @@ function installTodayFetch(rawState: TodayFixtureState): typeof fetch {
     if (url.includes("/preview")) return json(naverPreview(state));
     if (url.includes("/relay?")) return json({ result: { textRelayData: { inn: 1, textRelays: [] } } });
     if (url.includes("api-gw.sports.naver.com/schedule/games")) return json(naverSchedule(state));
-    return original(input as RequestInfo | URL);
+    return original(input as RequestInfo | URL, init);
   }) as typeof fetch;
   return original;
 }

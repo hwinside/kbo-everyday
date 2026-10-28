@@ -1201,6 +1201,7 @@ export function answerPlayerRoleForTarget(
 }
 
 export interface QaDeps {
+  loadPostseason?: (season: number) => Promise<import("@/lib/postseason/snapshot").PostseasonSnapshot | null>;
   loadGameConversation?: (date: string) => Promise<Pick<GameConversationInput, "games" | "favoriteTeam" | "appFacts">>;
   loadGameLineups?: (requests: import("./app-lineup").AppLineupRequest[]) => Promise<NonNullable<GameConversationInput["lineups"]>>;
   callGameConversation?: (input: GameConversationInput) => Promise<GameConversationResult>;
@@ -6029,10 +6030,10 @@ export async function answerQuestion(userId: string, rawQuestion: string, deps: 
     const left = Math.min(budget, deadline - Date.now());
     return left < 3000 ? Promise.resolve(null) : baseFallback(input, left);
   } : undefined });
-  return answerQuestionObserved(userId, rawQuestion, observed.deps, observed.setContextSelected);
+  return answerQuestionObserved(userId, rawQuestion, observed.deps, observed.setContextSelected, deadline);
 }
 
-async function answerQuestionObserved(userId: string, rawQuestion: string, deps: QaDeps, setContextSelected: (selected: boolean) => void): Promise<QaResult> {
+async function answerQuestionObserved(userId: string, rawQuestion: string, deps: QaDeps, setContextSelected: (selected: boolean) => void, deadline: number): Promise<QaResult> {
   let question = rawQuestion.trim();
   let questionNorm = normalizeQuestion(question);
 
@@ -6905,6 +6906,7 @@ async function answerQuestionObserved(userId: string, rawQuestion: string, deps:
   // Existing terminal routes, dictionary and structured record owners stay first.
   if (!statDefinition && !enabledPlayerCandidate && deps.loadGameConversation && deps.callGameConversation) {
     const date = new Date((deps.now?.() ?? Date.now()) + 9 * 3_600_000).toISOString().slice(0, 10);
+    const conversationDeadline = Math.min(deadline, Date.now() + 4500);
     let timer: ReturnType<typeof setTimeout> | undefined;
     try {
       const result = await Promise.race([
@@ -6918,17 +6920,30 @@ async function answerQuestionObserved(userId: string, rawQuestion: string, deps:
               profile: mentionedTeamCanonicals(snapshot.favoriteTeam ?? "") },
           };
           const model = await deps.callGameConversation!(input);
+          let postseasonRequested = false;
           const lineupRequests: import("./app-lineup").AppLineupRequest[] = [];
           const served = renderGameConversation(model.text, input, { isBare: isBareTeamName,
+            onPostseason: () => { postseasonRequested = true; },
             onLineupGames: (games, date) => lineupRequests.push(...games.map((game) => ({ game, date }))),
           });
-          return { model, served, input, lineupRequests };
+          return { model, served, input, lineupRequests, postseasonRequested };
         })(),
-        new Promise<null>((resolve) => { timer = setTimeout(() => resolve(null), 4500); }),
+        new Promise<null>((resolve) => { timer = setTimeout(() => resolve(null), Math.max(0, conversationDeadline - Date.now())); }),
       ]);
       if (result) {
         const { model, input, lineupRequests } = result;
         let served = result.served;
+        const postseasonBudgetMs = Math.max(0, Math.min(2800, conversationDeadline - Date.now()));
+        if (served && result.postseasonRequested && deps.loadPostseason && input.appFacts && postseasonBudgetMs > 0) {
+          let postseasonTimer: ReturnType<typeof setTimeout> | undefined;
+          try {
+            const postseason = await Promise.race([
+              deps.loadPostseason(Number(input.date.slice(0,4))).catch(() => null),
+              new Promise<null>(resolve => { postseasonTimer = setTimeout(() => resolve(null), postseasonBudgetMs); }),
+            ]);
+            if (postseason) served = renderGameConversation(model.text, { ...input, nowMs: deps.now?.() ?? Date.now(), appFacts: { ...input.appFacts, postseason } }, { isBare: isBareTeamName }) ?? served;
+          } finally { if (postseasonTimer) clearTimeout(postseasonTimer); }
+        }
         if (served && lineupRequests.length && deps.loadGameLineups) {
           // Lazy: validated intent + dated target selection precede I/O. A slow
           // lineup never discards the already-rendered, grounded fallback.

@@ -17,7 +17,7 @@ export function withRequestDeadline<T>(
       reject(new DOMException("Request cancelled", "AbortError"));
       return;
     }
-    const timer = setTimeout(() => controller.abort(), timeoutMs);
+    const timer = setTimeout(() => controller.abort(new DOMException("Request deadline exceeded", "TimeoutError")), timeoutMs);
     controller.signal.addEventListener("abort", onAbort, { once: true });
     // Attach both handlers so an abort-ignoring operation cannot leak a late rejection.
     Promise.resolve().then(() => {
@@ -30,7 +30,6 @@ export function withRequestDeadline<T>(
   });
 }
 
-export const LIVE_REQUEST_TIMEOUT_MS = 15_000;
-// Relay can legitimately take 10s (inning 1) + 8s (remaining innings/record).
-// Leave room for server fallback/transport instead of cutting valid frames at 15s.
-export const RELAY_REQUEST_TIMEOUT_MS = 30_000;
+// Server requests are bounded separately; transport/body stalls still need a client fence.
+export const LIVE_REQUEST_TIMEOUT_MS = 8_000;
+export const RELAY_REQUEST_TIMEOUT_MS = 8_000;

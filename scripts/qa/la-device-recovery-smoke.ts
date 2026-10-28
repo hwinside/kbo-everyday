@@ -26,6 +26,7 @@ async function exercise(migration: string) {
       insert into live_activity_channels values('${game}','sandbox','generation-a','active',now(),'{"status":"live"}');
     `);
     await db.exec(migration);
+    await db.exec(readFileSync("supabase/migrations/20261009_live_activity_recovery_receipt.sql", "utf8"));
     const call = async (action: string, challenge: string | null = null, overrideToken = token, channel = "generation-a") => {
       const r = await db.query<{ result: { claimed?: boolean; recorded?: boolean; challenges?: { challenge: string }[] } }>(
         `select live_activity_recovery_step($1,$2,'sandbox',$3,$4,$5,'{"gameId":"${game}"}') result`,
@@ -73,6 +74,15 @@ async function exercise(migration: string) {
     await db.exec(`update live_activity_channels set last_send_at=null,last_content_state=null,
       recovery_game_state='{"status":"scheduled"}'`);
     assert.equal((await call("claim",challenge)).claimed, true, "pregame without broadcast can restart");
+    // Receipt is additive: NULL until observed, ACK remains independent, first write wins.
+    const before = (await db.query("select restart_apns_outcome from live_activity_device_recovery")).rows[0];
+    assert.equal(before.restart_apns_outcome, null);
+    await db.exec(`update live_activity_device_recovery set restart_apns_outcome='accepted',
+      restart_apns_status=200, restart_apns_recorded_at=now() where restart_apns_recorded_at is null`);
+    await call("ack");
+    assert.equal((await db.query("select restart_apns_outcome from live_activity_device_recovery")).rows[0].restart_apns_outcome, "accepted");
+    assert.notEqual((await call("claim",challenge)).claimed, true, "receipt never unlocks restart");
+    await assert.rejects(() => db.exec("update live_activity_device_recovery set restart_apns_status=0"), /check constraint/);
     for (const role of ["anon","authenticated"]) {
       await db.exec(`set role ${role}`);
       await assert.rejects(() => call("claim",challenge), /permission denied/);

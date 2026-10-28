@@ -1,3 +1,4 @@
+import { newsStandingsContext } from "@/lib/ai/news-standings-context";
 // 팀별 뉴스클리핑 빌더 — 어제(KST) 팀 기사 수집 → 뉴스카드와 동일한 관련성
 // 가드/중복 제거 → Gemini가 주요 5개 선정 + 기사당 3줄 요약 + 데일리 총평.
 // 소비자: /api/cron/news-clipping (매일 09:00 KST 쪽지 발송).
@@ -30,7 +31,7 @@ import {
   hasClippingTitleSignal,
   titleHasTeamToken,
 } from "@/lib/news-relevance";
-import { STANDINGS_ACCURACY_RULES, STANDINGS_UNAVAILABLE_RULES } from "@/lib/ai/standings-guard";
+
 import PLAYERS_ROSTER from "@/lib/constants/players-roster.json";
 
 const GEMINI_API_KEY = process.env.GEMINI_API_KEY;
@@ -197,9 +198,7 @@ function buildPrompt(
 
   // 순위표가 있으면 근거+정확성 규칙, 조회 실패면 순위 서술 금지 규칙을 넣는다.
   // (조회 실패 시에도 규칙을 넣어 근거 없는 순위 환각[3위 팀을 '선두'로 등]을 원천 차단.)
-  const standingsBlock = standingsText
-    ? `\n## 공식 순위표 (오늘 기준 — 순위 관련 서술의 유일한 근거)\n${standingsText}\n${STANDINGS_ACCURACY_RULES}\n`
-    : `\n${STANDINGS_UNAVAILABLE_RULES}\n`;
+  const standingsBlock = newsStandingsContext(yesterday, standingsText);
 
   return `당신은 KBO 프로야구 "${teamName}" 팬을 위한 아침 뉴스클리핑 에디터입니다.
 아래는 어제(${yesterday}) 보도된 ${teamName} 관련 기사 목록입니다 (번호. 제목 / 요약문).

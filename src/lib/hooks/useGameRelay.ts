@@ -16,6 +16,7 @@ import {
   type LivePollEnvelope,
 } from "@/lib/game/live-poll-stream";
 import { withRequestDeadline, RELAY_REQUEST_TIMEOUT_MS } from "@/lib/polling/request-deadline";
+import { relayRetryDelayMs } from "@/lib/game/relay-retry";
 import { resolveGameLiveDate } from "@/lib/game-live-date";
 import { supabase } from "@/lib/supabase/client";
 import {
@@ -96,6 +97,12 @@ export function useGameRelay(
   const [data, setData] = useState<GameRelayResponse | null>(null);
   const [events, setEvents] = useState<GameEvent[]>([]);
   const [isLoading, setIsLoading] = useState(false);
+  const [isDelayed, setIsDelayed] = useState(false);
+  const retryRef = useRef({ failures: 0, notBefore: 0 });
+  const clearDelay = useCallback(() => {
+    retryRef.current = { failures: 0, notBefore: 0 };
+    setIsDelayed(false);
+  }, []);
   const mountedRef = useRef(true);
   const finalFetchedRef = useRef(false);
   const inFlightRef = useRef(false);
@@ -161,6 +168,7 @@ export function useGameRelay(
     ) {
       return Promise.resolve(false);
     }
+    if (Date.now() < retryRef.current.notBefore) return Promise.resolve(false);
     if (inFlightRef.current) return Promise.resolve(false);
     const requestGameId = gameId;
     // 이 요청의 신분증. inFlight 가드 통과 후에만 증가시켜(중복 폴 조기 반환은 seq 미소모)
@@ -208,6 +216,27 @@ export function useGameRelay(
       const armEventsTailTimeout = () => {
         if (!wantEvents || !eventsTailTimeoutMs || eventsReceived || eventsTailTimeout) return;
         eventsTailTimeout = setTimeout(() => controller.abort(), eventsTailTimeoutMs);
+      };
+      // A late failure must not hide newer Realtime data or affect another game.
+      // A client deadline abort still owns this slot, so it may surface the delay notice;
+      // a user/supersede abort must stay silent.
+      const ownsDelayState = (fromDeadline: boolean) =>
+        (fromDeadline || !controller.signal.aborted)
+        && shouldApplyPollResponse(myGeneration, relayGenerationRef.current)
+        && shouldApplyRelayResponse({ mounted: mountedRef.current,
+          requestSeq: mySeq, currentSeq: requestSeqRef.current,
+          requestGameId, activeGameId: activeGameIdRef.current });
+      const markDelayed = (retryAfter?: string | null) => {
+        if (!ownsDelayState(false)) return;
+        const failures = retryRef.current.failures + 1;
+        retryRef.current = { failures, notBefore: Date.now() + relayRetryDelayMs(failures, retryAfter) };
+        setIsDelayed(true);
+      };
+      // Deadline aborts show the notice but keep the next poll prompt: the upstream never
+      // answered, so upstream backoff would be guesswork and would stall recovery.
+      const markDeadlineDelayed = () => {
+        if (!ownsDelayState(true)) return;
+        setIsDelayed(true);
       };
       try {
         const cache = inningsRef.current;
@@ -268,6 +297,7 @@ export function useGameRelay(
               partial: false,
             };
             setData(merged);
+            clearDelay();
             relaySucceeded = true;
             // B2: 성공한 relay baseline 확립 + watchdog 신선도 갱신(다음 tick 억제 근거).
             relayBaselineRef.current = true;
@@ -334,6 +364,7 @@ export function useGameRelay(
           if (include.length > 0) {
             const res = await fetch(`/api/game-relay-events?${params}`, { signal: controller.signal });
             if (!res.ok) {
+              if (res.status >= 500) markDelayed(res.headers.get("retry-after"));
               settleRelay(false);
               releaseRelaySlot();
               return false;
@@ -343,6 +374,8 @@ export function useGameRelay(
               if (envelope.channel === "relay") {
                 if (envelope.ok) applyRelay(envelope.data as GameRelayResponse);
                 else {
+                  const error = (envelope.data as { error?: string } | null)?.error;
+                  if (envelope.status >= 500 || error?.startsWith("relay_upstream_")) markDelayed(envelope.retryAfter);
                   settleRelay(false);
                   releaseRelaySlot();
                   armEventsTailTimeout();
@@ -358,10 +391,17 @@ export function useGameRelay(
           } else {
             const res = await fetch(`/api/game-relay?${params}`, { signal: controller.signal });
             if (res.ok) applyRelay((await res.json()) as GameRelayResponse);
+            else if (res.status >= 500) markDelayed(res.headers.get("retry-after"));
           }
         }, RELAY_REQUEST_TIMEOUT_MS);
-      } catch {
-        // Silently fail(abort/network) — UI shows fallback
+
+      } catch (error) {
+        // Aborted / superseded requests are ignored; our own deadline only flags the delay.
+        if (!relaySucceeded) {
+          if ((error as Error | null)?.name === "TimeoutError"
+            || (controller.signal.reason as Error | undefined)?.name === "TimeoutError") markDeadlineDelayed();
+          else markDelayed();
+        }
       } finally {
         clearEventsTailTimeout();
         abortControllersRef.current.delete(controller);
@@ -374,13 +414,14 @@ export function useGameRelay(
       return relaySucceeded && (!isFinal || eventsSucceeded);
     })();
     return isFinal ? request : relayResult;
-  }, [gameId, currentInning, isFinal, isLive, options?.onDetailFrame, options?.onLiveFrame]);
+  }, [gameId, currentInning, isFinal, isLive, options?.onDetailFrame, options?.onLiveFrame, clearDelay]);
 
   // gameId 전환 시 누적 이닝 캐시·폴링 카운터·표시 데이터를 초기화한다. 이것이 없으면
   // 새 경기 첫 폴링이 이전 경기의 캐시(size>0) 때문에 since 를 보내 이전 경기 이닝 위에
   // delta 를 병합한다(교차 오염). 선언 순서상 폴링 effect 보다 먼저 실행된다.
   useEffect(() => {
     activeGameIdRef.current = gameId;
+    clearDelay();
     // 이전 경기의 in-flight 요청을 즉시 abort 하고 seq 를 올려 무효화한다. 이로써 (1) B full 이
     // A 완료를 기다리지 않고 바로 시작하고(inFlightRef 해제), (2) 늦게 끝난 A 의 finally/late-body
     // 가 B 상태를 훼손하지 못하게 한다(삼순 blocker ② (a)(b)).
@@ -406,7 +447,7 @@ export function useGameRelay(
     // abort 된 이전 요청의 finally 는 fencing 되어 loading 을 clear 하지 않으므로 여기서 직접 내린다
     // (B 가 live 면 즉시 다시 true, 비-live 면 spinner 가 A 에 갇히지 않게 한다).
     setIsLoading(false);
-  }, [gameId]);
+  }, [gameId, clearDelay]);
 
   // B안 (2026-08-25): 라이브 중 game_relay_frames INSERT 를 구독해 폴링을 대체한다.
   // 수집기(cron)가 쓰는 프레임은 폴링 NDJSON 과 동일한 LivePollEnvelope 형상이라
@@ -463,6 +504,7 @@ export function useGameRelay(
             // P0-3: Realtime 최신 relay 적용 → generation 증가. 이후 늦게 끝난 poll 응답은 버려진다.
             relayGenerationRef.current += 1;
             applyRealtimeRelay(row.payload.data as GameRelayResponse);
+            clearDelay();
           } else if (row.kind === "events") {
             applyRealtimeEvents(row.payload.data as { events?: GameEvent[] });
           } else if (row.kind === "live") {
@@ -486,7 +528,7 @@ export function useGameRelay(
       void supabase.removeChannel(channel);
     };
     // P0-1: 콜백은 ref 로 읽으므로 options 를 deps 에서 제외 — 프레임 N개에도 구독 1회.
-  }, [gameId, isLive]);
+  }, [gameId, isLive, clearDelay]);
 
   useEffect(() => {
     mountedRef.current = true;
@@ -580,5 +622,5 @@ export function useGameRelay(
     };
   }, [fetchRelay, gameId, interval, isLive, isFinal]);
 
-  return { data, events, isLoading };
+  return { data, events, isLoading, isDelayed };
 }

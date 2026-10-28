@@ -1,5 +1,7 @@
 "use client";
 
+import { postseasonGameLabel } from "@/lib/crawler/game-series";
+
 import { useState, useCallback, useEffect, useRef } from "react";
 import { useParams, useSearchParams } from "next/navigation";
 import { motion, AnimatePresence } from "framer-motion";
@@ -213,7 +215,7 @@ export default function GameDetailPage() {
   const relayPollInterval = liveGame?.isLive ? 3000 : 30000;
   // game-events는 첫 poll/매 15초/final 전환 때 relay와 같은 Edge Request의
   // NDJSON frame으로 받는다. 이벤트 기능·cadence는 유지하면서 별도 client poll을 제거한다.
-  const { data: gameRelay, events: gameEvents } = useGameRelay(
+  const { data: gameRelay, events: gameEvents, isDelayed: isRelayDelayed } = useGameRelay(
     gameId,
     liveGame?.isLive ?? false,
     relayPollInterval,
@@ -490,6 +492,7 @@ export default function GameDetailPage() {
     <div className="min-h-[100dvh] bg-bg-primary max-w-[640px] mx-auto w-full">
       {/* 헤더는 스크롤 컨테이너(PullToRefresh) 밖 page-root에 두어 sticky top-0가 페이지 스크롤 기준으로 고정되게 한다 */}
       <GameDetailHeader title={matchupTitle} />
+      {postseasonGameLabel(gameDetail?.srId, gameDetail?.gameLabel) && <p className="px-5 py-1 text-xs font-bold text-accent">{postseasonGameLabel(gameDetail?.srId, gameDetail?.gameLabel)}</p>}
 
     <PullToRefresh
       onRefresh={handleRefresh}
@@ -546,6 +549,13 @@ export default function GameDetailPage() {
           {(gameDetail?.meta?.stadium || liveGame?.stadium || game.stadium) && (
             <span>{gameDetail?.meta?.stadium || liveGame?.stadium || game.stadium}</span>
           )}
+        </div>
+      )}
+
+      {isRelayDelayed && (d.isLive || liveIsFinal) && (
+        <div role="status" className="mx-4 my-2 rounded-lg bg-bg-tertiary px-3 py-2 text-sm text-text-secondary">
+          중계 연결 지연 중 · 자동으로 다시 연결합니다.
+          {gameRelay && <span className="block text-xs">마지막으로 받은 중계 내용을 표시하고 있습니다.</span>}
         </div>
       )}
 
@@ -679,6 +689,7 @@ export default function GameDetailPage() {
               {activeTab === "kgwan" && (
                 <motion.div key="kgwan" initial={{ opacity: 0 }} animate={{ opacity: 1 }} exit={{ opacity: 0 }} className="h-full">
                   <KgwanTab
+                    srId={gameDetail?.srId}
                     gameId={gameId}
                     homeTeamId={game.homeTeamId}
                     awayTeamId={game.awayTeamId}
@@ -698,6 +709,7 @@ export default function GameDetailPage() {
                     }}
                     lineupConfirmed={!!d.detailLineup && d.detailLineup.isToday === true}
                     gameRelay={gameRelay}
+                    isRelayDelayed={isRelayDelayed}
                     currentPitcher={d.currentPitcher}
                     currentBatter={d.currentBatter}
                     balls={d.currentBalls}

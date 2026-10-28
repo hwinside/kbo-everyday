@@ -11,12 +11,10 @@ import { Browser } from "@capacitor/browser";
 import { registerPlugin } from "@capacitor/core";
 import { subscribeAppUrlOpen } from "@/lib/capacitor/app-url-open";
 import { supabase } from "@/lib/supabase/client";
-import {
-  AUTH_ERROR_EVENT,
-  AUTH_ERROR_STORAGE_KEY,
-  getUserFacingAuthErrorFromUrl,
-} from "@/lib/auth-error";
-import { isNative, isAndroid } from "./platform";
+import { clearAuthError, publishAuthError, getUserFacingAuthErrorFromUrl } from "@/lib/auth-error";
+import { observeOAuth, setOAuthListenerReady } from "@/lib/auth/oauth-diagnostics";
+import { oauthFailure } from "@/lib/auth/oauth-diagnostic-schema";
+import { isNativeRuntime, isIosNativeRuntime } from "./platform";
 
 let listenerRegistered = false;
 
@@ -36,7 +34,7 @@ const OAuthBrowser = registerPlugin<OAuthBrowserPlugin>("OAuthBrowser");
  * Android = Chrome Custom Tab 강제(OAuthBrowser), iOS = SFSafariViewController(@capacitor/browser)
  */
 export async function openOAuthInBrowser(url: string): Promise<void> {
-  if (isAndroid) {
+  if (isNativeRuntime() && !isIosNativeRuntime()) {
     await OAuthBrowser.open({ url });
     return;
   }
@@ -53,66 +51,63 @@ export async function openOAuthInBrowser(url: string): Promise<void> {
  * (subscribeAppUrlOpen)로 구독 — 늘은 구독에도 replay로 전달된다.
  */
 export function registerDeepLinkListener(): void {
-  if (!isNative || listenerRegistered) return;
+  if (listenerRegistered) return;
+  if (!isNativeRuntime()) { setOAuthListenerReady(false); return; }
   listenerRegistered = true;
-
-  void subscribeAppUrlOpen("oauth", ({ url }) => void handleOAuthUrlOpen(url));
+  // Consumer readiness differs from native bridge attachment (dispatcher reports it).
+  setOAuthListenerReady(true);
+  void subscribeAppUrlOpen("oauth", ({ url }) => { void handleOAuthUrlOpen(url); });
 }
 
+let exchangePending = false;
+export function isOAuthExchangePending(): boolean { return exchangePending; }
+
 async function handleOAuthUrlOpen(url: string): Promise<void> {
-    // keubo.fan Universal Link 또는 fan.keubo.app custom scheme에서 OAuth 토큰/코드 추출
-    const isKeuboUniversalLink = url.includes("keubo.fan");
-    const isKeuboCustomScheme = url.startsWith("fan.keubo.app://");
-    if (!isKeuboUniversalLink && !isKeuboCustomScheme) return;
-
+  let parsed: URL;
+  try { parsed = new URL(url); } catch { return; }
+  if (!(parsed.protocol === "fan.keubo.app:" || (parsed.protocol === "https:" && ["keubo.fan", "www.keubo.fan"].includes(parsed.hostname)))) return;
+  const code = parsed.searchParams.get("code");
+  const hash = new URLSearchParams(parsed.hash.slice(1));
+  const accessToken = hash.get("access_token");
+  const refreshToken = hash.get("refresh_token");
+  const userFacingError = getUserFacingAuthErrorFromUrl(parsed);
+  if (!code && !(accessToken && refreshToken) && !userFacingError) return;
+  observeOAuth("callback");
+  if (exchangePending) { observeOAuth("duplicate"); return; }
+  exchangePending = true;
+  // No Promise.race on the SDK: retain the lease until the original exchange
+  // settles, even after timeout, so one-use codes cannot be replayed concurrently.
+  const timer = setTimeout(() => {
+    observeOAuth("pending");
+    publishAuthError("oauth_pending");
+  }, 15_000);
+  try {
+    // Browser.close must not hold up the actual authentication if its bridge hangs.
     try {
-      // Android는 Chrome Custom Tab(OAuthBrowser)으로 열었으므로 같은 플러그인으로 닫음.
-      if (isAndroid) {
-        await OAuthBrowser.close();
-      } else {
-        await Browser.close();
-      }
-    } catch {
-      // Browser가 이미 닫혀있을 수 있음
-    }
-
-    // Case 1: App Links가 /auth/callback?code=... 를 가로챈 경우
-    // 서버에 도달하기 전이므로 클라이언트에서 직접 code exchange
-    const urlObj = new URL(url);
-    const userFacingError = getUserFacingAuthErrorFromUrl(urlObj);
+      const closing = isNativeRuntime() && !isIosNativeRuntime() ? OAuthBrowser.close() : Browser.close();
+      void closing.catch(() => {});
+    } catch { /* already closed or unavailable bridge; still exchange */ }
     if (userFacingError) {
-      sessionStorage.setItem(AUTH_ERROR_STORAGE_KEY, userFacingError);
-      window.dispatchEvent(
-        new CustomEvent(AUTH_ERROR_EVENT, { detail: userFacingError }),
-      );
+      observeOAuth("failed", "provider");
+      publishAuthError(userFacingError);
       return;
     }
-
-    const code = urlObj.searchParams.get("code");
-    if (code) {
-      const { error } = await supabase.auth.exchangeCodeForSession(code);
-      if (error) {
-        console.error("[capacitor/auth] exchangeCodeForSession failed:", error.message);
-      }
+    observeOAuth("exchange-start");
+    const result = code
+      ? await supabase.auth.exchangeCodeForSession(code)
+      : await supabase.auth.setSession({ access_token: accessToken!, refresh_token: refreshToken! });
+    if (result.error || !result.data.session) {
+      observeOAuth("failed", oauthFailure(result.error));
+      publishAuthError("oauth_exchange");
       return;
     }
-
-    // Case 2: 서버 콜백이 처리 후 keubo.fan#access_token=...&refresh_token=... 로 리다이렉트한 경우
-    const hashIndex = url.indexOf("#");
-    if (hashIndex === -1) return;
-
-    const hash = url.substring(hashIndex + 1);
-    const params = new URLSearchParams(hash);
-    const accessToken = params.get("access_token");
-    const refreshToken = params.get("refresh_token");
-
-    if (accessToken && refreshToken) {
-      const { error } = await supabase.auth.setSession({
-        access_token: accessToken,
-        refresh_token: refreshToken,
-      });
-      if (error) {
-        console.error("[capacitor/auth] setSession failed:", error.message);
-      }
-    }
+    observeOAuth("session-ready");
+    clearAuthError();
+  } catch (error) {
+    observeOAuth("failed", oauthFailure(error));
+    publishAuthError("oauth_exchange");
+  } finally {
+    clearTimeout(timer);
+    exchangePending = false;
+  }
 }

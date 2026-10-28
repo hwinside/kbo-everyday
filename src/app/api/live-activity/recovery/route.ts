@@ -1,3 +1,5 @@
+import { createHash } from "node:crypto";
+import { sendRecoveryWithReceipt } from "@/lib/notifications/live-activity-recovery-receipt";
 import { NextRequest, NextResponse } from "next/server";
 import { supabaseAdmin } from "@/lib/supabase/admin";
 import { getProviderTokenSafe, sendLiveActivityPushToEnv } from "@/lib/notifications/apns";
@@ -32,14 +34,30 @@ export async function POST(req: NextRequest) {
   if (error) return NextResponse.json({ error: "recovery unavailable" }, { status: 503 });
   if (action === "challenges") return NextResponse.json({ challenges: data?.challenges ?? [] });
   if (!data?.claimed) return NextResponse.json({ accepted: false });
-  const result = await sendLiveActivityPushToEnv({
+  const result = await sendRecoveryWithReceipt(() => sendLiveActivityPushToEnv({
     pushToken: pushToStartToken,
     event: "start", attributesType: "KBOGameAttributes",
     attributes: { ...data.attributes, channelId: data.channelId, recoveryAttempt: data.attempt },
     contentState: data.contentState,
     inputPushChannel: data.channelId,
     alert: { title: "크보팬", body: "잠금화면 실시간 중계를 시작합니다" },
-  }, environment, jwt!);
+  }, environment, jwt!), async (receipt) => {
+    // Exact token + channel generation + successful claim. First result wins.
+    // ACK may race this UPDATE; do not read or overwrite ACK/claim fields.
+    const { data: saved, error: saveError } = await supabaseAdmin
+      .from("live_activity_device_recovery")
+      .update(receipt)
+      .eq("game_id", gameId)
+      .eq("device_key", createHash("sha256").update(pushToStartToken).digest("hex"))
+      .eq("environment", environment)
+      .eq("channel_id", data.channelId)
+      .eq("challenge", data.attempt)
+      .not("restart_at", "is", null)
+      .is("restart_apns_recorded_at", null)
+      .select("game_id")
+      .abortSignal(AbortSignal.timeout(2000));
+    if (saveError || saved?.length !== 1) throw new Error("receipt not persisted");
+  });
   // APNs receipt is NOT proof of a displayed card. The native survivor must ACK.
   return NextResponse.json({ accepted: result.ok });
 }

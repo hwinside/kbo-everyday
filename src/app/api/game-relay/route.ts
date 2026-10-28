@@ -1,14 +1,16 @@
+import { loadKboLiveText } from '@/lib/crawler/kbo-live-text';
 import { NextRequest, NextResponse, after } from "next/server";
 import {
   markApiRecovered,
   trackApiDegradation,
   type DegradationAlertPolicy,
 } from "@/lib/monitoring/api-fallback-tracker";
-import { isAllStarGameId } from "@/lib/constants/teams";
+import { naverGameId as toNaverGameId, resolveNaverGameId } from "@/lib/crawler/naver-game-id";
 import { GAME_ID_FORMAT_HINT, isCanonicalKboGameId } from "@/lib/game/game-id";
 import { parseNaverPitch, type PitchDetail } from "@/lib/game/pitch-provider";
 import { buildRelayJsonResponse } from "@/lib/game/relay-degraded-header";
 import { toDeltaResponse } from "@/lib/game/relay-delta";
+import { RelayUpstreamError, RelayUpstreamGate } from "@/lib/game/relay-upstream-gate";
 import {
   NO_STORE_HEADERS,
   RELAY_EDGE_TTL_SECONDS,
@@ -183,6 +185,7 @@ export interface RelayLinescore {
 }
 
 export interface GameRelayResponse {
+  source?: "kbo" | "naver";
   gameId: string;
   currentInning: number;
   innings: InningRelay[];
@@ -200,13 +203,6 @@ export interface GameRelayResponse {
 
 // ===== Helpers =====
 
-function toNaverGameId(kboGameId: string): string {
-  const year = kboGameId.slice(0, 4);
-  // 올스타는 네이버가 앞 4자리 연도 대신 9999 prefix로 서비스한다.
-  // 예: KBO 20260711WEEA0 → Naver 99990711WEEA02026 (연도 suffix는 실제 연도 유지).
-  const base = isAllStarGameId(kboGameId) ? `9999${kboGameId.slice(4)}` : kboGameId;
-  return base + year;
-}
 
 function classifyResult(text: string): PlayEvent["type"] {
   // Order matters: 확정 결과 키워드 먼저 매칭하고, 모호한 hit 분류는 *마지막*에
@@ -824,6 +820,12 @@ function extractPlayerStatsFromRecord(data: NaverRecordResponse | null): RelayPl
   };
 }
 
+function safeCauseCode(error: Error): string {
+  const cause = error.cause as { code?: unknown } | undefined;
+  return typeof cause?.code === "string" && /^[A-Z0-9_]{1,64}$/.test(cause.code)
+    ? cause.code : "unknown";
+}
+
 // ===== Route handler =====
 
 const NAVER_API_BASE =
@@ -854,27 +856,12 @@ function runAfterResponse(cb: () => Promise<void>): void {
   }
 }
 
-/** 업스트림 실패를 GET 레벨로 전달하는 typed error — single-flight 공유 안전. */
-class RelayUpstreamError extends Error {
-  constructor(
-    public readonly status: number,
-    public readonly body: Record<string, unknown>,
-  ) {
-    super(String(body.error ?? "relay_upstream_error"));
-    this.name = "RelayUpstreamError";
-  }
-}
-
-/**
- * Single-flight: 같은 (naverGameId, inningHint)의 동시 fresh 요청은 업스트림
- * fetch 1회를 공유한다. 경기 동시 시작(콜드 burst) 때 같은 인스턴스에 몰린 N개
- * 폴링이 네이버로 N배 증폭되는 것을 차단한다(2026-08-11 19:00 cold burst 재발 방지).
- * delta(since)는 공유 결과에서 호출자별로 파생되므로 응답 의미는 불변.
- */
-const inflightFresh = new Map<
-  string,
-  Promise<{ response: GameRelayResponse; anyInningDegraded: boolean }>
->();
+// Same (game, inning hint) requests share a flight. Failed flights retain their
+// non-2xx result for 5s per warm instance; successful data caching stays below.
+const upstreamGate = new RelayUpstreamGate<{
+  response: GameRelayResponse;
+  anyInningDegraded: boolean;
+}>();
 
 /**
  * In-memory response cache (module-level, persists for the lambda warm period
@@ -891,8 +878,8 @@ const inflightFresh = new Map<
  * upstream call (load bound). 4s→2s roughly doubles worst-case upstream
  * rate; accepted trade-off for cutting celebration fire lag.
  *
- * Only successful responses are cached; HTTP/network errors fall through so
- * the next poll retries fresh.
+ * Only successful payloads are cached here. Full upstream failures have a
+ * separate short cooldown in upstreamGate; degraded 200s are never cached.
  */
 const responseCache = new Map<string, { data: GameRelayResponse; expiresAt: number }>();
 // TTL 단일 owner(삼순 NO-GO 2026-08-06): 엣지 TTL 상수에서 파생시켜
@@ -1085,7 +1072,31 @@ export async function GET(req: NextRequest) {
   // 값이 없거나 0 이하이면 종전대로 전체 이닝을 반환한다(첫 로드/self-heal).
   const sinceInning = parseInt(req.nextUrl.searchParams.get("since") || "0") || 0;
 
-  const naverGameId = toNaverGameId(gameId);
+  // One shared KBO snapshot feeds polling and the existing Realtime publisher.
+  // Return full snapshots: official scorer corrections may change an older inning.
+  try {
+    const kbo = await loadKboLiveText(gameId, {
+      signal: AbortSignal.any([req.signal, AbortSignal.timeout(2800)]),
+    });
+    const innings = parseInningRelays(kbo.rows);
+    if (!innings.length) throw new Error("KBO innings unavailable");
+    return buildRelayJsonResponse({
+      gameId, source: "kbo", currentInning: Math.max(...innings.map(i => i.inning)),
+      innings, linescore: kbo.linescore, updatedAt: kbo.updatedAt,
+    }, edgeCacheHeadersForRemaining(
+      10_000 - (Date.now() - Date.parse(kbo.updatedAt)), RELAY_EDGE_TTL_SECONDS,
+    ), false);
+  } catch {
+    // Busy admission throttles KBO only; it must not suppress Naver recovery.
+    // Preserve the established Naver fallback and failure contract. Never return empty 200.
+  }
+
+  let naverGameId: string;
+  try {
+    naverGameId = await resolveNaverGameId(gameId);
+  } catch {
+    return NextResponse.json({ error: "game series unavailable" }, { status: 503, headers: NO_STORE_HEADERS });
+  }
 
   // Cache hit short-circuits Naver upstream entirely.
   const cacheKey = `${naverGameId}-${inningHint}`;
@@ -1383,7 +1394,7 @@ export async function GET(req: NextRequest) {
     }
 
     await trackApiDegradation("naver-relay", reason, {
-      errorMessage: `${error.message} (gameId=${gameId})`,
+      errorMessage: `${error.message} (gameId=${gameId}, naverGameId=${naverGameId}, causeCode=${safeCauseCode(error)})`,
       scope: gameId,
     }, NAVER_RELAY_ALERT_POLICY);
 
@@ -1395,22 +1406,8 @@ export async function GET(req: NextRequest) {
   }
   }
 
-  // Single-flight: 이미 진행 중인 동일 (naverGameId, inningHint) fresh 작업이 있으면
-  // 그 promise를 공유하고, 없으면 리더로서 생성한다. 완료/실패 시 맵에서 제거해
-  // 다음 폴링은 새 업스트림 시도를 하게 한다(실패 고정 방지).
-  let shared = inflightFresh.get(cacheKey);
-  if (!shared) {
-    shared = buildFresh();
-    inflightFresh.set(cacheKey, shared);
-    void shared
-      .catch(() => undefined)
-      .finally(() => {
-        inflightFresh.delete(cacheKey);
-      });
-  }
-
   try {
-    const { response, anyInningDegraded } = await shared;
+    const { response, anyInningDegraded } = await upstreamGate.run(cacheKey, buildFresh);
     // 이 인스턴스가 직전에 경보를 보냈다면(전역 claim 승자) 복구 알림을 1회 보낸다.
     // 경보 이력이 없는 인스턴스는 in-memory 체크 1회로 즉시 반환(비용 0).
     // ⚠️ degraded(last-good 대체) 200은 복구가 아니다 — 일부 이닝이 여전히
@@ -1436,7 +1433,10 @@ export async function GET(req: NextRequest) {
     if (e instanceof RelayUpstreamError) {
       return NextResponse.json(e.body, {
         status: e.status,
-        headers: NO_STORE_HEADERS,
+        headers: {
+          ...NO_STORE_HEADERS,
+          "Retry-After": String(Math.max(1, upstreamGate.retryAfterSeconds(cacheKey))),
+        },
       });
     }
     // buildFresh가 모든 예외를 RelayUpstreamError로 정규화하므로 여기는 방어적 최후단.

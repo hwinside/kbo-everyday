@@ -1,5 +1,6 @@
 "use client";
 
+import { isRegularSeasonFinal } from "@/lib/constants/season";
 import { motion } from "framer-motion";
 import TeamLogo from "@/components/ui/TeamLogo";
 import { getTeamBgColor, type TeamData } from "@/lib/constants/teams";
@@ -38,7 +39,7 @@ export default function TeamHero({ team, standings, stadiumName }: TeamHeroProps
             className="grid grid-cols-4 gap-2 rounded-2xl bg-bg-glass/60 backdrop-blur-sm p-4"
           >
             {[
-              { label: "순위", value: `${standings.rank}위` },
+              { label: isRegularSeasonFinal() ? "정규 최종 순위" : "정규 순위", value: `${standings.rank}위` },
               { label: "승률", value: standings.winRate },
               { label: "승차", value: standings.gb },
               { label: "연속", value: standings.streak },

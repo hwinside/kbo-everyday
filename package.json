@@ -3,6 +3,8 @@
   "version": "0.1.0",
   "private": true,
   "scripts": {
+    "qa:postseason-preview-context": "tsx scripts/qa/postseason-preview-context.ts",
+    "qa:oauth-recovery": "node --test tests/oauth-recovery.test.cjs",
     "qa:block-management": "node --test tests/block-management.test.cjs",
     "qa:admin-inbox": "node --test tests/admin-inbox.test.mjs tests/admin-inbox-api.test.mjs",
     "qa:cloudflare-phase0": "tsx scripts/qa/cloudflare-phase0.ts",
@@ -35,6 +37,8 @@
     "qa:summary-final-transition": "tsx scripts/qa/summary-final-transition-gate.mjs",
     "qa:summary-final-transition:selftest": "tsx scripts/qa/summary-final-transition-gate.mjs --selftest",
     "qa:cancel-reason:selftest": "tsx scripts/qa/cancel-reason-gate.mjs --selftest",
+    "qa:login-error-notice": "tsx scripts/qa/login-error-notice-gate.ts",
+    "qa:login-error-notice:selftest": "tsx scripts/qa/login-error-notice-gate.ts --selftest",
     "qa:relay-substitution": "tsx scripts/qa/relay-substitution-gate.ts",
     "qa:relay-substitution:selftest": "tsx scripts/qa/relay-substitution-gate.ts --selftest",
     "qa:relay-substitution-render": "tsx scripts/qa/relay-substitution-render-gate.mts",
@@ -167,6 +171,7 @@
     "qa:api-fallback-alert-claim:pg17": "bash scripts/qa/api-fallback-alert-claim-pg17.sh",
     "qa:kbo-games-legacy-telegram-suppression": "tsx scripts/qa/kbo-games-legacy-telegram-suppression-smoke.ts",
     "qa:player-stats-legacy-telegram-suppression": "tsx scripts/qa/player-stats-legacy-telegram-suppression-smoke.ts",
+    "qa:naver-standings-legacy-telegram-suppression": "tsx scripts/qa/naver-standings-legacy-telegram-suppression-smoke.ts",
     "qa:telegram-degradation-send": "tsx scripts/qa/telegram-degradation-send-smoke.ts",
     "qa:starter-announce-message": "tsx scripts/qa/starter-announce-message-smoke.ts",
     "qa:starter-watchdog": "tsx scripts/qa/starter-watchdog-smoke.ts",
@@ -578,7 +583,13 @@
     "qa:venue-story-auto-flight": "tsx scripts/qa/venue-story-auto-flight-smoke.ts",
     "qa:la-ack-recovery": "tsx scripts/qa/la-ack-recovery-smoke.ts",
     "qa:la-device-recovery": "tsx scripts/qa/la-device-recovery-smoke.ts && tsx scripts/qa/la-device-recovery-route-smoke.ts",
-    "qa:la-recovery-card-policy": "bash scripts/qa/la-recovery-card-policy-smoke.sh"
+    "qa:la-recovery-card-policy": "bash scripts/qa/la-recovery-card-policy-smoke.sh",
+    "qa:postseason-operations": "NEXT_PUBLIC_SUPABASE_URL=https://example.supabase.co NEXT_PUBLIC_SUPABASE_ANON_KEY=test-only SUPABASE_SERVICE_ROLE_KEY=test-only node --import tsx --test tests/postseason-operations.test.ts",
+    "qa:postseason-series": "NEXT_PUBLIC_SUPABASE_URL=https://example.supabase.co NEXT_PUBLIC_SUPABASE_ANON_KEY=test-only SUPABASE_SERVICE_ROLE_KEY=test-only node --import tsx --test tests/postseason-series.test.ts tests/postseason-summary.test.ts tests/postseason-summary-route.test.ts",
+    "qa:postseason-labels": "node --import tsx --test tests/postseason-labels.test.ts",
+    "qa:postseason-finalize": "NEXT_PUBLIC_SUPABASE_URL=https://example.supabase.co NEXT_PUBLIC_SUPABASE_ANON_KEY=test-only SUPABASE_SERVICE_ROLE_KEY=test-only node --import tsx --test tests/postseason-finalize.test.ts",
+    "qa:season-predictions-close:pglite": "node --import tsx scripts/qa/season-predictions-close-pglite.ts",
+    "qa:postseason-ladder": "node --import tsx --test tests/postseason-ladder.test.ts tests/postseason-schedule.test.ts"
   },
   "dependencies": {
     "@capacitor-firebase/messaging": "^8.3.0",

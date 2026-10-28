@@ -61,6 +61,7 @@ public class GameScoreWidget extends AppWidgetProvider {
     static final String KEY_LAST_LATENCY = "last_latency_ms"; // 수신→핸들 지연 계측(phase-1 로컬)
     // gameId(YYYYMMDD… ) — 06:00 롤오버 기준일 계산용. 다음 예정 경기(next_*) 자동 전환.
     static final String KEY_GAME_ID = "game_id";
+    static final String KEY_NEXT_GAME_ID = "next_game_id";
     static final String KEY_NEXT_HAS = "next_has";       // 다음 예정 경기 존재(결과/라이브일 때만)
     static final String KEY_NEXT_AWAY = "next_away";
     static final String KEY_NEXT_HOME = "next_home";
@@ -214,10 +215,18 @@ public class GameScoreWidget extends AppWidgetProvider {
         e.hstarter = p.getString(KEY_HSTARTER, "");
         e.lastPlay = p.getString(KEY_LAST_PLAY, "");
 
-        // 상태 무관(예정 포함) — 경기일 다음날 06:00을 지났고 다음 예정 경기가 있으면 전환.
-        // 미래 예정 경기(gameId가 미래)면 pastRollover=false라 그대로 유지된다.
-        if (e.hasGame && p.getBoolean(KEY_NEXT_HAS, false)
-                && pastRollover(p.getString(KEY_GAME_ID, ""))) {
+        // iOS parity: expire terminal/scheduled snapshots, including an expired cached next game.
+        int rollover = WidgetRolloverPolicy.resolve(e.hasGame, e.status,
+            p.getString(KEY_GAME_ID, ""), p.getBoolean(KEY_NEXT_HAS, false),
+            p.getString(KEY_NEXT_GAME_ID, ""), System.currentTimeMillis());
+        if (rollover == WidgetRolloverPolicy.EMPTY) {
+            Eff empty = new Eff();
+            empty.myTeam = e.myTeam;
+            return empty;
+        }
+        if (rollover == WidgetRolloverPolicy.NEXT) {
+            e.resultPitchers = "";
+            e.lastPlay = "";
             e.away = p.getString(KEY_NEXT_AWAY, e.away);
             e.home = p.getString(KEY_NEXT_HOME, e.home);
             e.as = "0"; e.hs = "0";
@@ -713,7 +722,7 @@ public class GameScoreWidget extends AppWidgetProvider {
                                 String lastPlay, String resultPitchers) {
         writeInternal(ctx, myTeam, away, home, as, hs, status, pitcher, pteam,
             batter, bteam, outs, diamond, stadium, astarter, hstarter, gameId,
-            false, "", "", "", "", "", "", "", lastPlay, -1L, resultPitchers);
+            false, "", "", "", "", "", "", "", "", lastPlay, -1L, resultPitchers);
     }
 
     /** FCM 경로 — seq(서버 send-time ms)로 역전/중복 가드. seq<0이면 가드 비활성(구버전 호환).
@@ -725,7 +734,7 @@ public class GameScoreWidget extends AppWidgetProvider {
                                 String lastPlay, long seq) {
         return writeInternal(ctx, myTeam, away, home, as, hs, status, pitcher, pteam,
             batter, bteam, outs, diamond, stadium, astarter, hstarter, gameId,
-            false, "", "", "", "", "", "", "", lastPlay, seq, "");
+            false, "", "", "", "", "", "", "", "", lastPlay, seq, "");
     }
 
     /** 앱(홈) 경로 — 결과/라이브 경기와 함께 '다음 예정 경기'를 실어 위젯 06:00 자동 전환을 준비. */
@@ -734,10 +743,10 @@ public class GameScoreWidget extends AppWidgetProvider {
                                 String batter, String bteam, String outs, String diamond,
                                 String stadium, String astarter, String hstarter, String gameId,
                                 String nAway, String nHome, String nStadium, String nTime,
-                                String nDate, String nAStarter, String nHStarter, String resultPitchers) {
+                                String nDate, String nAStarter, String nHStarter, String nGameId, String resultPitchers) {
         writeInternal(ctx, myTeam, away, home, as, hs, status, pitcher, pteam,
             batter, bteam, outs, diamond, stadium, astarter, hstarter, gameId,
-            true, nAway, nHome, nStadium, nTime, nDate, nAStarter, nHStarter, null, -1L, resultPitchers);
+            true, nAway, nHome, nStadium, nTime, nDate, nAStarter, nHStarter, nGameId, null, -1L, resultPitchers);
     }
 
     private static WidgetUpdatePolicy.ApplyResult writeInternal(Context ctx, String myTeam, String away, String home,
@@ -745,7 +754,7 @@ public class GameScoreWidget extends AppWidgetProvider {
                                 String batter, String bteam, String outs, String diamond,
                                 String stadium, String astarter, String hstarter, String gameId,
                                 boolean hasNext, String nAway, String nHome, String nStadium,
-                                String nTime, String nDate, String nAStarter, String nHStarter,
+                                String nTime, String nDate, String nAStarter, String nHStarter, String nGameId,
                                 String lastPlay, long seq, String resultPitchers) {
         SharedPreferences p = ctx.getSharedPreferences(PREFS, Context.MODE_PRIVATE);
         String prevGameId = p.getString(KEY_GAME_ID, "");
@@ -798,6 +807,7 @@ public class GameScoreWidget extends AppWidgetProvider {
         }
         if (hasNext) {
             e.putBoolean(KEY_NEXT_HAS, true);
+            e.putString(KEY_NEXT_GAME_ID, nz(nGameId));
             e.putString(KEY_NEXT_AWAY, nAway == null ? "" : nAway);
             e.putString(KEY_NEXT_HOME, nHome == null ? "" : nHome);
             e.putString(KEY_NEXT_STADIUM, nStadium == null ? "" : nStadium);

@@ -1,5 +1,6 @@
 "use client";
 
+import { isRegularSeasonFinal } from "@/lib/constants/season";
 import { useEffect, useId, useState, type ReactNode } from "react";
 import Link from "next/link";
 import { fetchLeagueStats } from "@/lib/stats/client-league-stats";
@@ -298,6 +299,7 @@ export default function TeamCard({ team, gameSlot, refreshNonce = 0 }: TeamCardP
             <div className="flex items-start gap-3">
               {st && (
                 <Link href="/standings" prefetch={false} className="flex-1 min-w-0 block">
+                  {isRegularSeasonFinal() && <p className="text-[11px] text-text-secondary mb-1">정규시즌 최종</p>}
                   <div className="flex items-end gap-2">
                     <span className="text-[34px] font-extrabold leading-none text-text-primary">{st.rank}위</span>
                     {streak && <span className="text-[12px] font-bold pb-1" style={{ color: streak.hot ? "#ff6b6b" : "var(--text-tertiary)" }}>{streak.hot ? "🔥" : ""}{streak.text}</span>}
@@ -310,7 +312,7 @@ export default function TeamCard({ team, gameSlot, refreshNonce = 0 }: TeamCardP
               )}
               {data?.recentForm && data.recentForm.length > 0 && (
                 <div className="flex-shrink-0 text-right">
-                  <p className="text-[11px] text-text-tertiary mb-2">최근 {data.recentForm.length}경기</p>
+                  <p className="text-[11px] text-text-tertiary mb-2">정규 최근 {data.recentForm.length}경기</p>
                   <div className="flex gap-1.5 justify-end">
                     {data.recentForm.map((r, i) => (
                       <span key={i} className="w-[22px] h-[22px] rounded-[7px] flex items-center justify-center text-[11px] font-extrabold"
@@ -356,8 +358,8 @@ export default function TeamCard({ team, gameSlot, refreshNonce = 0 }: TeamCardP
                 </Link>
                 {/* 우: 타율 / 방어율 — 클릭 → 팀 기록 페이지 */}
                 <Link href={`/teams/${team.slug}/records`} prefetch={false} className="flex h-[136px] flex-1 flex-col gap-2">
-                  <MiniStatChart title="주간 팀 타율" values={(data?.weeklyBatting ?? []).map((w) => w.avg)} fmt={(v) => v.toFixed(3).replace(/^0\./, ".")} higherIsBetter accent={accent} rank={data?.weeklyBattingRank ?? null} />
-                  <MiniStatChart title="주간 팀 방어율" values={(data?.weeklyPitching ?? []).map((w) => w.era)} fmt={(v) => v.toFixed(2)} higherIsBetter={false} accent={accent} rank={data?.weeklyPitchingRank ?? null} />
+                  <MiniStatChart title="정규시즌 주간 타율" values={(data?.weeklyBatting ?? []).map((w) => w.avg)} fmt={(v) => v.toFixed(3).replace(/^0\./, ".")} higherIsBetter accent={accent} rank={data?.weeklyBattingRank ?? null} />
+                  <MiniStatChart title="정규시즌 주간 방어율" values={(data?.weeklyPitching ?? []).map((w) => w.era)} fmt={(v) => v.toFixed(2)} higherIsBetter={false} accent={accent} rank={data?.weeklyPitchingRank ?? null} />
                 </Link>
               </div>
             </div>

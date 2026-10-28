@@ -4,6 +4,14 @@
   "source_audit": "state/prebuild-gate-audit-20260820.md",
   "gates": [
     {
+      "name": "qa:postseason-preview-context",
+      "tier": "ci"
+    },
+    {
+      "name": "qa:oauth-recovery",
+      "tier": "ci"
+    },
+    {
       "name": "qa:genius-recordbook-evidence",
       "tier": "ci"
     },
@@ -1109,6 +1117,38 @@
     },
     {
       "name": "qa:la-device-recovery",
+      "tier": "ci"
+    },
+    {
+      "name": "qa:postseason-operations",
+      "tier": "ci"
+    },
+    {
+      "name": "qa:postseason-series",
+      "tier": "ci"
+    },
+    {
+      "name": "qa:postseason-labels",
+      "tier": "ci"
+    },
+    {
+      "name": "qa:postseason-finalize",
+      "tier": "ci"
+    },
+    {
+      "name": "qa:season-predictions-close:pglite",
+      "tier": "ci"
+    },
+    {
+      "name": "qa:postseason-ladder",
+      "tier": "ci"
+    },
+    {
+      "name": "qa:login-error-notice",
+      "tier": "ci"
+    },
+    {
+      "name": "qa:login-error-notice:selftest",
       "tier": "ci"
     }
   ],
