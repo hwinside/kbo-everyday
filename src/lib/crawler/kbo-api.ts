@@ -13,6 +13,7 @@ import { isKboGameCancelled, parseCancelReason } from "@/lib/crawler/kbo-status"
 export { isKboGameCancelled, parseCancelReason } from "@/lib/crawler/kbo-status";
 import { ALLSTAR_CODE_TO_ID, allstarTeamIdByName } from "@/lib/constants/teams";
 import { runBeforeDeadline } from "@/lib/async-deadline";
+import { confirmKboOffday } from "./kbo-offday";
 
 /** 숫자 kboId로 로스터 조회 — 외국인 숫자→영문 변환 포함 */
 function findPlayerByNumericId(numericId: string): { name: string } | undefined {
@@ -250,7 +251,7 @@ export const USER_FACING_GAMES_TIMEOUT_MS = 3500;
  */
 export async function fetchKboGamesOnly(
   date: string,
-  srId = "0,1,3,4,5,7,9",
+  srId = "0,1,3,4,5,7,8,9",
   opts?: { timeoutMs?: number; signal?: AbortSignal },
 ): Promise<KboGame[]> {
   const res = await fetch(`${KBO_BASE}/ws/Main.asmx/GetKboGameList`, {
@@ -265,6 +266,9 @@ export async function fetchKboGamesOnly(
   const jsonEnd = text.indexOf("}<!");
   const jsonStr = jsonEnd > 0 ? text.slice(0, jsonEnd + 1) : text;
   const data = JSON.parse(jsonStr);
+  if (data.code !== "100") {
+    throw new Error("KBO GetKboGameList schema-error: unsuccessful response code");
+  }
   // HTTP 200 스키마 열화: game 필드가 배열이 아니면(누락/null) schema-error.
   if (!Array.isArray(data.game)) {
     throw new Error("KBO GetKboGameList schema-error: game 필드 부재/비배열");
@@ -278,7 +282,7 @@ export async function fetchKboGamesOnly(
 
 async function fetchGamesUnfiltered(
   date: string,
-  srId = "0,1,3,4,5,7,9",
+  srId = "0,1,3,4,5,7,8,9",
   opts?: { timeoutMs?: number; deadlineAtMs?: number },
 ): Promise<KboGame[]> {
   const deadlineAtMs = opts?.deadlineAtMs
@@ -346,6 +350,19 @@ async function fetchGamesUnfiltered(
   //    fetch 라 에러로 신호; 호출자가 구값 유지/ok:false 처리). 이전처럼 []로 닫으면 KBO 장애가 홈/일정에
   //    "정상 0경기"로 오인된다(삼순 P1).
   if (games.length === 0) {
+    // Only a successful, full-series empty scoreboard can be corroborated by
+    // the independent KBO calendar. Keep budget for the existing failover.
+    if (srId === "0,1,3,4,5,7,8,9") {
+      const remainingMs = deadlineAtMs - Date.now();
+      if (remainingMs > 1) {
+        try {
+          const signal = AbortSignal.timeout(Math.max(1, Math.min(1500, Math.floor(remainingMs / 2))));
+          if (await runBeforeDeadline(() => confirmKboOffday(date, signal), deadlineAtMs)) return [];
+        } catch {
+          // Unknown calendar state is not an off day: retain Naver cross-check.
+        }
+      }
+    }
     const naver = await import("@/lib/crawler/naver-games");
     try {
       const remainingMs = deadlineAtMs - Date.now();

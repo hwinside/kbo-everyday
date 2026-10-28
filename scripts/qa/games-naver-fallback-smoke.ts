@@ -213,7 +213,7 @@ const keepAlive = setInterval(() => {}, 1000);
 {
   let naverCalled = false;
   stubFetch((url) => {
-    if (url.includes("GetKboGameList")) return jsonResponse({ game: [] });
+    if (url.includes("GetKboGameList")) return jsonResponse({ code: "100", game: [] });
     if (url.includes("schedule/games")) { naverCalled = true; return jsonResponse({ code: 200, success: true, result: { games: [] } }); }
     throw new Error(`unexpected url ${url}`);
   });
@@ -226,7 +226,7 @@ const keepAlive = setInterval(() => {}, 1000);
 // ── 9b. soft-empty 교차확인: KBO 200 game:[](열화) + Naver 에 경기 있음 → Naver 사용 ───
 {
   stubFetch((url) => {
-    if (url.includes("GetKboGameList")) return jsonResponse({ game: [] }); // 게임데이인데 빈 응답(열화)
+    if (url.includes("GetKboGameList")) return jsonResponse({ code: "100", game: [] }); // 게임데이인데 빈 응답(열화)
     if (url.includes("schedule/games")) {
       return jsonResponse({ code: 200, success: true, result: { games: [naverGame({ statusCode: "STARTED", statusInfo: "4회말", homeTeamScore: 2, awayTeamScore: 5 })] } });
     }
@@ -243,7 +243,7 @@ const keepAlive = setInterval(() => {}, 1000);
 //    이전엔 [] 로 닫아 KBO 장애가 '정상 0경기'로 오인됐다(삼순 P1). 이제 Naver 미검증이면 throw.
 {
   stubFetch((url) => {
-    if (url.includes("GetKboGameList")) return jsonResponse({ game: [] });
+    if (url.includes("GetKboGameList")) return jsonResponse({ code: "100", game: [] });
     if (url.includes("schedule/games")) throw new Error("Naver down");
     throw new Error(`unexpected url ${url}`);
   });
@@ -254,7 +254,7 @@ const keepAlive = setInterval(() => {}, 1000);
 // ── 9c-2. soft-empty fail-close timeout(P1): KBO 200 game:[] + Naver timeout → 무경기 단정 금지 ───
 {
   stubFetch((url) => {
-    if (url.includes("GetKboGameList")) return jsonResponse({ game: [] });
+    if (url.includes("GetKboGameList")) return jsonResponse({ code: "100", game: [] });
     if (url.includes("schedule/games")) { const e = new Error("timeout"); e.name = "TimeoutError"; throw e; }
     throw new Error(`unexpected url ${url}`);
   });
@@ -265,7 +265,7 @@ const keepAlive = setInterval(() => {}, 1000);
 // ── 9d. KBO per-game 부분 열화(game:[{}]) → schema-error → Naver 폴백 (P1) ───
 {
   stubFetch((url) => {
-    if (url.includes("GetKboGameList")) return jsonResponse({ game: [{}] }); // 필수 필드 전면 결측
+    if (url.includes("GetKboGameList")) return jsonResponse({ code: "100", game: [{}] }); // 필수 필드 전면 결측
     if (url.includes("schedule/games")) {
       return jsonResponse({ code: 200, success: true, result: { games: [naverGame({ statusCode: "STARTED", statusInfo: "6회초", homeTeamScore: 1, awayTeamScore: 3 })] } });
     }
@@ -282,7 +282,7 @@ const keepAlive = setInterval(() => {}, 1000);
   let naverCalled = false;
   stubFetch((url) => {
     if (url.includes("GetKboGameList")) {
-      return jsonResponse({ game: [{ G_ID: "20260729HTSS0", G_DT: "20260729", G_TM: "18:30", S_NM: "대구", AWAY_ID: "HT", AWAY_NM: "KIA", HOME_ID: "SS", HOME_NM: "삼성", GAME_STATE_SC: "1", CANCEL_SC_ID: "0", GAME_TB_SC: "T" }] });
+      return jsonResponse({ code: "100", game: [{ G_ID: "20260729HTSS0", G_DT: "20260729", G_TM: "18:30", S_NM: "대구", AWAY_ID: "HT", AWAY_NM: "KIA", HOME_ID: "SS", HOME_NM: "삼성", GAME_STATE_SC: "1", CANCEL_SC_ID: "0", GAME_TB_SC: "T" }] });
     }
     if (url.includes("schedule/games")) { naverCalled = true; throw new Error("Naver 를 호출하면 안 됨"); }
     throw new Error(`unexpected url ${url}`);
@@ -400,7 +400,7 @@ const keepAlive = setInterval(() => {}, 1000);
 // ── 13b. srId=0 soft-empty 폴백(P1): KBO 200 game:[] + Naver 경기 있음 → Naver 사용 ───
 {
   stubFetch((url) => {
-    if (url.includes("GetKboGameList")) return jsonResponse({ game: [] });
+    if (url.includes("GetKboGameList")) return jsonResponse({ code: "100", game: [] });
     if (url.includes("schedule/games")) return jsonResponse({ code: 200, success: true, result: { games: [naverGame({ statusCode: "RESULT", statusInfo: "9회말", homeTeamScore: 3, awayTeamScore: 1 })] } });
     throw new Error(`unexpected url ${url}`);
   });
@@ -413,7 +413,7 @@ const keepAlive = setInterval(() => {}, 1000);
 // ── 13c. srId=0 soft-empty 정상 무경기일: KBO 200 game:[] + Naver 도 빈 → authoritative empty([]) ───
 {
   stubFetch((url) => {
-    if (url.includes("GetKboGameList")) return jsonResponse({ game: [] });
+    if (url.includes("GetKboGameList")) return jsonResponse({ code: "100", game: [] });
     if (url.includes("schedule/games")) return jsonResponse({ code: 200, success: true, result: { games: [] } });
     throw new Error(`unexpected url ${url}`);
   });
@@ -428,7 +428,7 @@ const keepAlive = setInterval(() => {}, 1000);
 {
   let naverCalled = false;
   stubFetch((url) => {
-    if (url.includes("GetKboGameList")) return jsonResponse({ game: [] }); // 시범기간 srId=0 정규 0경기(참값)
+    if (url.includes("GetKboGameList")) return jsonResponse({ code: "100", game: [] }); // 시범기간 srId=0 정규 0경기(참값)
     if (url.includes("schedule/games")) {
       naverCalled = true;
       return jsonResponse({ code: 200, success: true, result: { games: [
@@ -476,7 +476,7 @@ const keepAlive = setInterval(() => {}, 1000);
 {
   let naverCalled = false;
   stubFetch((url) => {
-    if (url.includes("GetKboGameList")) return jsonResponse({ game: [] });
+    if (url.includes("GetKboGameList")) return jsonResponse({ code: "100", game: [] });
     if (url.includes("schedule/games")) {
       naverCalled = true;
       return jsonResponse({ code: 200, success: true, result: { games: [naverGame({ gameId: "20261013HTSS02026" })] } });
@@ -546,7 +546,7 @@ const keepAlive = setInterval(() => {}, 1000);
 {
   stubFetch((url) => {
     if (url.includes("GetKboGameList")) {
-      return jsonResponse({ game: [{ G_ID: "20260729HTSS0", G_DT: "20260729", G_TM: "18:30", S_NM: "대구", AWAY_ID: "HT", AWAY_NM: "KIA", HOME_ID: "SS", HOME_NM: "삼성", GAME_STATE_SC: "2", CANCEL_SC_ID: "0", GAME_TB_SC: "T", GAME_INN_NO: 5, T_SCORE_CN: "3", B_SCORE_CN: "2", STRIKE_CN: 2, BALL_CN: 1, OUT_CN: 1, B1_BAT_ORDER_NO: 4, T_P_NM: "김타자", B_P_NM: "박투수" }] });
+      return jsonResponse({ code: "100", game: [{ G_ID: "20260729HTSS0", G_DT: "20260729", G_TM: "18:30", S_NM: "대구", AWAY_ID: "HT", AWAY_NM: "KIA", HOME_ID: "SS", HOME_NM: "삼성", GAME_STATE_SC: "2", CANCEL_SC_ID: "0", GAME_TB_SC: "T", GAME_INN_NO: 5, T_SCORE_CN: "3", B_SCORE_CN: "2", STRIKE_CN: 2, BALL_CN: 1, OUT_CN: 1, B1_BAT_ORDER_NO: 4, T_P_NM: "김타자", B_P_NM: "박투수" }] });
     }
     throw new Error(`unexpected url ${url}`);
   });
