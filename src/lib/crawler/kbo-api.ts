@@ -258,7 +258,7 @@ const DEFAULT_FULL_SERIES_SR_ID = "0,1,3,4,5,7,9";
  */
 export async function fetchKboGamesOnly(
   date: string,
-  srId = "0,1,3,4,5,7,9",
+  srId = DEFAULT_FULL_SERIES_SR_ID,
   opts?: { timeoutMs?: number; signal?: AbortSignal },
 ): Promise<KboGame[]> {
   const res = await fetch(`${KBO_BASE}/ws/Main.asmx/GetKboGameList`, {
@@ -289,7 +289,7 @@ export async function fetchKboGamesOnly(
 
 async function fetchGamesUnfiltered(
   date: string,
-  srId = "0,1,3,4,5,7,9",
+  srId = DEFAULT_FULL_SERIES_SR_ID,
   opts?: { timeoutMs?: number; deadlineAtMs?: number },
 ): Promise<KboGame[]> {
   const deadlineAtMs = opts?.deadlineAtMs
