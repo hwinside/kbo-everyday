@@ -47,7 +47,9 @@ interface PlayerStat {
 }
 
 async function fetchHtml(url: string): Promise<string> {
-  return fetchRegularSeasonHtml(url, new Date().getFullYear(), AbortSignal.timeout(SOURCE_TIMEOUT_MS));
+  // Never assume the wall-clock year: on Jan 1 the new season has no records yet,
+  // so the whole off-season would fail. Follow KBO's own latest selection.
+  return fetchRegularSeasonHtml(url, "latest", AbortSignal.timeout(SOURCE_TIMEOUT_MS));
 }
 
 interface KboRow {
@@ -277,7 +279,7 @@ function mapNaverPitchers(rows: NaverPlayerStat[], roster: RosterPlayer[]): Play
 // ── KBO 수집 ───────────────────────────────────────────────────────────────
 async function fetchKboBatterStats(roster: RosterPlayer[]): Promise<PlayerStat[]> {
   // GAME_CN 정렬로 출장기록 있는 전체 타자 수집 (HRA_RT는 규정타석 충족자만 반환)
-  const pages = await fetchRegularSeasonPages(`${KBO_BASE}/Record/Player/HitterBasic/Basic1.aspx?sort=GAME_CN`, new Date().getFullYear(), AbortSignal.timeout(SOURCE_TIMEOUT_MS));
+  const pages = await fetchRegularSeasonPages(`${KBO_BASE}/Record/Player/HitterBasic/Basic1.aspx?sort=GAME_CN`, "latest", AbortSignal.timeout(SOURCE_TIMEOUT_MS));
   const rows = pages.flatMap(html => assertKboRows(parseTable(html), 16, "hitter"));
   if (rows.length < KBO_MIN_COVERAGE.batter) throw new Error("KBO hitter coverage invalid");
   const stats = rows.map(({ cells: c, playerId }, i) => {

@@ -34,19 +34,42 @@ async function readHtml(response: Response, signal: AbortSignal): Promise<string
   });
 }
 
+/**
+ * Which regular season to read.
+ *
+ * "latest" = whatever KBO itself has selected on the page, i.e. the last season
+ * with regular-season records. A wall-clock year must never be assumed: on
+ * January 1st the new season does not exist yet, so `new Date().getFullYear()`
+ * would ask KBO for an empty season and fail for the whole off-season.
+ */
+export type RegularSeason = number | "latest";
+
+/** The season KBO reports as selected on a records page. */
+export function regularSeasonOf(html: string): number {
+  const state = form(html);
+  const value = Number(state.body.get(state.seasonName));
+  if (!Number.isInteger(value) || value < 1982 || value > 2100) throw new Error("KBO season unreadable");
+  return value;
+}
+
 export async function fetchRegularSeasonHtml(
-  url: string, season: number, signal: AbortSignal, fetchImpl: typeof fetch = fetch,
+  url: string, season: RegularSeason, signal: AbortSignal, fetchImpl: typeof fetch = fetch,
 ): Promise<string> {
-  if (!Number.isInteger(season) || season < 1982 || season > 2100) throw new Error("KBO invalid season");
+  if (season !== "latest" && (!Number.isInteger(season) || season < 1982 || season > 2100)) {
+    throw new Error("KBO invalid season");
+  }
   const headers = { "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36", Referer: url };
   const selectionUrl = url.replace("/Hitter/Basic2.aspx", "/Hitter/Basic1.aspx");
   const initial = await fetchImpl(selectionUrl, { headers, signal, cache: "no-store" });
   if (!initial.ok) throw new Error(`KBO GET HTTP ${initial.status}`);
   let html = await readHtml(initial, signal);
   const state = form(html);
-  if (selectionUrl === url && state.body.get(state.seasonName) === String(season) && state.body.get(state.seriesName) === "0") return html;
+  // "latest" adopts KBO's own selection instead of guessing a year.
+  const wanted = season === "latest" ? Number(state.body.get(state.seasonName)) : season;
+  if (!Number.isInteger(wanted) || wanted < 1982 || wanted > 2100) throw new Error("KBO season unreadable");
+  if (selectionUrl === url && state.body.get(state.seasonName) === String(wanted) && state.body.get(state.seriesName) === "0") return html;
   if (!state.body.get("__VIEWSTATE") || !state.body.get("__EVENTVALIDATION")) throw new Error("KBO form tokens missing");
-  state.body.set(state.seasonName, String(season));
+  state.body.set(state.seasonName, String(wanted));
   state.body.set(state.seriesName, "0");
   state.body.set("__EVENTTARGET", state.seriesName);
   state.body.set("__EVENTARGUMENT", "");
@@ -59,7 +82,7 @@ export async function fetchRegularSeasonHtml(
   if (!response.ok) throw new Error(`KBO POST HTTP ${response.status}`);
   html = await readHtml(response, signal);
   const selected = form(html);
-  if (selected.body.get(selected.seasonName) !== String(season) || selected.body.get(selected.seriesName) !== "0") {
+  if (selected.body.get(selected.seasonName) !== String(wanted) || selected.body.get(selected.seriesName) !== "0") {
     throw new Error("KBO season/series selection mismatch");
   }
   if (selectionUrl !== url) {
@@ -72,7 +95,7 @@ export async function fetchRegularSeasonHtml(
     if (!detail.ok) throw new Error(`KBO detail HTTP ${detail.status}`);
     html = await readHtml(detail, signal);
     const detailState = form(html);
-    if (detailState.body.get(detailState.seasonName) !== String(season) || detailState.body.get(detailState.seriesName) !== "0") throw new Error("KBO detail season/series mismatch");
+    if (detailState.body.get(detailState.seasonName) !== String(wanted) || detailState.body.get(detailState.seriesName) !== "0") throw new Error("KBO detail season/series mismatch");
   }
   return html;
 }
@@ -81,7 +104,7 @@ export async function fetchRegularSeasonHtml(
  * A missing/looping pager or season change fails the entire collection.
  */
 export async function fetchRegularSeasonPages(
-  url: string, season: number, signal: AbortSignal, fetchImpl: typeof fetch = fetch,
+  url: string, season: RegularSeason, signal: AbortSignal, fetchImpl: typeof fetch = fetch,
 ): Promise<string[]> {
   const cookies = new Map<string, string>();
   const sessionFetch: typeof fetch = async (input, init) => {
@@ -93,12 +116,15 @@ export async function fetchRegularSeasonPages(
     return response;
   };
   let html = await fetchRegularSeasonHtml(url, season, signal, sessionFetch);
+  // Pin the resolved season once: every later page must stay on this very season,
+  // so "latest" cannot drift mid-collection.
+  const pinnedSeason = season === "latest" ? regularSeasonOf(html) : season;
   const pages: string[] = [];
   const seenPlayerIds = new Set<string>();
   while (pages.length < 40) {
     signal.throwIfAborted();
     const state = form(html);
-    if (state.body.get(state.seasonName) !== String(season) || state.body.get(state.seriesName) !== '0') {
+    if (state.body.get(state.seasonName) !== String(pinnedSeason) || state.body.get(state.seriesName) !== '0') {
       throw new Error('KBO paged season/series mismatch');
     }
     const links = [...html.matchAll(/<a\b([^>]*)>([\s\S]*?)<\/a>/gi)].map(m => ({ a: attributes(m[1]), label: m[2].replace(/<[^>]+>/g, '').trim() }));

@@ -42,14 +42,16 @@ type RunnerSource = "live" | "static-fallback";
 async function fetchHtml(url: string, signal?: AbortSignal): Promise<string> {
   const boundedSignal = signal ?? AbortSignal.timeout(STATS_KBO_BUDGET_MS);
   if (url.includes('/HitterBasic/') && new URL(url).searchParams.get('sort') === 'GAME_CN') {
-    const pages = await fetchRegularSeasonPages(url, 2026, boundedSignal);
+    // "latest" = the season KBO itself has selected. A hardcoded year would keep
+    // serving 2026 records in 2027.
+    const pages = await fetchRegularSeasonPages(url, "latest", boundedSignal);
     return `<table><tbody>${pages.map(html => {
       const body = html.match(/<tbody[^>]*>([\s\S]*?)<\/tbody>/i)?.[1];
       if (!body) throw new Error('KBO player page table missing');
       return body;
     }).join('')}</tbody></table>`;
   }
-  return fetchRegularSeasonHtml(url, 2026, boundedSignal);
+  return fetchRegularSeasonHtml(url, "latest", boundedSignal);
 }
 
 export type ParsedTableRow = string[] & { playerId?: string };
@@ -136,7 +138,7 @@ export async function fetchAllRunnerRows(
   const signal = externalSignal
     ? AbortSignal.any([externalSignal, AbortSignal.timeout(RUNNER_CRAWL_TIMEOUT_MS)])
     : AbortSignal.timeout(RUNNER_CRAWL_TIMEOUT_MS);
-  const pages = await fetchRegularSeasonPages(RUNNER_URL, 2026, signal, fetchImpl);
+  const pages = await fetchRegularSeasonPages(RUNNER_URL, "latest", signal, fetchImpl);
   const rows = pages.flatMap(parseTable);
   if (pages.length < RUNNER_MIN_PAGES || rows.length < RUNNER_MIN_ROWS) throw new Error('Runner full crawl incomplete');
   return rows;
