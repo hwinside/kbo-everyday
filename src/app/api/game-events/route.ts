@@ -19,6 +19,16 @@ import { fetchKboLiveGames } from "@/lib/notifications/kbo-live-games";
 // instance B, breaking K celebration counters (e.g. 6연속 K → "그냥 삼진"
 // or "2K" depending on which instance answered each poll).
 
+/**
+ * Hard cap for one /api/game-events response.
+ *
+ * Polling clients re-ask every few seconds, so a slow answer is worse than a
+ * partial one: production measured 39~62s responses because the Naver
+ * box-score fallback ran with no signal at all. Stale-but-fast beats fresh-but-
+ * hanging, and the client already keeps its last good events.
+ */
+const GAME_EVENTS_DEADLINE_MS = 8_000;
+
 const KBO_SCHEDULE = "https://www.koreabaseball.com/ws/Schedule.asmx";
 // 2026-05-20: KBO가 Referer가 koreabaseball.com이 아닌 요청에 IE 분기 HTML 에러 페이지 반환.
 const HEADERS = {
@@ -128,20 +138,27 @@ export async function GET(req: NextRequest) {
 
   const date = gameId.slice(0, 8); // YYYYMMDD from game ID
 
+  // One absolute deadline for every upstream in this request. Previously the
+  // KBO calls were individually bounded but the Naver box-score fallback was
+  // not, so a slow/blocked Naver kept the response open for 39~62s in
+  // production (same class of bug as #1577). Polling clients need a hard cap.
+  const deadlineAtMs = Date.now() + GAME_EVENTS_DEADLINE_MS;
+  const deadlineSignal = AbortSignal.timeout(GAME_EVENTS_DEADLINE_MS);
+
   try {
     // 중계 화면·warmup과 같은 KBO→Naver 공용 source를 사용한다.
-    const fetched = await fetchKboLiveGames(date, Date.now() + 5_000);
+    const fetched = await fetchKboLiveGames(date, Math.min(Date.now() + 5_000, deadlineAtMs));
     const games = fetched.ok ? fetched.games : [];
     const rawGame = games.find((g: KboRawGame) => g.G_ID === gameId);
 
     // Use SR_ID from live data (GetBoxScore only accepts single integer srId)
-    const srId = await resolveGameSeries(gameId, { srId: rawGame?.SR_ID });
+    const srId = await resolveGameSeries(gameId, { srId: rawGame?.SR_ID, signal: deadlineSignal });
     const boxScoreRes = await fetch(`${KBO_SCHEDULE}/GetBoxScore`, {
       method: "POST",
       headers: HEADERS,
       body: `leId=1&srId=${srId}&seasonId=${date.slice(0, 4)}&gameId=${gameId}`,
       cache: "no-store",
-      signal: AbortSignal.timeout(3_000),
+      signal: AbortSignal.any([deadlineSignal, AbortSignal.timeout(3_000)]),
     }).then(r => r.ok ? r.json() : null).catch(() => null);
 
     if (!rawGame) {
@@ -204,7 +221,14 @@ export async function GET(req: NextRequest) {
       (currentBoxScore.awayBatters.some(b => b.atBats > 0) ||
         currentBoxScore.homeBatters.some(b => b.atBats > 0));
     if (!hasRealBoxScore) {
-      const naver = await fetchNaverRecord(gameId);
+      // Bound the fallback to the request deadline and skip it entirely when no
+      // budget is left: stale events beat a response that never closes.
+      const naver = Date.now() < deadlineAtMs - 200
+        ? await fetchNaverRecord(gameId, {
+            signal: AbortSignal.any([deadlineSignal, AbortSignal.timeout(deadlineAtMs - Date.now())]),
+            boundedCache: true,
+          }).catch(() => null)
+        : null;
       if (naver?.boxScore) {
         const naverHasData = naver.boxScore.awayBatters.some(b => b.atBats > 0)
           || naver.boxScore.homeBatters.some(b => b.atBats > 0);
