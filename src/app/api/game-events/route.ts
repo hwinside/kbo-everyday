@@ -1,3 +1,4 @@
+import { runBeforeDeadline } from "@/lib/async-deadline";
 import { resolveGameSeries } from "@/lib/crawler/resolve-game-series";
 import { NextRequest, NextResponse } from "next/server";
 import type { LiveGameData } from "@/lib/hooks/useLiveGame";
@@ -120,7 +121,7 @@ function parseBoxScoreMinimal(data: unknown): GameDetailResponse["boxScore"] {
   };
 }
 
-export async function GET(req: NextRequest) {
+async function getEventsWithinBudget(req: NextRequest, deadline: number, signal: AbortSignal) {
   const gameId = req.nextUrl.searchParams.get("gameId");
   if (!gameId) {
     return NextResponse.json({ error: "gameId is required" }, { status: 400 });
@@ -130,26 +131,16 @@ export async function GET(req: NextRequest) {
 
   try {
     // 중계 화면·warmup과 같은 KBO→Naver 공용 source를 사용한다.
-    const fetched = await fetchKboLiveGames(date, Date.now() + 5_000);
+    const fetched = await fetchKboLiveGames(date, Math.min(deadline, Date.now() + 1200));
     const games = fetched.ok ? fetched.games : [];
     const rawGame = games.find((g: KboRawGame) => g.G_ID === gameId);
-
-    // Use SR_ID from live data (GetBoxScore only accepts single integer srId)
-    const srId = await resolveGameSeries(gameId, { srId: rawGame?.SR_ID });
-    const boxScoreRes = await fetch(`${KBO_SCHEDULE}/GetBoxScore`, {
-      method: "POST",
-      headers: HEADERS,
-      body: `leId=1&srId=${srId}&seasonId=${date.slice(0, 4)}&gameId=${gameId}`,
-      cache: "no-store",
-      signal: AbortSignal.timeout(3_000),
-    }).then(r => r.ok ? r.json() : null).catch(() => null);
 
     if (!rawGame) {
       const { data: row } = await supabaseAdmin
         .from("game_event_state")
         .select("event_history")
         .eq("game_id", gameId)
-        .maybeSingle();
+        .abortSignal(signal).maybeSingle();
       const existing = ((row?.event_history as GameEvent[] | null) ?? []);
       const emptySnapshot: GameSnapshot = {
         awayScore: 0, homeScore: 0,
@@ -159,6 +150,16 @@ export async function GET(req: NextRequest) {
       };
       return NextResponse.json({ events: existing, currentState: emptySnapshot });
     }
+
+    // Use SR_ID from live data (GetBoxScore only accepts single integer srId)
+    const srId = await resolveGameSeries(gameId, { srId: rawGame?.SR_ID, signal });
+    const boxScoreRes = await fetch(`${KBO_SCHEDULE}/GetBoxScore`, {
+      method: "POST",
+      headers: HEADERS,
+      body: `leId=1&srId=${srId}&seasonId=${date.slice(0, 4)}&gameId=${gameId}`,
+      cache: "no-store",
+      signal,
+    }).then(r => r.ok ? r.json() : null).catch(() => null);
 
     const status = isKboGameCancelled(rawGame.CANCEL_SC_ID) ? "cancelled"
       : rawGame.GAME_STATE_SC === "3" ? "final"
@@ -204,7 +205,7 @@ export async function GET(req: NextRequest) {
       (currentBoxScore.awayBatters.some(b => b.atBats > 0) ||
         currentBoxScore.homeBatters.some(b => b.atBats > 0));
     if (!hasRealBoxScore) {
-      const naver = await fetchNaverRecord(gameId);
+      const naver = await fetchNaverRecord(gameId, { signal: AbortSignal.any([signal, AbortSignal.timeout(400)]), boundedCache: true, includeRelayCounts: false });
       if (naver?.boxScore) {
         const naverHasData = naver.boxScore.awayBatters.some(b => b.atBats > 0)
           || naver.boxScore.homeBatters.some(b => b.atBats > 0);
@@ -212,12 +213,13 @@ export async function GET(req: NextRequest) {
       }
     }
 
+    signal.throwIfAborted();
     // Read shared state from Supabase (single row per game)
     const { data: stateRow } = await supabaseAdmin
       .from("game_event_state")
       .select("prev_state, event_history")
       .eq("game_id", gameId)
-      .maybeSingle();
+      .abortSignal(signal).maybeSingle();
 
     const prevState = (stateRow?.prev_state as PrevGameState | null) ?? null;
     const existingHistory = ((stateRow?.event_history as GameEvent[] | null) ?? []);
@@ -234,6 +236,7 @@ export async function GET(req: NextRequest) {
     // each clobbers the other's newEvents. event_history grows
     // monotonically; prev_state is last-write-wins (self-heals next poll).
     let history: GameEvent[];
+    signal.throwIfAborted();
     if (newEvents.length > 0) {
       const { data: rpcHistory } = await supabaseAdmin.rpc(
         "upsert_game_event_state",
@@ -242,7 +245,7 @@ export async function GET(req: NextRequest) {
           p_prev_state: nextState as unknown as Record<string, unknown>,
           p_new_events: newEvents as unknown as Record<string, unknown>[],
         },
-      );
+      ).abortSignal(signal);
       history = (rpcHistory as GameEvent[] | null) ?? [...existingHistory, ...newEvents];
     } else if (!stateRow) {
       // First-ever poll for this game — seed an empty row so subsequent
@@ -254,7 +257,7 @@ export async function GET(req: NextRequest) {
           prev_state: nextState as unknown as Record<string, unknown>,
           event_history: [] as unknown as Record<string, unknown>[],
           updated_at: new Date().toISOString(),
-        });
+        }).abortSignal(signal);
       history = existingHistory;
     } else {
       history = existingHistory;
@@ -291,7 +294,7 @@ export async function GET(req: NextRequest) {
         .from("game_event_state")
         .select("event_history")
         .eq("game_id", gameId)
-        .maybeSingle();
+        .abortSignal(signal).maybeSingle();
       fallback = (row?.event_history as GameEvent[] | null) ?? [];
     } catch {
       // swallow — fallback stays []
@@ -300,5 +303,23 @@ export async function GET(req: NextRequest) {
       { error: (e as Error).message, events: fallback, currentState: null },
       { status: 200 },
     );
+  }
+}
+
+/** One wall-clock budget covers upstream reads, body reads and durable state. */
+export async function GET(req: NextRequest) {
+  const deadline = Date.now() + 2700;
+  const controller = new AbortController();
+  const signal = AbortSignal.any([req.signal, controller.signal]);
+  const timer = setTimeout(() => controller.abort(new Error("events_deadline_exceeded")), 2600);
+  try {
+    return await runBeforeDeadline(() => getEventsWithinBudget(req, deadline, signal), deadline);
+  } catch {
+    return NextResponse.json({ error: "events_deadline_exceeded", events: [], currentState: null }, {
+      status: 503, headers: { "Cache-Control": "no-store" },
+    });
+  } finally {
+    clearTimeout(timer);
+    controller.abort();
   }
 }

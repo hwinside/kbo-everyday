@@ -1093,7 +1093,7 @@ export async function GET(req: NextRequest) {
 
   let naverGameId: string;
   try {
-    naverGameId = await resolveNaverGameId(gameId);
+    naverGameId = await resolveNaverGameId(gameId, { signal: req.signal });
   } catch {
     return NextResponse.json({ error: "game series unavailable" }, { status: 503, headers: NO_STORE_HEADERS });
   }
@@ -1135,7 +1135,7 @@ export async function GET(req: NextRequest) {
           "User-Agent": "Mozilla/5.0 (compatible; KboEveryday/1.0)",
         },
         cache: "no-store",
-        signal: AbortSignal.timeout(10000),
+        signal: AbortSignal.any([req.signal, AbortSignal.timeout(10000)]),
       }
     );
 
@@ -1197,7 +1197,7 @@ export async function GET(req: NextRequest) {
           // of celebrations arriving 1–2min late (relay response never lands,
           // so the BoxScore-diff fallback fires much later). On timeout the
           // per-inning .catch yields [] and the next 5s poll recovers.
-          signal: AbortSignal.timeout(RELAY_INNING_TIMEOUT_MS),
+          signal: AbortSignal.any([req.signal, AbortSignal.timeout(RELAY_INNING_TIMEOUT_MS)]),
         })
           .then((r) => {
             if (!r.ok) throw new Error(`HTTP ${r.status}`);
@@ -1241,7 +1241,7 @@ export async function GET(req: NextRequest) {
         // Same bound as per-inning fetches: record API is only used for
         // pitcher/batter names+stats, not celebration firing, so a hung
         // record fetch must never block the relay (celebration) response.
-        signal: AbortSignal.timeout(RELAY_INNING_TIMEOUT_MS),
+        signal: AbortSignal.any([req.signal, AbortSignal.timeout(RELAY_INNING_TIMEOUT_MS)]),
       }
     )
       .then((r) => (r.ok ? r.json() : null))

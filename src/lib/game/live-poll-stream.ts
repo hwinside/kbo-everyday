@@ -1,3 +1,4 @@
+import { runBeforeDeadline } from "@/lib/async-deadline";
 export type LivePollChannel = "relay" | "events" | "live" | "detail";
 
 export interface LivePollEnvelope {
@@ -55,14 +56,15 @@ const encoder = new TextEncoder();
 async function responseEnvelope(
   channel: LivePollChannel,
   task: Promise<Response>,
+  deadlineAtMs?: number,
 ): Promise<LivePollEnvelope> {
   try {
-    const response = await task;
+    const response = await runBeforeDeadline(() => task, deadlineAtMs);
     let data: unknown = null;
     try {
-      data = await response.json();
+      data = await runBeforeDeadline(() => response.json(), deadlineAtMs);
     } catch {
-      data = { error: `${channel}_invalid_json` };
+      return { channel, ok: false, status: 503, data: { error: `${channel}_invalid_or_timed_out_body` } };
     }
     return {
       channel,
@@ -91,6 +93,7 @@ async function responseEnvelope(
  */
 export function createLivePollStream(
   tasks: Array<{ channel: LivePollChannel; task: Promise<Response> }>,
+  options?: { deadlineAtMs?: number; onClose?: () => void },
 ): ReadableStream<Uint8Array> {
   let open = tasks.length;
   let cancelled = false;
@@ -101,12 +104,12 @@ export function createLivePollStream(
         channel: LivePollChannel,
         task: Promise<Response>,
       ) => {
-        const envelope = await responseEnvelope(channel, task);
+        const envelope = await responseEnvelope(channel, task, options?.deadlineAtMs);
         if (!cancelled) {
           controller.enqueue(encoder.encode(`${JSON.stringify(envelope)}\n`));
         }
         open -= 1;
-        if (open === 0 && !cancelled) controller.close();
+        if (open === 0 && !cancelled) { controller.close(); options?.onClose?.(); }
       };
       for (const { channel, task } of tasks) {
         void send(channel, task);
@@ -114,6 +117,7 @@ export function createLivePollStream(
     },
     cancel() {
       cancelled = true;
+      options?.onClose?.();
     },
   });
 }
