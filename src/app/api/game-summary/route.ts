@@ -803,7 +803,11 @@ export async function POST(req: NextRequest) {
       ].filter((s): s is string => typeof s === "string");
       const playerNames = [...allBatters, ...allPitchers].map(player => player.name).filter(Boolean);
       const unsupportedInning = hasUnsupportedPlayerInning(summary, playerNames);
-      const consistencyViolation = playerNames.length === 0 || unsupportedInning || narrativeParts.some(hasBaseRunnerContradiction);
+      // An empty roster is not evidence of a bad summary — postseason and
+      // boxscore-less games legitimately arrive with no player rows, and
+      // rejecting them here blocked every such summary with a 422. With no
+      // names there is also nothing to misattribute to an inning.
+      const consistencyViolation = unsupportedInning || narrativeParts.some(hasBaseRunnerContradiction);
       if (consistencyViolation) {
         console.error(`Consistency violation (attempt ${attempt}): unsupported inning attribution or arithmetic. headline="${summary.headline}"`);
         if (attempt === MAX_ATTEMPTS) {

@@ -21,7 +21,10 @@ export function hasUnsupportedPlayerInning(summary: unknown, playerNames: string
 }
 
 export function hasVerifiedInningClaims(summary: Record<string, unknown>): boolean {
+  // The marker must exist so summaries cached before this check are
+  // regenerated, but an empty roster is a valid state (see route.ts) and must
+  // not permanently hide an otherwise clean summary.
   const names = summary._verifiedPlayerNames;
-  return Array.isArray(names) && names.length > 0 && names.every(n => typeof n === 'string' && n.trim())
-    && !hasUnsupportedPlayerInning(summary, names);
+  return Array.isArray(names) && names.every(n => typeof n === 'string' && n.trim() !== '')
+    && !hasUnsupportedPlayerInning(summary, names as string[]);
 }
