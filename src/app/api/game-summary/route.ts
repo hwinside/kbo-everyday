@@ -27,6 +27,7 @@ import {
   winnerFieldMismatch,
   type SummaryFingerprint,
 } from "@/lib/game-summary/cache-validation";
+import { isFeatureDisabled } from "@/lib/config/runtime-switches";
 import {
   classifyGenerationFailure,
   canonicalFailureStage,
@@ -559,6 +560,14 @@ export async function GET(req: NextRequest) {
   if (!gameId) return NextResponse.json({ error: "gameId required" }, { status: 400 });
   // 올스타전은 AI 경기 요약 미제공(팀 기반 분석 무의미 — 승부예측/라인업분석 #544와 일관).
   if (isAllStarGameId(gameId)) return NextResponse.json({ summary: null, source: "allstar" });
+
+  // Operator switch: hide the summary without a redeploy; the rest of the game screen stays up.
+  if (await isFeatureDisabled("game-summary")) {
+    return NextResponse.json(
+      { summary: null, source: "disabled" },
+      { headers: { "Cache-Control": "private, no-store, max-age=0" } },
+    );
+  }
 
   const cached = await getCached(gameId);
   if (cached) {

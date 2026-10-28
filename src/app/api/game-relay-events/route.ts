@@ -4,6 +4,7 @@ import { GET as getEvents } from "@/app/api/game-events/route";
 import { GET as getLive } from "@/app/api/game-live/route";
 import { GET as getDetail } from "@/app/api/game-detail/route";
 import { createLivePollStream } from "@/lib/game/live-poll-stream";
+import { isFeatureDisabled } from "@/lib/config/runtime-switches";
 
 export const dynamic = "force-dynamic";
 
@@ -47,8 +48,16 @@ export async function GET(req: NextRequest) {
   const tasks: Array<{ channel: "relay" | "events" | "live" | "detail"; task: Promise<Response> }> = [
     { channel: "relay", task: getRelay(internalRequest(req, "/api/game-relay")) },
   ];
-  if (rawInclude === null || include.has("events")) {
+  // Operator switch: drop only the events channel so scores/state keep flowing.
+  const eventsDisabled = await isFeatureDisabled("relay-events");
+  if (!eventsDisabled && (rawInclude === null || include.has("events"))) {
     tasks.push({ channel: "events", task: getEvents(internalRequest(req, "/api/game-events")) });
+  } else if (eventsDisabled && (rawInclude === null || include.has("events"))) {
+    // Tell the client the omission is deliberate so it shows the notice instead of retrying.
+    tasks.push({
+      channel: "events",
+      task: Promise.resolve(NextResponse.json({ error: "relay_events_disabled", events: [] }, { status: 503 })),
+    });
   }
   if (include.has("live")) {
     tasks.push({ channel: "live", task: getLive(internalRequest(req, "/api/game-live")) });
