@@ -172,6 +172,7 @@ test('pending notice renders an actionable in-app reload button', () => {
   const notice = load('src/components/auth/AuthErrorNotice.tsx', {
     'react/jsx-runtime': { jsx, jsxs: jsx }, 'react': { useEffect: () => {}, useRef: v => ({ current: v }), useState: () => [state++ === 0 ? 'oauth_pending' : false, () => {}] },
     'lucide-react': { Copy: 'copy', X: 'x' }, '@/lib/auth-error': errors,
+    '@/lib/auth/oauth-return-watch': { stopOAuthReturnWait() {} },
     './LoginSheet': { default: 'login-sheet' }, '@/lib/capacitor/auth': { isOAuthExchangePending: () => false },
   }, { window: { location: { reload: () => { reloaded = true; } } } });
   let button;
@@ -217,7 +218,8 @@ test('recovery button opens provider selection, never exchanges old codes, and b
     const notice = load('src/components/auth/AuthErrorNotice.tsx', {
       'react/jsx-runtime': { jsx, jsxs: jsx, Fragment: 'fragment' },
       'react': { useEffect() {}, useRef: v => ({ current: v }), useState: () => { const i = state++; return [i === 0 ? 'oauth_exchange' : false, v => updates.push([i, v])]; } },
-      'lucide-react': { Copy: 'copy', X: 'x' }, './LoginSheet': { default: 'login-sheet' },
+      'lucide-react': { Copy: 'copy', X: 'x' }, '@/lib/auth/oauth-return-watch': { stopOAuthReturnWait() {} },
+    './LoginSheet': { default: 'login-sheet' },
       '@/lib/capacitor/auth': { isOAuthExchangePending: () => pending },
       '@/lib/auth-error': { ...load('src/lib/auth-error.ts'), clearAuthError: () => events.push('clear'), publishAuthError: c => events.push(c) },
     }, { window: { dispatchEvent: e => events.push(e.type) }, Event: class { constructor(type) { this.type = type; } } });
@@ -275,4 +277,38 @@ test('native callback missing verifier emits pkce and a retry notice, without ex
     assert.equal(h.lib.isOAuthExchangePending(), false);
     assert(!JSON.stringify(h.events).includes('AuthPKCECodeVerifierMissingError'));
   }
+});
+
+test('notice X ends return wait across resume/reload, allows restart and preserves late callback', async () => {
+  const watch = returnWatchHarness();
+  const native = nativeHarness({ watch: watch.lib });
+  await native.lib.openOAuthInBrowser('https://provider.invalid');
+  native.resume(true); watch.expire();
+  assert.deepEqual(watch.notices, ['oauth_return']);
+  let state = 0; const updates = []; let cleared = 0;
+  const jsx = (type, props) => ({ type, props });
+  const notice = load('src/components/auth/AuthErrorNotice.tsx', {
+    'react/jsx-runtime': { jsx, jsxs: jsx },
+    'react': { useEffect() {}, useRef: v => ({ current: v }), useState: () => { const i = state++; return [i === 0 ? 'oauth_return' : false, v => updates.push([i, v])]; } },
+    'lucide-react': { Copy: 'copy', X: 'x' }, './LoginSheet': { default: 'login-sheet' },
+    '@/lib/capacitor/auth': { isOAuthExchangePending: native.lib.isOAuthExchangePending },
+    '@/lib/auth/oauth-return-watch': watch.lib,
+    '@/lib/auth-error': { ...load('src/lib/auth-error.ts'), clearAuthError: () => { cleared++; } },
+  });
+  let close;
+  function visit(x) { if (!x || typeof x !== 'object') return; if (Array.isArray(x)) return x.forEach(visit); if (x.type === 'button' && x.props['aria-label'] === '안내 닫기') close = x; visit(x.props?.children); }
+  visit(notice.default()); assert(close);
+  native.resume(true); // A queued repeat must also be cancelled.
+  close.props.onClick(); watch.expire();
+  assert.equal(cleared, 1); assert(updates.some(([i, v]) => i === 0 && v === null));
+  assert.equal(watch.storage.size, 0);
+  native.resume(false); native.resume(true); watch.expire();
+  assert.deepEqual(watch.notices, ['oauth_return']);
+  const reloaded = returnWatchHarness(watch.storage);
+  reloaded.lib.checkOAuthReturn(); reloaded.expire(); assert.deepEqual(reloaded.notices, []);
+  native.fire(); await flush(); assert.equal(native.calls(), 1);
+  assert(native.events.some(e => e[0] === 'session-ready'));
+  await native.lib.openOAuthInBrowser('https://provider.invalid');
+  native.resume(true); watch.expire();
+  assert.deepEqual(watch.notices, ['oauth_return', 'oauth_return']);
 });

@@ -2,6 +2,7 @@
 
 import { useEffect, useRef, useState } from "react";
 import LoginSheet from "./LoginSheet";
+import { stopOAuthReturnWait } from "@/lib/auth/oauth-return-watch";
 import { isOAuthExchangePending } from "@/lib/capacitor/auth";
 import { Copy, X } from "lucide-react";
 import {
@@ -117,7 +118,11 @@ export default function AuthErrorNotice() {
         <button
           type="button"
           aria-label="안내 닫기"
-          onClick={() => setErrorCode(null)}
+          onClick={() => {
+            stopOAuthReturnWait();
+            clearAuthError();
+            setErrorCode(null);
+          }}
           className="-mr-1 -mt-1 rounded-full p-2 text-text-tertiary"
         >
           <X size={18} />
