@@ -303,13 +303,6 @@
       "subject": "retention_metrics",
       "detail": "growing-table limit requires an explicit bounded annotation or a structurally verified keyset helper"
     },
-    "3b81bfbbedba95531b7c": {
-      "count": 1,
-      "kind": "unbounded_rpc",
-      "file": "src/app/api/game-events/route.ts",
-      "subject": "upsert_game_event_state",
-      "detail": "RPC row cardinality must be allowlisted or annotated"
-    },
     "3c04a1560cc228eb1d8f": {
       "count": 1,
       "kind": "unbounded_growing_select",

@@ -4,7 +4,8 @@ import { NextRequest, NextResponse } from "next/server";
 import type { LiveGameData } from "@/lib/hooks/useLiveGame";
 import { fetchNaverRecord, type GameDetailResponse } from "@/app/api/game-detail/route";
 import type { GameSnapshot } from "@/types/game-events";
-import { generateEvents, type PrevGameState } from "@/lib/event-generator";
+import { makeSnapshot } from "@/lib/event-generator";
+import { commitGameEventObservation, type EventStateRow } from "@/lib/game-event-commit";
 import type { GameEvent } from "@/types/game-events";
 import type { KboRawGame } from "@/types/api";
 import { resolveCurrentPlayers } from "@/lib/kbo-player-mapping";
@@ -128,6 +129,7 @@ async function getEventsWithinBudget(req: NextRequest, deadline: number, signal:
   }
 
   const date = gameId.slice(0, 8); // YYYYMMDD from game ID
+  const observedAt = Date.now();
 
   try {
     // 중계 화면·warmup과 같은 KBO→Naver 공용 source를 사용한다.
@@ -138,17 +140,15 @@ async function getEventsWithinBudget(req: NextRequest, deadline: number, signal:
     if (!rawGame) {
       const { data: row } = await supabaseAdmin
         .from("game_event_state")
-        .select("event_history")
+        .select("event_history, prev_state")
         .eq("game_id", gameId)
         .abortSignal(signal).maybeSingle();
       const existing = ((row?.event_history as GameEvent[] | null) ?? []);
-      const emptySnapshot: GameSnapshot = {
-        awayScore: 0, homeScore: 0,
-        balls: 0, strikes: 0, outs: 0,
-        runners: { first: null, second: null, third: null },
-        pitcher: "", batter: "",
-      };
-      return NextResponse.json({ events: existing, currentState: emptySnapshot });
+      return NextResponse.json({
+        events: existing,
+        currentState: row?.prev_state?.live ? makeSnapshot(row.prev_state.live) : null,
+        degraded: true,
+      });
     }
 
     // Use SR_ID from live data (GetBoxScore only accepts single integer srId)
@@ -190,7 +190,8 @@ async function getEventsWithinBudget(req: NextRequest, deadline: number, signal:
       }),
       currentInning: rawGame.GAME_INN_NO ? `${rawGame.GAME_INN_NO}회${rawGame.GAME_TB_SC === "T" ? "초" : "말"}` : "",
       stadium: rawGame.S_NM,
-      isLive: rawGame.GAME_STATE_SC === "2",
+      status,
+      isLive: status === "live",
       awayStarterName: rawGame.T_PIT_P_NM?.trim() || null,
       homeStarterName: rawGame.B_PIT_P_NM?.trim() || null,
     };
@@ -213,74 +214,60 @@ async function getEventsWithinBudget(req: NextRequest, deadline: number, signal:
       }
     }
 
-    signal.throwIfAborted();
-    // Read shared state from Supabase (single row per game)
-    const { data: stateRow } = await supabaseAdmin
-      .from("game_event_state")
-      .select("prev_state, event_history")
-      .eq("game_id", gameId)
-      .abortSignal(signal).maybeSingle();
-
-    const prevState = (stateRow?.prev_state as PrevGameState | null) ?? null;
-    const existingHistory = ((stateRow?.event_history as GameEvent[] | null) ?? []);
-
-    const { events: newEvents, nextState } = generateEvents(
-      gameId,
-      prevState,
-      currentLive,
-      currentBoxScore,
-    );
-
-    // Atomic append via SQL function — prevents read-modify-write race
-    // where two concurrent pollers both read the same existingHistory and
-    // each clobbers the other's newEvents. event_history grows
-    // monotonically; prev_state is last-write-wins (self-heals next poll).
-    let history: GameEvent[];
-    signal.throwIfAborted();
-    if (newEvents.length > 0) {
-      const { data: rpcHistory } = await supabaseAdmin.rpc(
-        "upsert_game_event_state",
-        {
-          p_game_id: gameId,
-          p_prev_state: nextState as unknown as Record<string, unknown>,
-          p_new_events: newEvents as unknown as Record<string, unknown>[],
-        },
-      ).abortSignal(signal);
-      history = (rpcHistory as GameEvent[] | null) ?? [...existingHistory, ...newEvents];
-    } else if (!stateRow) {
-      // First-ever poll for this game — seed an empty row so subsequent
-      // pollers see prev_state on the first contentful change.
-      await supabaseAdmin
-        .from("game_event_state")
-        .upsert({
-          game_id: gameId,
-          prev_state: nextState as unknown as Record<string, unknown>,
-          event_history: [] as unknown as Record<string, unknown>[],
-          updated_at: new Date().toISOString(),
-        }).abortSignal(signal);
-      history = existingHistory;
-    } else {
-      history = existingHistory;
-    }
+    const committed = await commitGameEventObservation({
+      async read() {
+        const { data, error } = await supabaseAdmin.from("game_event_state")
+          .select("prev_state, event_history, updated_at").eq("game_id", gameId)
+          .abortSignal(signal).maybeSingle();
+        if (error) throw error;
+        return data as EventStateRow | null;
+      },
+      async replace(expected, next) {
+        const value = { ...next, updated_at: new Date().toISOString() };
+        if (!expected) {
+          const { error } = await supabaseAdmin.from("game_event_state")
+            .insert({ game_id: gameId, ...value }).abortSignal(signal);
+          if (error?.code === "23505") return false; // Another writer seeded it.
+          if (error) throw error;
+          return true;
+        }
+        let query = supabaseAdmin.from("game_event_state").update(value).eq("game_id", gameId);
+        const revision = expected.prev_state?.revision;
+        if (revision) {
+          query = query.eq("prev_state->>revision", revision);
+        } else {
+          // First adoption of legacy rows: their RPC updated_at is the version.
+          // Never put the full boxscore JSON into a PostgREST URL (URI limits).
+          if (!expected.updated_at) throw new Error("event_state_missing_version");
+          query = query.is("prev_state->>revision", null).eq("updated_at", expected.updated_at);
+        }
+        const { data, error } = await query.select("game_id").abortSignal(signal);
+        if (error) throw error;
+        return (data?.length ?? 0) === 1;
+      },
+    }, gameId, currentLive, currentBoxScore, observedAt, signal);
+    const history = committed.event_history ?? [];
+    // A rejected late observation must not leak its rolled-back state to clients.
+    const acceptedLive = committed.prev_state?.live ?? currentLive;
 
     const currentState: GameSnapshot = {
-      awayScore: currentLive.awayScore,
-      homeScore: currentLive.homeScore,
-      balls: currentLive.balls,
-      strikes: currentLive.strikes,
-      outs: currentLive.outs,
+      awayScore: acceptedLive.awayScore,
+      homeScore: acceptedLive.homeScore,
+      balls: acceptedLive.balls,
+      strikes: acceptedLive.strikes,
+      outs: acceptedLive.outs,
       runners: {
-        first: currentLive.runner1bName || (currentLive.runner1b ? "주자" : null),
-        second: currentLive.runner2bName || (currentLive.runner2b ? "주자" : null),
-        third: currentLive.runner3bName || (currentLive.runner3b ? "주자" : null),
+        first: acceptedLive.runner1bName || (acceptedLive.runner1b ? "주자" : null),
+        second: acceptedLive.runner2bName || (acceptedLive.runner2b ? "주자" : null),
+        third: acceptedLive.runner3bName || (acceptedLive.runner3b ? "주자" : null),
       },
-      pitcher: currentLive.currentPitcher || "",
-      batter: currentLive.currentBatter || "",
+      pitcher: acceptedLive.currentPitcher || "",
+      batter: acceptedLive.currentBatter || "",
     };
 
     const startPlateAppearance = deriveStartPlateAppearanceEvidence(
-      currentBoxScore?.awayBatters,
-      currentLive.currentBatter,
+      committed.prev_state?.boxScore?.awayBatters,
+      acceptedLive.currentBatter,
     );
 
     return NextResponse.json({ events: history, currentState, startPlateAppearance });

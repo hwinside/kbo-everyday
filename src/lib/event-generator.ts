@@ -28,11 +28,14 @@ import { buildEventText } from "@/lib/event-text-builder";
 import { normalizeBatterName } from "@/lib/relay-event-generator";
 
 export interface PrevGameState {
+  /** Collection start, not response completion: late responses cannot win. */
+  observedAt?: number;
+  revision?: string;
   live: LiveGameData;
   boxScore: GameDetailResponse["boxScore"];
 }
 
-function makeSnapshot(live: LiveGameData): GameSnapshot {
+export function makeSnapshot(live: LiveGameData): GameSnapshot {
   return {
     awayScore: live.awayScore,
     homeScore: live.homeScore,
@@ -160,6 +163,26 @@ export function generateEvents(
   }
 
   const prevLive = prev.live;
+  const halfOrder = (live: LiveGameData) => live.inning * 2 + (live.isTop ? 0 : 1);
+  // A stale upstream response must not roll back the baseline used by the next poll.
+  // Score/outs corrections are NOT rejected: official reviews can decrease them.
+  if (currentLive.gameId !== prevLive.gameId ||
+      (prevLive.status === "final" && currentLive.status !== "final") ||
+      (currentLive.isLive && halfOrder(currentLive) < halfOrder(prevLive))) {
+    return { events: [], nextState: prev };
+  }
+  // Pitchers cannot re-enter. A shorter ordered roster is a stale response,
+  // not a new baseline from which to announce the same substitution again.
+  if (prev.boxScore && currentBoxScore) {
+    for (const side of ["awayPitchers", "homePitchers"] as const) {
+      const before = prev.boxScore[side];
+      const after = currentBoxScore[side];
+      if (after.length < before.length &&
+          after.every((pitcher, i) => pitcher.name === before[i].name)) {
+        return { events: [], nextState: prev };
+      }
+    }
+  }
 
   // --- Game state transitions ---
 
@@ -206,18 +229,9 @@ export function generateEvents(
     };
   }
 
-  // --- Pitcher change (via live data) ---
-  if (
-    prevLive.currentPitcher &&
-    currentLive.currentPitcher &&
-    prevLive.currentPitcher !== currentLive.currentPitcher &&
-    prevInningKey === currInningKey // same inning = mid-inning change
-  ) {
-    events.push(makeEvent(gameId, currentLive, "pitching_change", {
-      playerOut: prevLive.currentPitcher,
-      playerIn: currentLive.currentPitcher,
-    }, `${prevLive.currentPitcher}->${currentLive.currentPitcher}-${currInningKey}`));
-  }
+  // Live pitcher names alone are not substitution evidence: KBO snapshots can
+  // briefly mix batting/fielding sides or replay the previous pitcher. Only the
+  // ordered roster extension on the same fielding team below can emit a change.
 
   // --- BoxScore diffs (batting stats) ---
   // Per-batter diff: attribute events to the actual batter whose stat line moved,
@@ -376,7 +390,9 @@ export function generateEvents(
     const prevPNames = aggregatePitcherNames(prevPitchers);
     const currPNames = aggregatePitcherNames(currPitchers);
 
-    if (currPNames.length > prevPNames.length) {
+    if (prevPNames.length > 0 &&
+        currPNames.length === prevPNames.length + 1 &&
+        prevPNames.every((name, i) => name === currPNames[i])) {
       // New pitcher appeared in BoxScore
       const newPitcher = currPNames[currPNames.length - 1];
       const oldPitcher = prevPNames[prevPNames.length - 1];
@@ -385,7 +401,7 @@ export function generateEvents(
         e => e.type === "pitching_change" && e.detail.playerIn === newPitcher,
       );
       if (!alreadyEmitted && oldPitcher && newPitcher !== oldPitcher) {
-        events.push(makeEvent(gameId, currentLive, "pitching_change", {
+        events.push(makeEvent(gameId, { ...currentLive, currentPitcher: newPitcher }, "pitching_change", {
           playerOut: oldPitcher,
           playerIn: newPitcher,
         }, `${oldPitcher}->${newPitcher}-${currInningKey}`));
@@ -427,7 +443,8 @@ export function generateEvents(
       for (let i = 0; i < outsToReport; i++) {
         const idx = prevLive.outs + soEvents + i + 1;
         events.push(makeEvent(gameId, currentLive, "at_bat_out", {
-          batter: prevLive.currentBatter || undefined,
+          // Out-count changes do not identify the retired runner/batter.
+          // A stale currentBatter or a double play must not invent a player.
           pitcher: currentLive.currentPitcher || undefined,
         }, `${currInningKey}-${idx}`));
       }
