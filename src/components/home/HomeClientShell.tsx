@@ -1,5 +1,6 @@
 "use client";
 import PostseasonLadder from "./PostseasonLadder";
+import { installForegroundTask } from "@/lib/foreground-task";
 
 import { useState, useEffect, useCallback, useMemo, useRef } from "react";
 import { useRouter } from "next/navigation";
@@ -42,10 +43,11 @@ import LiveGameBanner from "@/components/home/LiveGameBanner";
 import AIAnalysis from "@/components/game/AIAnalysis";
 
 // Lazy load heavy sections
-import { lazy, Suspense } from "react";
+import { lazy } from "react";
+import HomeSectionBoundary from "./HomeSectionBoundary";
+import WhatsNewCard from "./WhatsNewCard";
 const NewsCarousel = lazy(() => import("@/components/news/NewsCarousel"));
 const HomeHighlights = lazy(() => import("@/components/home/HomeHighlights"));
-const WhatsNewCard = lazy(() => import("@/components/home/WhatsNewCard"));
 const CommunityLatestPosts = lazy(() => import("@/components/home/CommunityLatestPosts"));
 
 const container = {
@@ -284,21 +286,7 @@ export default function HomeClientShell({ initialGames, initialLiveGames, initia
       router.refresh();
     };
 
-    if (gameTime) {
-      maybeRefresh();
-    }
-
-    const onFocus = () => maybeRefresh();
-    const onVisibilityChange = () => {
-      if (document.visibilityState === "visible") maybeRefresh();
-    };
-
-    window.addEventListener("focus", onFocus);
-    document.addEventListener("visibilitychange", onVisibilityChange);
-    return () => {
-      window.removeEventListener("focus", onFocus);
-      document.removeEventListener("visibilitychange", onVisibilityChange);
-    };
+    return installForegroundTask(maybeRefresh, gameTime);
   }, [router, gameTime]);
 
   const myTeam = myTeamId ? getTeamById(myTeamId) : null;
@@ -781,9 +769,9 @@ export default function HomeClientShell({ initialGames, initialLiveGames, initia
           각 섹션은 마이페이지 토글(sections.*)로 on/off. 팀카드는 S3에서 삽입. */}
 
       {/* What's New Card (토글/순서 대상 아님 — 팀카드 바로 위 고정) */}
-      <Suspense fallback={null}>
+      <HomeSectionBoundary fallback={null}>
         <WhatsNewCard />
-      </Suspense>
+      </HomeSectionBoundary>
 
       {/* 올스타전 크관 연결 경기카드 — 배포 즉시~경기 종료 전까지 팀카드 위 노출 (목업 v2 승인, 2026-07-11) */}
       {(() => {
@@ -815,9 +803,9 @@ export default function HomeClientShell({ initialGames, initialLiveGames, initia
             return sections.news && newsToShow.length > 0 ? (
               <div key={key} className="mb-3">
                 <div className="-mx-5">
-                  <Suspense fallback={<SectionSkeleton height={180} />}>
+                  <HomeSectionBoundary fallback={<SectionSkeleton height={180} />}>
                     <NewsCarousel news={newsToShow.slice(0, 10)} />
-                  </Suspense>
+                  </HomeSectionBoundary>
                 </div>
               </div>
             ) : null;
@@ -825,19 +813,19 @@ export default function HomeClientShell({ initialGames, initialLiveGames, initia
           case "communityLatest":
             return sections.communityLatest ? (
               <div key={key} className="mb-3">
-                <Suspense fallback={null}>
+                <HomeSectionBoundary fallback={null}>
                   <CommunityLatestPosts myTeamId={myTeamId} refreshNonce={refreshNonce}
                     showActions={lastCommunitySection === key} onVisibilityChange={onCommunityVisibilityChange} />
-                </Suspense>
+                </HomeSectionBoundary>
               </div>
             ) : null;
           case "communityPopular":
             return sections.communityPopular ? (
               <div key={key} className="mb-3">
-                <Suspense fallback={null}>
+                <HomeSectionBoundary fallback={null}>
                   <CommunityLatestPosts myTeamId={myTeamId} refreshNonce={refreshNonce} mode="popular"
                     showActions={lastCommunitySection === key} onVisibilityChange={onCommunityVisibilityChange} />
-                </Suspense>
+                </HomeSectionBoundary>
               </div>
             ) : null;
           case "favPlayers":
@@ -849,9 +837,9 @@ export default function HomeClientShell({ initialGames, initialLiveGames, initia
           case "shorts":
             return sections.shorts ? (
               <div key={key} className="mb-3">
-                <Suspense fallback={<SectionSkeleton height={250} />}>
+                <HomeSectionBoundary fallback={<SectionSkeleton height={250} />}>
                   <HomeHighlights team={myTeamId ? TEAMS.find(t => t.id === myTeamId)?.shortName || null : null} refreshNonce={refreshNonce} />
-                </Suspense>
+                </HomeSectionBoundary>
               </div>
             ) : null;
           case "liveOtherTeams":
