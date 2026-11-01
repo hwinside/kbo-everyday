@@ -44,11 +44,12 @@ import AIAnalysis from "@/components/game/AIAnalysis";
 
 // Lazy load heavy sections
 import { lazy } from "react";
+import { retryChunkImport } from "@/lib/retry-chunk-import";
 import HomeSectionBoundary from "./HomeSectionBoundary";
 import WhatsNewCard from "./WhatsNewCard";
-const NewsCarousel = lazy(() => import("@/components/news/NewsCarousel"));
-const HomeHighlights = lazy(() => import("@/components/home/HomeHighlights"));
-const CommunityLatestPosts = lazy(() => import("@/components/home/CommunityLatestPosts"));
+const NewsCarousel = lazy(() => retryChunkImport(() => import("@/components/news/NewsCarousel")));
+const HomeHighlights = lazy(() => retryChunkImport(() => import("@/components/home/HomeHighlights")));
+const CommunityLatestPosts = lazy(() => retryChunkImport(() => import("@/components/home/CommunityLatestPosts")));
 
 const container = {
   hidden: {},

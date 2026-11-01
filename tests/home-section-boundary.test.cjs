@@ -1,9 +1,13 @@
 const { test } = require('node:test');
 const assert = require('node:assert/strict');
 const { build } = require('esbuild');
+const { readFileSync } = require('node:fs');
 const { JSDOM, VirtualConsole } = require('jsdom');
 
-test('optional lazy rejection is reported but preserves the home shell; success still renders', async () => {
+for (const [message, shouldReload] of [
+  ['Failed to load chunk /_next/static/chunks/example.js', true],
+  ['Cannot read properties of undefined', false],
+]) test(`isolates ${message}; guarded reload=${shouldReload}`, async () => {
   const result = await build({
     stdin: { contents: `
       import React, { act, lazy } from 'react';
@@ -20,21 +24,25 @@ test('optional lazy rejection is reported but preserves the home shell; success 
           <Boundary fallback={<p>pending</p>}><Broken /></Boundary>
           <Boundary fallback={null}><Good /></Boundary></main>));
         const pending = document.body.textContent;
-        await act(async () => reject(new Error('Failed to load chunk /_next/static/chunks/example.js')));
+        await act(async () => reject(new Error(${JSON.stringify(message)})));
         const settled = document.body.textContent;
+        await new Promise(r => setTimeout(r, 1600));
+        const reloadAt = sessionStorage.getItem('kbo_chunk_reload_at');
+        window.dispatchEvent(new Event('focus'));
+        const reloadAtAfterFocus = sessionStorage.getItem('kbo_chunk_reload_at');
         const reports = window.reports.slice();
         await act(async () => root.unmount());
-        return {pending, settled, reports};
+        return {pending, settled, reports, reloadAt, reloadAtAfterFocus};
       };
     `, resolveDir: process.cwd(), loader: 'tsx' },
     bundle: true, write: false, platform: 'browser', jsx: 'automatic',
     define: { 'process.env.NODE_ENV': '"development"' },
     plugins: [{name:'telemetry-spy', setup(b) {
       b.onResolve({filter:/^@\/lib\/client-error-report$/}, () => ({path:'report',namespace:'spy'}));
-      b.onLoad({filter:/.*/,namespace:'spy'}, () => ({contents:'export const reportClientError = input => window.reports.push(input);',loader:'js'}));
+      b.onLoad({filter:/.*/,namespace:'spy'}, () => ({contents: readFileSync('src/lib/client-error-report.ts','utf8').split('export type ClientErrorSource')[0].replace(/import .* from .*;\n/, '') + 'export const reportClientError = input => window.reports.push(input);',loader:'ts'}));
     }}],
   });
-  const dom = new JSDOM('<div id="root"></div>', {url:'https://keubo.test/', runScripts:'outside-only', virtualConsole:new VirtualConsole()});
+  const dom = new JSDOM('<div id="root"></div>', {url:'https://keubo.test/', runScripts:'outside-only', pretendToBeVisual:true, virtualConsole:new VirtualConsole()});
   try {
     dom.window.MessageChannel = class {
       constructor() {
@@ -43,15 +51,17 @@ test('optional lazy rejection is reported but preserves the home shell; success 
       }
     };
     dom.window.eval(result.outputFiles[0].text);
-    const {pending, settled, reports} = await dom.window.run();
+    const {pending, settled, reports, reloadAt, reloadAtAfterFocus} = await dom.window.run();
     assert.match(pending, /pending/);
     assert.match(settled, /live score/);
     assert.match(settled, /loaded section/);
-    assert.match(settled, /이 영역을 불러오지 못했어요/);
+    assert.doesNotMatch(settled, /이 영역을 불러오지 못했어요/);
+    assert.equal(Number(reloadAt) > 0, shouldReload);
+    assert.equal(reloadAtAfterFocus, reloadAt);
     assert.doesNotMatch(settled, /pending/);
     assert.equal(reports.length, 1);
     assert.equal(reports[0].source, 'error-boundary');
     assert.equal(reports[0].digest, 'home-section-isolated-v1');
-    assert.match(reports[0].message, /Failed to load chunk/);
+    assert.equal(reports[0].message, message);
   } finally { dom.window.close(); }
 });
