@@ -101,6 +101,10 @@ function recordWatchPing(
   );
 }
 
+export function isPublicGameDocument(pathname: string): boolean {
+  return pathname === "/games" || /^\/games\/\d{8}[A-Z]{4}\d\/?$/.test(pathname);
+}
+
 export async function proxy(request: NextRequest, event: NextFetchEvent) {
   const { pathname } = request.nextUrl;
 
@@ -139,6 +143,11 @@ export async function proxy(request: NextRequest, event: NextFetchEvent) {
     url.protocol = "https";
     return NextResponse.redirect(url, { status: 308 });
   }
+
+  // Game watching is public/client-rendered. Auth outages must not delay its
+  // document; cookies remain untouched and protected API/RLS checks still apply.
+  // Do not extend to predict/account/admin or other auth-dependent pages.
+  if (isPublicGameDocument(pathname)) return NextResponse.next({ request });
 
   const supabaseUrl = process.env.NEXT_PUBLIC_SUPABASE_URL;
   const hasAuthCookie = hasSupabaseAuthCookie(

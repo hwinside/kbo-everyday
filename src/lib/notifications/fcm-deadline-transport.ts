@@ -60,7 +60,14 @@ export async function sendDeadlineFcmChunk(
   const timer = setTimeout(() => controller.abort(), remainingMs);
   const url = `https://fcm.googleapis.com/v1/projects/${encodeURIComponent(deps.projectId)}/messages:send`;
   try {
-    const responses = await Promise.all(tokens.map(async (token) => {
+    // A 500-token batch must not open 500 HTTP requests at once. No retries here:
+    // the delivery ledger owns retries; unstarted tokens remain transient.
+    const responses: FcmChunkResponse["responses"] = new Array(tokens.length);
+    let cursor = 0;
+    const send = async (token: string) => {
+      if (controller.signal.aborted || now() >= deadlineAtMs) {
+        return { error: { code: "messaging/server-unavailable" } };
+      }
       try {
         const response = await fetchImpl(url, {
           method: "POST",
@@ -76,6 +83,12 @@ export async function sendDeadlineFcmChunk(
         return { error: { code: messagingCode(payload) } };
       } catch {
         return { error: { code: "messaging/server-unavailable" } };
+      }
+    };
+    await Promise.all(Array.from({ length: Math.min(8, tokens.length) }, async () => {
+      while (cursor < tokens.length) {
+        const index = cursor++;
+        responses[index] = await send(tokens[index]);
       }
     }));
     const failureCount = responses.filter((response) => response.error != null).length;
