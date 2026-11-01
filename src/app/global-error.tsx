@@ -1,6 +1,7 @@
 "use client";
 
 import { useEffect } from "react";
+import { scheduleNetworkErrorRecovery } from "@/lib/network-error-recovery";
 import {
   maybeReloadForChunkError,
   reportClientError,
@@ -21,7 +22,8 @@ export default function GlobalError({
       source: "global-error-boundary",
       digest: error.digest,
     });
-    maybeReloadForChunkError(error.message || "");
+    if (maybeReloadForChunkError(error.message || "")) return;
+    return scheduleNetworkErrorRecovery(error.message || "");
   }, [error]);
 
   return (

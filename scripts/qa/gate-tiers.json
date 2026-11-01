@@ -512,6 +512,10 @@
       "tier": "deploy"
     },
     {
+      "name": "qa:genius-scenario-outcome",
+      "tier": "ci"
+    },
+    {
       "name": "qa:genius-deictic-temporal-followup",
       "tier": "ci"
     },

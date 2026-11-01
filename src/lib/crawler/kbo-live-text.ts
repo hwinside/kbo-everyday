@@ -1,3 +1,5 @@
+import { setTimeout as delay } from 'node:timers/promises';
+import { runBeforeDeadline } from '@/lib/async-deadline';
 import type { NaverTextRelay, RelayLinescore } from '@/app/api/game-relay/route';
 import type { GameDetailResponse, BatterRecord, PitcherRecord } from '@/lib/services/game-detail';
 import { isCanonicalKboGameId } from '@/lib/game/game-id';
@@ -108,14 +110,32 @@ export async function loadKboLiveText(gameId: string, opts: { signal?: AbortSign
   if (!['production', 'preview', 'development'].includes(environment)) throw new Error('Invalid KBO cache environment');
   // Snapshot and admission share this namespace; Preview never reads/writes production keys.
   const key = `kbo:live-text:v1:${environment}:${gameId}`;
-  const cached = await command(['GET', key], signal);
-  if (typeof cached === 'string') {
+  const readSnapshot = async () => {
+    signal.throwIfAborted();
+    const cached = await command(['GET', key], signal);
+    signal.throwIfAborted();
+    if (typeof cached !== 'string') return null;
     const data = JSON.parse(cached) as KboLiveText;
     const age = Date.now() - Date.parse(data.updatedAt);
-    if (data.gameId === gameId && age >= 0 && age < 10_000) return data;
-  }
+    return data.gameId === gameId && age >= 0 && age < 10_000 ? data : null;
+  };
+  const cached = await readSnapshot();
+  if (cached) return cached;
   const token = crypto.randomUUID();
-  if (await command(['SET', `${key}:admission`, token, 'NX', 'PX', 10_000], signal) !== 'OK') throw new KboCollectionBusyError('KBO collection busy');
+  if (await command(['SET', `${key}:admission`, token, 'NX', 'PX', 10_000], signal) !== 'OK') {
+    // Detail and relay often arrive together on a cold page. The admission loser
+    // must consume the winner's snapshot instead of immediately falling into the
+    // unavailable Naver path. Read only: never renew admission or collect twice.
+    // Keep the caller's original signal and leave room for fallback inside 2.7s.
+    const waitDeadline = Date.now() + 2000;
+    for (const pauseMs of [0, 100, 200, 400, 600, 600]) {
+      if (Date.now() + pauseMs >= waitDeadline) break;
+      if (pauseMs) await delay(pauseMs, undefined, { signal });
+      const published = await runBeforeDeadline(readSnapshot, waitDeadline);
+      if (published) return published;
+    }
+    throw new KboCollectionBusyError('KBO collection busy');
+  }
   const srId = await resolveGameSeries(gameId, { srId: opts.srId, signal });
   const fetcher = opts.fetcher ?? fetch;
   const body = new URLSearchParams({ leagueId: '1', seriesId: srId, gameId, gyear: gameId.slice(0, 4) }).toString();

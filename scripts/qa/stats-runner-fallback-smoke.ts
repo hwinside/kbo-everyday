@@ -5,6 +5,7 @@ import { fetchAllRunnerRows, GET } from "../../src/app/api/stats/route";
 import statsMeta from "../../src/lib/constants/stats-2026-meta.json";
 import batterStats2026 from "../../src/lib/constants/stats-2026-batters.json";
 
+const regularControls = '<select name="x$ddlSeason"><option selected value="2026">2026</option></select><select name="x$ddlSeries"><option selected value="0">정규</option></select>';
 const PAGER_PREFIX = "ctl00$ctl00$ctl00$cphContents$cphContents$cphContents$ucPager$";
 
 function pageHtml(page: number, terminalPage = 11, coverStatic = false): string {
@@ -19,7 +20,7 @@ function pageHtml(page: number, terminalPage = 11, coverStatic = false): string 
   }
   if (page < terminalPage) {
     links.push(
-      `<a href="javascript:__doPostBack(&#39;${PAGER_PREFIX}btnNext&#39;,&#39;&#39;)">next</a>`,
+      `<a id="ucPager_btnNext" href="javascript:__doPostBack(&#39;${PAGER_PREFIX}btnNext&#39;,&#39;&#39;)">next</a>`,
     );
   }
   const count = page === 11 && terminalPage === 11 ? 29 : 30;
@@ -36,7 +37,7 @@ function pageHtml(page: number, terminalPage = 11, coverStatic = false): string 
       `<td>${team}</td><td>1</td><td>1</td><td>${sb}</td>` +
       `<td>${cs}</td><td>0</td><td>0</td><td>0</td></tr>`;
   }).join("");
-  return `<form><input type="hidden" name="__VIEWSTATE" value="vs-${page}" />` +
+  return regularControls + `<form><input type="hidden" name="__VIEWSTATE" value="vs-${page}" />` +
     `<input type="hidden" name="__VIEWSTATEGENERATOR" value="vg" />` +
     `<input type="hidden" name="__EVENTVALIDATION" value="ev-${page}" />` +
     `<tbody>${rows}</tbody>${links.join("")}</form>`;
@@ -79,7 +80,7 @@ test("중간 POST 실패 시 부분 rows를 성공으로 반환하지 않는다"
       headers: calls === 1 ? { "set-cookie": "ASP.NET_SessionId=test-session; path=/" } : {},
     });
   }) as typeof fetch;
-  await assert.rejects(fetchAllRunnerRows(fakeFetch), /Runner page 4 POST HTTP 503/);
+  await assert.rejects(fetchAllRunnerRows(fakeFetch), /KBO page HTTP 503/);
 });
 
 function basicHtml(): string {
@@ -90,7 +91,7 @@ function basicHtml(): string {
       `<td>${player.hr}</td><td>${player.tb}</td><td>${player.rbi}</td><td>${player.sac}</td>` +
       `<td>${player.sf}</td></tr>`,
   ).join("");
-  return `<tbody>${rows}</tbody>`;
+  return regularControls + `<a id="ucPager_btnNo1" class="on">1</a><tbody>${rows}</tbody>`;
 }
 
 function routeFetch(options: { runnerPostFails?: boolean; runnerEarlyEndAt?: number }): typeof fetch {

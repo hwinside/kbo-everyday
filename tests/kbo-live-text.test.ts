@@ -65,7 +65,7 @@ function harness(fail = false) {
 test('100 simultaneous cold callers admit only one two-view collection; warm readers fetch zero', async () => {
   const h = harness();
   const results = await Promise.allSettled(Array.from({ length: 100 }, () => loadKboLiveText(gameId, { ...h, srId: '5' })));
-  assert.equal(results.filter(r => r.status === 'fulfilled').length, 1);
+  assert.equal(results.filter(r => r.status === 'fulfilled').length, 100);
   assert.equal(h.count(), 2);
   await loadKboLiveText(gameId, { ...h, srId: '5' });
   assert.equal(h.count(), 2);
@@ -158,4 +158,30 @@ test('expired admission cannot return or persist a late successful snapshot', as
   const h = harness();
   const command: RedisCommand = async (args, signal) => args[0] === 'EVAL' ? null : h.command(args, signal);
   await assert.rejects(loadKboLiveText(gameId, { ...h, command, srId: '5' }), /publish failed/);
+});
+
+test('busy reader waits for the collector snapshot without another admission or upstream call', async () => {
+  const snapshot = parseKboLiveText(gameId, v1, v2);
+  let gets = 0; let admits = 0; let fetches = 0;
+  const command: RedisCommand = async args => {
+    if (args[0] === 'GET') return ++gets >= 3 ? JSON.stringify(snapshot) : null;
+    if (args[0] === 'SET') { admits++; return null; }
+    throw new Error('follower must not publish');
+  };
+  const fetcher: typeof fetch = async () => { fetches++; throw new Error('no duplicate collection'); };
+  const result = await loadKboLiveText(gameId, { command, fetcher, srId: '5' });
+  assert.deepEqual(result, snapshot);
+  assert.equal(admits, 1); assert.equal(fetches, 0);
+});
+test('busy reader respects caller abort and never returns a later snapshot', async () => {
+  const ac = new AbortController(); let gets = 0;
+  const command: RedisCommand = async args => {
+    if (args[0] === 'GET') { gets++; return null; }
+    return null;
+  };
+  const timer = setTimeout(() => ac.abort(), 30);
+  try {
+    await assert.rejects(loadKboLiveText(gameId, { command, srId: '5', signal: ac.signal }), { name: 'AbortError' });
+    assert.equal(gets, 2);
+  } finally { clearTimeout(timer); }
 });

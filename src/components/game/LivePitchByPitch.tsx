@@ -50,7 +50,7 @@ export function LivePitchList({
               {pitch.num > 0 ? `${pitch.num}구` : "-"}
             </span>
             <span className="min-w-0 truncate">
-              <span className="font-semibold text-text-primary">{pitch.stuff || "구종 미상"}</span>
+              {pitch.stuff && <span className="font-semibold text-text-primary">{pitch.stuff}</span>}
               {pitch.speed > 0 && (
                 <span className="ml-1.5 tabular-nums text-text-tertiary">
                   {pitch.speed}<span className="ml-0.5 text-[9px]">km/h</span>

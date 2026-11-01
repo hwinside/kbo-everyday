@@ -1,3 +1,4 @@
+import { fetchRegularSeasonHtml, fetchRegularSeasonPages } from "@/lib/crawler/kbo-regular-season";
 import { NextRequest, NextResponse } from "next/server";
 import { supabaseAdmin } from "@/lib/supabase/admin";
 import { startJob, finishJob } from "@/lib/admin/job-logger";
@@ -33,7 +34,7 @@ const NAVER_MIN_PER_TEAM: Record<"HITTER" | "PITCHER", number> = {
   HITTER: 15,
   PITCHER: 10,
 };
-// KBO 선수표는 페이지당 정확히 30행이다. 30행을 "완전"으로 채택하면 31위 이하가
+// KBO 선수표는 페이지당 최대 30행이다. 전 페이지 수집 뒤에도 30행만 "완전"으로 채택하면 31위 이하가
 // 조용히 stale 상태로 남으므로, 단일 페이지 경계는 불완전으로 보고 Naver 전량으로 전환한다.
 const KBO_MIN_COVERAGE = { batter: 31, pitcher: 15 } as const;
 
@@ -46,18 +47,9 @@ interface PlayerStat {
 }
 
 async function fetchHtml(url: string): Promise<string> {
-  const res = await fetch(url, {
-    headers: {
-      "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36",
-      Referer: KBO_BASE,
-    },
-    next: { revalidate: 0 },
-    signal: AbortSignal.timeout(SOURCE_TIMEOUT_MS),
-  });
-  // 이전에는 res.ok 를 보지 않고 res.text() 를 그대로 파싱했다. 503/302 본문에는 <tbody> 가
-  // 없어 parseTable 이 [] 를 반환하고, 그 [] 가 "정상 수집 0명"으로 upsert 까지 통과했다.
-  if (!res.ok) throw new Error(`KBO HTTP ${res.status}`);
-  return res.text();
+  // Never assume the wall-clock year: on Jan 1 the new season has no records yet,
+  // so the whole off-season would fail. Follow KBO's own latest selection.
+  return fetchRegularSeasonHtml(url, "latest", AbortSignal.timeout(SOURCE_TIMEOUT_MS));
 }
 
 interface KboRow {
@@ -287,8 +279,8 @@ function mapNaverPitchers(rows: NaverPlayerStat[], roster: RosterPlayer[]): Play
 // ── KBO 수집 ───────────────────────────────────────────────────────────────
 async function fetchKboBatterStats(roster: RosterPlayer[]): Promise<PlayerStat[]> {
   // GAME_CN 정렬로 출장기록 있는 전체 타자 수집 (HRA_RT는 규정타석 충족자만 반환)
-  const html = await fetchHtml(`${KBO_BASE}/Record/Player/HitterBasic/Basic1.aspx?sort=GAME_CN`);
-  const rows = assertKboRows(parseTable(html), 16, "hitter");
+  const pages = await fetchRegularSeasonPages(`${KBO_BASE}/Record/Player/HitterBasic/Basic1.aspx?sort=GAME_CN`, "latest", AbortSignal.timeout(SOURCE_TIMEOUT_MS));
+  const rows = pages.flatMap(html => assertKboRows(parseTable(html), 16, "hitter"));
   if (rows.length < KBO_MIN_COVERAGE.batter) throw new Error("KBO hitter coverage invalid");
   const stats = rows.map(({ cells: c, playerId }, i) => {
     const name = c[1] || "";
@@ -415,13 +407,8 @@ interface Collected {
   source: Source;
 }
 
-/**
- * 종류별 공식 1차 소스.
- * 타자: KBO 공홈 타자 표는 페이지당 30행 단일 페이지만 내려와 coverage 계약(31행, 위
- * KBO_MIN_COVERAGE.batter)을 구조상 통과할 수 없다 — 2026-08-19 실측: 8/5부터 14일 연속
- * 매일 Naver failover(타자 330~332명 온전 수집). 따라서 타자는 Naver가 공식 1차다.
- * 상태 판정도 이 공식 1차 기준으로 한다(1차 성공=success, 폴백 수집=warning).
- */
+/** 기존 공식 1차 소스는 유지한다. KBO 타자 폴백은 이제 정규시즌 전 페이지를
+ * 검증하므로 Naver 차단 시에도 전량 coverage를 충족할 수 있다. */
 const PRIMARY_SOURCE: Record<"batter" | "pitcher", Source> = {
   batter: "naver",
   pitcher: "kbo",
@@ -440,8 +427,7 @@ const PRIMARY_SOURCE: Record<"batter" | "pitcher", Source> = {
  * 시즌 내 선수 수는 단조증가라 정적 floor는 시간이 갈수록 안전해진다.
  * ⚠️ 시즌 경계(개막 초기)에는 실제 전량이 이 값 아래로 내려가므로 개막 시 재설정 필요
  * (그 전까지는 fail-close가 맞다 — 절단 응답을 조용히 받느니 수집 중단이 낫다).
- * KBO 타자는 실전 30행 단일 페이지라 전량 전달이 원리적으로 불가 → 타자 전량 332를
- * 그대로 결속해 타자는 사실상 Naver 단독(절단 KBO 폴백 채택 불가)이다.
+ * KBO 타자는 전 페이지 수집 후에도 전량 332 기준의 급감 가드를 유지한다.
  */
 const SOURCE_FULL_BASELINE: Record<"batter" | "pitcher", Record<Source, number>> = {
   batter: { naver: 332, kbo: 332 },

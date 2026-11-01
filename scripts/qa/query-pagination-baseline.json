@@ -303,6 +303,13 @@
       "subject": "retention_metrics",
       "detail": "growing-table limit requires an explicit bounded annotation or a structurally verified keyset helper"
     },
+    "3b81bfbbedba95531b7c": {
+      "count": 1,
+      "kind": "unbounded_rpc",
+      "file": "src/app/api/game-events/route.ts",
+      "subject": "upsert_game_event_state",
+      "detail": "RPC row cardinality must be allowlisted or annotated"
+    },
     "3c04a1560cc228eb1d8f": {
       "count": 1,
       "kind": "unbounded_growing_select",
@@ -1044,13 +1051,6 @@
       "file": "src/lib/video/player-tagger.ts",
       "subject": "player_stats_pitcher",
       "detail": "add a bound, unique-key lookup, or query-guard annotation"
-    },
-    "cbaf10e9c6621f88cb0e": {
-      "count": 1,
-      "kind": "unbounded_rpc",
-      "file": "src/app/api/game-events/route.ts",
-      "subject": "upsert_game_event_state",
-      "detail": "RPC row cardinality must be allowlisted or annotated"
     },
     "cc3d95ea7fe7e93e0437": {
       "count": 1,

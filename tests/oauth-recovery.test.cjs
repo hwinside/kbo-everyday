@@ -175,3 +175,31 @@ test('pending notice renders an actionable in-app reload button', () => {
   function visit(x) { if (!x || typeof x !== 'object') return; if (Array.isArray(x)) return x.forEach(visit); if (x.type === 'button' && x.props.children === '새로고침') button = x; visit(x.props?.children); }
   visit(notice.default()); assert(button); button.props.onClick(); assert(reloaded);
 });
+
+test('SDK missing verifier is classified by name or code without inspecting raw messages', () => {
+  const { AuthPKCECodeVerifierMissingError } = require('@supabase/auth-js');
+  const sdkError = new AuthPKCECodeVerifierMissingError();
+  assert.equal(schema.oauthFailure(sdkError), 'pkce');
+  const unreadableMessage = { get message() { throw Error('must not read raw message'); } };
+  for (const fields of [{ name: sdkError.name }, { code: sdkError.code }]) {
+    const error = Object.defineProperties({ ...fields }, Object.getOwnPropertyDescriptors(unreadableMessage));
+    assert.equal(schema.oauthFailure(error), 'pkce');
+  }
+  assert.equal(schema.oauthFailure({ message: sdkError.message }), 'other');
+  assert.equal(schema.oauthFailure({ code: 'pkce_code_verifier_not_found_extra' }), 'other');
+});
+test('native callback missing verifier emits pkce and a retry notice, without exposing SDK error', async () => {
+  const { AuthPKCECodeVerifierMissingError } = require('@supabase/auth-js');
+  for (const thrown of [false, true]) {
+    const h = nativeHarness({ exchange: () => {
+      const error = new AuthPKCECodeVerifierMissingError();
+      if (thrown) throw error;
+      return { data: { session: null }, error };
+    } });
+    h.fire(); await flush();
+    assert(h.events.some(e => e[0] === 'failed' && e[1] === 'pkce'));
+    assert.deepEqual(h.notices, ['oauth_exchange']);
+    assert.equal(h.lib.isOAuthExchangePending(), false);
+    assert(!JSON.stringify(h.events).includes('AuthPKCECodeVerifierMissingError'));
+  }
+});
