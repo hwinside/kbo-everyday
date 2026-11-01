@@ -13,13 +13,20 @@ import { conversationTeamCandidates, mentionedTeamCanonicals, isBareTeamName, an
 const cases = [
   { id: "observed-3242076", q: "키움 메이저리거 선수들이 돌아오면 몇등임", need: "scenario_outcome" },
   { id: "paraphrase", q: "해외에 있는 키움 선수들을 전부 데려온다고 치면 순위가 어떻게 돼?", need: "scenario_outcome" },
-  { id: "result-change", q: "키움이 남은 경기를 모두 이기면 몇 위가 돼?", need: "scenario_outcome" },
+  { id: "result-change", q: "키움이 남은 경기를 모두 이기면 몇 위가 돼?", need: "qualification_or_standing" },
   { id: "followup", q: "그러면 몇 등일까?", previous: "키움 메이저리거 선수들이 돌아온다고 가정해봐", need: "scenario_outcome" },
   { id: "current-rank", q: "키움 지금 몇 위야?", need: "team_standing" },
   { id: "already-returned", q: "키움 선수들이 이미 복귀했어. 현재 순위는 몇 위야?", need: "team_standing" },
   { id: "explicit-reset", q: "가정 말고 실제 키움 현재 순위는?", previous: "키움 메이저리거 선수들이 돌아오면 몇등임", need: "team_standing" },
   { id: "conditional-lookup", q: "오늘 키움 경기가 있으면 시간 알려줘", need: "game_schedule" },
   { id: "scheduled-prediction", q: "내일 삼성이 이겨 기아가 이겨?", need: "match_prediction" },
+  { id: "game-gap-principle", q: "1.5게임차에서 높은팀이 지고 낮은팀이 이기면 순위바뀌어?", need: "not_app" },
+  { id: "wildcard-rule", q: "한화가 와일드카드에서 지면 어떻게 돼?", need: "not_app" },
+  { id: "rank-confirmation", q: "기아 롯데만 이기면 3위 확정?", need: "qualification_or_standing" },
+  { id: "remaining-wins", q: "남은 경기 다 이기면 두산 4등 가능?", need: "qualification_or_standing" },
+  { id: "today-win", q: "오늘 이기면 3위로 올라가?", need: "qualification_or_standing" },
+  { id: "two-results", q: "삼성 지고 우리가 한화 이기면 1등?", need: "qualification_or_standing" },
+  { id: "player-absence", q: "류현진이 없으면 한화 몇 위야?", need: "scenario_outcome" },
   { id: "definition", q: "평균자책점이 뭐야?", need: "not_app" },
 ] as const;
 type Case = { id: string; q: string; previous?: string; need: string };
@@ -43,9 +50,18 @@ function plan(i: GameConversationInput, scenario: boolean) {
 function check(c: Case, value: Record<string, unknown>, result: ReturnType<typeof renderGameConversation>) {
   const req = value.appRequest as Record<string, unknown>;
   if (c.need === "not_app") { assert.notEqual(value.action, "app_facts"); return; }
-  assert.equal(value.action, "app_facts"); assert.equal(req.informationNeed, c.need);
+  assert.equal(value.action, "app_facts");
+  if (c.need === "qualification_or_standing") {
+    assert.ok(["qualification", "team_standing"].includes(String(req.informationNeed)));
+    assert.doesNotMatch(result?.answer ?? "", /선수 구성 변화/);
+    return; // Do not grade numerical standings from synthetic/missing team rows.
+  }
+  assert.equal(req.informationNeed, c.need);
   if (c.need === "scenario_outcome") {
-    assert.equal(result?.source, "history_hold"); assert.match(result!.answer, /가정/); assert.doesNotMatch(result!.answer, /10위|50승|앱 순위표/);
+    assert.equal(result?.source, "history_hold"); assert.match(result!.answer, /가정/);
+    const [explanation, reference] = result!.answer.split("참고 — 실제 현재 순위 (가정의 결과가 아닙니다)");
+    assert.doesNotMatch(explanation, /10위|50승|앱 순위표/);
+    if (reference) assert.match(reference, /확인한 앱 순위표/);
   } else {
     assert.equal(result?.source, "kbo_structured");
     if (c.need === "team_standing") assert.match(result!.answer, /키움: 10위/);
@@ -58,6 +74,11 @@ async function main() {
   const after = renderGameConversation(JSON.stringify(plan(i, true)), i, { isBare: isBareTeamName });
   assert.match(before!.answer, /키움: 10위/, "old representable plan substitutes observed standings");
   check(cases[0], plan(i, true), after);
+  assert.match(after!.answer, /참고 — 실제 현재 순위 \(가정의 결과가 아닙니다\)[\s\S]*키움: 10위/);
+  const stale = { ...i, nowMs: now + 24 * 60 * 60 * 1000 };
+  const noReference = renderGameConversation(JSON.stringify(plan(i, true)), stale, { isBare: isBareTeamName });
+  assert.doesNotMatch(noReference!.answer, /10위|50승|앱 순위표/);
+  assert.match(noReference!.answer, /현재 순위도 확인하지 못/);
   assert.equal(renderGameConversation(JSON.stringify({ ...plan(i, true), appRequest: { ...plan(i, true).appRequest, intentQuote: "원문에 없는 근거" } }), i), null);
   let stored: LlmResult | null = null, started = false;
   const deps: QaDeps = {
