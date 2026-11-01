@@ -97,3 +97,15 @@ test('write failure cannot return uncommitted events as success', async () => {
   await assert.rejects(commitGameEventObservation(mem.store, id, live({ outs: 1 }), box(), 2, new AbortController().signal), /storage unavailable/);
   assert.deepEqual(mem.get()?.event_history, []);
 });
+
+
+test('box-score-before-live pitcher update emits once, not permanently lost', () => {
+  const first = generateEvents(id, state(), live(), box(['후라도', '이승민']));
+  const change = first.events.filter(e => e.type === 'pitching_change');
+  assert.equal(change.length, 1);
+  assert.equal(change[0].detail.playerOut, '후라도');
+  assert.equal(change[0].detail.playerIn, '이승민');
+  assert.equal(change[0].snapshot.pitcher, '이승민');
+  const second = generateEvents(id, first.nextState, live({currentPitcher:'이승민'}), box(['후라도','이승민']));
+  assert.equal(second.events.filter(e => e.type === 'pitching_change').length, 0);
+});

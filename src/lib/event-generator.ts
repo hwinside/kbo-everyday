@@ -392,8 +392,7 @@ export function generateEvents(
 
     if (prevPNames.length > 0 &&
         currPNames.length === prevPNames.length + 1 &&
-        prevPNames.every((name, i) => name === currPNames[i]) &&
-        currentLive.currentPitcher === currPNames[currPNames.length - 1]) {
+        prevPNames.every((name, i) => name === currPNames[i])) {
       // New pitcher appeared in BoxScore
       const newPitcher = currPNames[currPNames.length - 1];
       const oldPitcher = prevPNames[prevPNames.length - 1];
@@ -402,7 +401,7 @@ export function generateEvents(
         e => e.type === "pitching_change" && e.detail.playerIn === newPitcher,
       );
       if (!alreadyEmitted && oldPitcher && newPitcher !== oldPitcher) {
-        events.push(makeEvent(gameId, currentLive, "pitching_change", {
+        events.push(makeEvent(gameId, { ...currentLive, currentPitcher: newPitcher }, "pitching_change", {
           playerOut: oldPitcher,
           playerIn: newPitcher,
         }, `${oldPitcher}->${newPitcher}-${currInningKey}`));

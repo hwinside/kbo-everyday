@@ -12,6 +12,7 @@ test('real GET uses conditional state write, and never returns a rejected late s
   const gameId = '20260901HTSS0';
   const db: { row: EventStateRow | null } = { row: null };
   let patches = 0;
+  const patchUrls: string[] = [];
   let inning = 2;
   globalThis.fetch = (async (input: RequestInfo | URL, init?: RequestInit) => {
     const url = new URL(input instanceof Request ? input.url : String(input));
@@ -28,6 +29,7 @@ test('real GET uses conditional state write, and never returns a rejected late s
       if (method === 'POST') { assert.equal(db.row, null); db.row = body; return new Response(null, { status: 201 }); }
       if (method === 'PATCH') {
         patches++;
+        patchUrls.push(url.href);
         if (db.row!.prev_state!.revision) {
           assert.equal(url.searchParams.get('prev_state->>revision'), `eq.${db.row!.prev_state!.revision}`);
         } else {
@@ -54,7 +56,13 @@ test('real GET uses conditional state write, and never returns a rejected late s
     const second = await request();
     assert.equal(second.status, 200);
     assert.equal(patches, 1, 'even no-event observations persist the new baseline');
+    assert.ok(db.row!.prev_state!.revision, 'successful legacy adoption must commit a revision');
     assert.notEqual(db.row!.prev_state!.revision, initialRevision);
+    // Assert outside the mocked fetch: production catches transport errors.
+    assert.equal(patchUrls.length, 1);
+    assert.equal(new URL(patchUrls[0]).searchParams.has('prev_state'), false);
+    assert.equal(decodeURIComponent(patchUrls[0]).includes('boxScore'), false);
+    assert.ok(patchUrls[0].length < 500);
     // A late request must return the committed state, not old currentLive.
     db.row!.prev_state!.observedAt = Date.now() + 60_000;
     db.row!.prev_state!.live.awayScore = 2;
