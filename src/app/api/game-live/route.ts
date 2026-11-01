@@ -1,3 +1,4 @@
+import { serveDeliverySnapshot } from "@/lib/game/delivery-snapshot";
 import { NextRequest, NextResponse } from "next/server";
 import type { KboRawGame } from "@/types/api";
 import { resolveCurrentPlayers } from "@/lib/kbo-player-mapping";
@@ -365,5 +366,7 @@ export async function gameLiveRoute(
 }
 
 export async function GET(req: NextRequest) {
+  const stored = await serveDeliverySnapshot(req, "live", req.nextUrl.searchParams.get("gameId") || req.nextUrl.searchParams.get("date") || resolveGameLiveDate());
+  if (stored) return stored;
   return gameLiveRoute(req);
 }

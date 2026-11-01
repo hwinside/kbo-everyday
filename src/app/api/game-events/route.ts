@@ -1,3 +1,4 @@
+import { serveDeliverySnapshot } from "@/lib/game/delivery-snapshot";
 import { runBeforeDeadline } from "@/lib/async-deadline";
 import { resolveGameSeries } from "@/lib/crawler/resolve-game-series";
 import { NextRequest, NextResponse } from "next/server";
@@ -308,6 +309,8 @@ async function getEventsWithinBudget(req: NextRequest, deadline: number, signal:
 
 /** One wall-clock budget covers upstream reads, body reads and durable state. */
 export async function GET(req: NextRequest) {
+  const stored = await serveDeliverySnapshot(req, "events", req.nextUrl.searchParams.get("gameId") || "");
+  if (stored) return stored;
   const deadline = Date.now() + 2700;
   const controller = new AbortController();
   const signal = AbortSignal.any([req.signal, controller.signal]);

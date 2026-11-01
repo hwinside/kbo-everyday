@@ -46,6 +46,7 @@
     "dm_reports",
     "event_leaderboard_snapshot",
     "feedback",
+    "game_delivery_snapshots",
     "game_event_state",
     "game_lineup_notify_state",
     "game_notify_state",
@@ -86,6 +87,7 @@
     "lineup_confirm_delivery_ledger",
     "live_activity_channel_subscriptions",
     "live_activity_channels",
+    "live_activity_device_recovery",
     "live_activity_game_push_state",
     "live_activity_start_tokens",
     "live_activity_started",
@@ -142,8 +144,7 @@
     "videos",
     "warmup_enrich_obs",
     "watch_pings",
-    "youtube_quota_ledger",
-    "live_activity_device_recovery"
+    "youtube_quota_ledger"
   ],
   "boundedTables": [
     "admin_alert_state",
@@ -595,6 +596,12 @@
         "environment",
         "channel_id"
       ]
+    ],
+    "game_delivery_snapshots": [
+      [
+        "game_id",
+        "channel"
+      ]
     ]
   },
   "keysetHelpers": {
@@ -653,6 +660,8 @@
     "gr_mutate": "one JSON result for one actor/game mutation; writes serialize actor and parent and return one id/ok status",
     "gr_report": "void result for one verified reporter and one review/comment target",
     "gr_moderate": "void result for one operator-authorized review/comment visibility update",
-    "live_activity_recovery_step": "one JSONB object; at most 10 exact-device challenges, or one locked device/game/environment/channel-generation transition"
+    "live_activity_recovery_step": "one JSONB object; at most 10 exact-device challenges, or one locked device/game/environment/channel-generation transition",
+    "publish_game_delivery_snapshot": "Atomic single snapshot upsert returning one boolean; no rowset",
+    "archive_game_delivery_snapshot": "Single canonical game, four fixed channels maximum; returns one boolean"
   }
 }

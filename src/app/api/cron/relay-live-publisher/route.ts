@@ -1,3 +1,4 @@
+import { snapshotWritesEnabled } from "@/lib/game/collector-request";
 import { NextRequest, NextResponse } from "next/server";
 import { randomUUID } from "node:crypto";
 import { createClient } from "@supabase/supabase-js";
@@ -187,7 +188,17 @@ export async function GET(req: NextRequest) {
 
     let gameIds: string[];
     try {
-      gameIds = await listLiveGameIds(date);
+      gameIds = await listLiveGameIds(date, snapshotWritesEnabled());
+      if (snapshotWritesEnabled()) {
+        const retained: string[] = [];
+        for (const gameId of gameIds) {
+          // Final games remain collected until all channels have settled for ten minutes.
+          const { data, error } = await supabase.rpc("archive_game_delivery_snapshot", { p_game_id: gameId })
+            .abortSignal(AbortSignal.timeout(1000));
+          if (error || data !== true) retained.push(gameId);
+        }
+        gameIds = retained;
+      }
     } catch (e) {
       console.error("[relay-publisher] discovery-failed", { region: process.env.VERCEL_REGION ?? "unknown", elapsedMs: Date.now() - invocationStartedAt });
       return NextResponse.json(
@@ -244,6 +255,19 @@ export async function GET(req: NextRequest) {
     const deps = {
       handlers: { relay: getRelay, events: getEvents, live: getLive, detail: getDetail },
       insertFrame,
+      ...(snapshotWritesEnabled() ? { publishSnapshot: async (
+        gameId: string, channel: string, payload: unknown, observedAt: string, ordinal: number, signal?: AbortSignal,
+      ) => {
+        if (lockLost || signal?.aborted) return false;
+        if (!(await ownsLock(token))) { lockLost = true; return false; }
+        if (signal?.aborted) return false;
+        const bounded = AbortSignal.any([...(signal ? [signal] : []), AbortSignal.timeout(1000)]);
+        const { data, error } = await supabase.rpc("publish_game_delivery_snapshot", {
+          p_game_id: gameId, p_channel: channel, p_payload: payload,
+          p_observed_at: observedAt, p_epoch: epoch, p_ordinal: ordinal,
+        }).abortSignal(bounded);
+        return !error && data === true;
+      } } : {}),
       epoch,
       date,
     };
