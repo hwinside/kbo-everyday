@@ -7,6 +7,8 @@
  * 3. App Links / Universal Links가 앱으로 URL을 전달
  * 4. appUrlOpen 이벤트에서 토큰 추출 → supabase.auth.setSession()
  */
+import { App } from "@capacitor/app";
+import { beginOAuthReturnWait, checkOAuthReturn, stopOAuthReturnWait, suspendOAuthReturnCheck } from "@/lib/auth/oauth-return-watch";
 import { Browser } from "@capacitor/browser";
 import { registerPlugin } from "@capacitor/core";
 import { subscribeAppUrlOpen } from "@/lib/capacitor/app-url-open";
@@ -34,11 +36,14 @@ const OAuthBrowser = registerPlugin<OAuthBrowserPlugin>("OAuthBrowser");
  * Android = Chrome Custom Tab 강제(OAuthBrowser), iOS = SFSafariViewController(@capacitor/browser)
  */
 export async function openOAuthInBrowser(url: string): Promise<void> {
-  if (isNativeRuntime() && !isIosNativeRuntime()) {
-    await OAuthBrowser.open({ url });
-    return;
-  }
-  await Browser.open({ url, presentationStyle: "fullscreen" });
+  beginOAuthReturnWait();
+  try {
+    if (isNativeRuntime() && !isIosNativeRuntime()) {
+      await OAuthBrowser.open({ url });
+      return;
+    }
+    await Browser.open({ url, presentationStyle: "fullscreen" });
+  } catch (error) { stopOAuthReturnWait(); throw error; }
 }
 
 /**
@@ -56,6 +61,16 @@ export function registerDeepLinkListener(): void {
   listenerRegistered = true;
   // Consumer readiness differs from native bridge attachment (dispatcher reports it).
   setOAuthListenerReady(true);
+  // App lifetime listeners; backgrounding cancels a queued resume hint.
+  void App.addListener("appStateChange", ({ isActive }) => {
+    if (isActive) checkOAuthReturn();
+    else suspendOAuthReturnCheck();
+  }).catch(() => {});
+  if (isIosNativeRuntime()) {
+    // SFSafariViewController dismissal does not always background the app.
+    void Browser.addListener("browserFinished", checkOAuthReturn).catch(() => {});
+  }
+  checkOAuthReturn();
   void subscribeAppUrlOpen("oauth", ({ url }) => { void handleOAuthUrlOpen(url); });
 }
 
@@ -71,7 +86,15 @@ async function handleOAuthUrlOpen(url: string): Promise<void> {
   const accessToken = hash.get("access_token");
   const refreshToken = hash.get("refresh_token");
   const userFacingError = getUserFacingAuthErrorFromUrl(parsed);
-  if (!code && !(accessToken && refreshToken) && !userFacingError) return;
+  if (!code && !(accessToken && refreshToken) && !userFacingError) {
+    // Explicit provider cancellation is not a login failure or a missing return.
+    if ([parsed.searchParams.get("error"), parsed.searchParams.get("login_error"), hash.get("error")].includes("access_denied")) {
+      stopOAuthReturnWait();
+      clearAuthError();
+    }
+    return;
+  }
+  stopOAuthReturnWait();
   observeOAuth("callback");
   if (exchangePending) { observeOAuth("duplicate"); return; }
   exchangePending = true;

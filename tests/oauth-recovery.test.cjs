@@ -30,11 +30,13 @@ test('error delivery survives denied storage and raw provider errors never reach
   assert.equal(errors.getUserFacingAuthErrorFromUrl(new URL('https://keubo.fan/?login_error=state_mismatch')), 'state_mismatch');
   assert.equal(errors.getUserFacingAuthErrorFromUrl(new URL('https://keubo.fan/?error=access_denied')), null);
 });
-function nativeHarness({ exchange, close = () => Promise.resolve(), runtime = true } = {}) {
-  let callback, timeout; const events = [], notices = []; let calls = 0;
+function nativeHarness({ exchange, close = () => Promise.resolve(), runtime = true, watch, open = async () => {} } = {}) {
+  let callback, timeout, resume, dismissed; const events = [], notices = []; let calls = 0;
   const auth = { exchangeCodeForSession: async () => { calls++; return exchange ? exchange() : { data: { session: {} }, error: null }; }, setSession: async () => { calls++; return { data: { session: {} }, error: null }; } };
   const lib = load('src/lib/capacitor/auth.ts', {
-    '@capacitor/browser': { Browser: { close } }, '@capacitor/core': { registerPlugin: () => ({ close }) },
+    '@capacitor/app': { App: { addListener: async (_, fn) => { resume = fn; return { remove() {} }; } } },
+    '@/lib/auth/oauth-return-watch': watch ?? { beginOAuthReturnWait() {}, checkOAuthReturn() {}, stopOAuthReturnWait() {}, suspendOAuthReturnCheck() {} },
+    '@capacitor/browser': { Browser: { close, open, addListener: async (_, fn) => { dismissed = fn; return { remove() {} }; } } }, '@capacitor/core': { registerPlugin: () => ({ close }) },
     '@/lib/capacitor/app-url-open': { subscribeAppUrlOpen: async (_, fn) => { callback = fn; } },
     '@/lib/supabase/client': { supabase: { auth } },
     '@/lib/auth-error': { clearAuthError: () => notices.push('clear'), publishAuthError: code => notices.push(code), getUserFacingAuthErrorFromUrl: () => null },
@@ -43,7 +45,7 @@ function nativeHarness({ exchange, close = () => Promise.resolve(), runtime = tr
     './platform': { isNative: false, isNativeRuntime: () => runtime, isIosNativeRuntime: () => true },
   }, { setTimeout: fn => { timeout = fn; return 1; }, clearTimeout: () => {} });
   lib.registerDeepLinkListener();
-  return { lib, events, notices, calls: () => calls, fire: (url = 'fan.keubo.app://auth/callback?code=SYNTHETIC') => callback({ url }), expire: () => timeout() };
+  return { lib, resume: active => resume({ isActive: active }), dismissed: () => dismissed(), events, notices, calls: () => calls, fire: (url = 'fan.keubo.app://auth/callback?code=SYNTHETIC') => callback({ url }), expire: () => timeout() };
 }
 const flush = () => new Promise(resolve => setImmediate(resolve));
 test('injected native runtime registers despite static false and close throw cannot block exchange', async () => {
@@ -170,10 +172,81 @@ test('pending notice renders an actionable in-app reload button', () => {
   const notice = load('src/components/auth/AuthErrorNotice.tsx', {
     'react/jsx-runtime': { jsx, jsxs: jsx }, 'react': { useEffect: () => {}, useRef: v => ({ current: v }), useState: () => [state++ === 0 ? 'oauth_pending' : false, () => {}] },
     'lucide-react': { Copy: 'copy', X: 'x' }, '@/lib/auth-error': errors,
+    './LoginSheet': { default: 'login-sheet' }, '@/lib/capacitor/auth': { isOAuthExchangePending: () => false },
   }, { window: { location: { reload: () => { reloaded = true; } } } });
   let button;
   function visit(x) { if (!x || typeof x !== 'object') return; if (Array.isArray(x)) return x.forEach(visit); if (x.type === 'button' && x.props.children === '새로고침') button = x; visit(x.props?.children); }
   visit(notice.default()); assert(button); button.props.onClick(); assert(reloaded);
+});
+
+function returnWatchHarness(storage = new Map()) {
+  const notices = []; let timer; let now = 10_000;
+  const lib = load('src/lib/auth/oauth-return-watch.ts', {
+    '@/lib/auth-error': { publishAuthError: code => notices.push(code) },
+  }, {
+    Date: { now: () => now },
+    sessionStorage: { getItem: k => storage.get(k), setItem: (k, v) => storage.set(k, v), removeItem: k => storage.delete(k) },
+    setTimeout: fn => { timer = fn; return 1; }, clearTimeout: () => { timer = undefined; },
+  });
+  return { lib, notices, storage, expire: () => { const fn = timer; timer = undefined; fn?.(); }, advance: ms => { now += ms; } };
+}
+test('external browser time is not a deadline; only return without callback produces a hint', () => {
+  const h = returnWatchHarness(); h.lib.beginOAuthReturnWait(); h.advance(60_000); h.expire();
+  assert.deepEqual(h.notices, []);
+  h.lib.checkOAuthReturn(); h.expire(); assert.deepEqual(h.notices, ['oauth_return']);
+});
+test('callback within resume grace cancels hint, background cancels queued check', () => {
+  const h = returnWatchHarness(); h.lib.beginOAuthReturnWait(); h.lib.checkOAuthReturn(); h.lib.stopOAuthReturnWait(); h.expire();
+  assert.deepEqual(h.notices, []); assert.equal(h.storage.size, 0);
+  h.lib.beginOAuthReturnWait(); h.lib.checkOAuthReturn(); h.lib.suspendOAuthReturnCheck(); h.expire(); assert.deepEqual(h.notices, []);
+  h.lib.checkOAuthReturn(); h.expire(); assert.deepEqual(h.notices, ['oauth_return']);
+});
+test('reload restores only a recent wait marker, stale or future markers are cleared', () => {
+  const first = returnWatchHarness(); first.lib.beginOAuthReturnWait();
+  assert.deepEqual([...first.storage.values()], ['10000']);
+  const restored = returnWatchHarness(first.storage); restored.lib.checkOAuthReturn(); restored.expire(); assert.deepEqual(restored.notices, ['oauth_return']);
+  for (const age of [-1, 16 * 60_000]) {
+    const h = returnWatchHarness(); h.lib.beginOAuthReturnWait(); h.advance(age); h.lib.checkOAuthReturn(); h.expire();
+    assert.deepEqual(h.notices, []); assert.equal(h.storage.size, 0);
+  }
+});
+test('recovery button opens provider selection, never exchanges old codes, and blocks an in-flight exchange', () => {
+  for (const pending of [false, true]) {
+    let state = 0; const updates = [], events = [];
+    const jsx = (type, props) => ({ type, props });
+    const notice = load('src/components/auth/AuthErrorNotice.tsx', {
+      'react/jsx-runtime': { jsx, jsxs: jsx, Fragment: 'fragment' },
+      'react': { useEffect() {}, useRef: v => ({ current: v }), useState: () => { const i = state++; return [i === 0 ? 'oauth_exchange' : false, v => updates.push([i, v])]; } },
+      'lucide-react': { Copy: 'copy', X: 'x' }, './LoginSheet': { default: 'login-sheet' },
+      '@/lib/capacitor/auth': { isOAuthExchangePending: () => pending },
+      '@/lib/auth-error': { ...load('src/lib/auth-error.ts'), clearAuthError: () => events.push('clear'), publishAuthError: c => events.push(c) },
+    }, { window: { dispatchEvent: e => events.push(e.type) }, Event: class { constructor(type) { this.type = type; } } });
+    let button;
+    function visit(x) { if (!x || typeof x !== 'object') return; if (Array.isArray(x)) return x.forEach(visit); if (x.type === 'button' && x.props.children === '다시 로그인') button = x; visit(x.props?.children); }
+    visit(notice.default()); assert(button); button.props.onClick();
+    if (pending) { assert.deepEqual(events, ['oauth_pending']); assert.deepEqual(updates, []); }
+    else { assert.deepEqual(events, ['keubo:login-recovery-open', 'clear']); assert(updates.some(([i,v]) => i === 1 && v === true)); }
+  }
+});
+
+test('native browser/return wiring cancels hint before delayed SDK exchange and on launch rejection', async () => {
+  const watch = returnWatchHarness(); let finish;
+  const h = nativeHarness({ watch: watch.lib, exchange: () => new Promise(r => { finish = r; }) });
+  await h.lib.openOAuthInBrowser('https://provider.invalid'); h.resume(false); watch.expire();
+  assert.deepEqual(watch.notices, []);
+  h.resume(true); h.fire(); watch.expire(); assert.deepEqual(watch.notices, []); assert.equal(watch.storage.size, 0);
+  finish({ data: { session: {} }, error: null }); await flush();
+  await h.lib.openOAuthInBrowser('https://provider.invalid'); h.dismissed(); watch.expire(); assert.deepEqual(watch.notices, ['oauth_return']);
+  const broken = returnWatchHarness(); const b = nativeHarness({ watch: broken.lib, open: async () => { throw Error('unavailable'); } });
+  await assert.rejects(b.lib.openOAuthInBrowser('https://provider.invalid'));
+  b.resume(true); broken.expire(); assert.equal(broken.storage.size, 0); assert.deepEqual(broken.notices, []);
+});
+
+test('explicit provider cancellation cancels the return hint without exchanging or reporting failure', async () => {
+  const watch = returnWatchHarness(); const h = nativeHarness({ watch: watch.lib });
+  await h.lib.openOAuthInBrowser('https://provider.invalid'); h.resume(true);
+  h.fire('fan.keubo.app://auth/callback?error=access_denied'); watch.expire();
+  assert.equal(h.calls(), 0); assert.deepEqual(watch.notices, []); assert.equal(watch.storage.size, 0);
 });
 
 test('SDK missing verifier is classified by name or code without inspecting raw messages', () => {

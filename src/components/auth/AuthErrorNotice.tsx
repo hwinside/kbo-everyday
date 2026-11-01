@@ -1,8 +1,13 @@
 "use client";
 
 import { useEffect, useRef, useState } from "react";
+import LoginSheet from "./LoginSheet";
+import { isOAuthExchangePending } from "@/lib/capacitor/auth";
 import { Copy, X } from "lucide-react";
 import {
+  LOGIN_RECOVERY_OPEN_EVENT,
+  clearAuthError,
+  publishAuthError,
   AUTH_ERROR_CLEAR_EVENT,
   AUTH_ERROR_DIAG_CODES,
   AUTH_ERROR_EVENT,
@@ -22,6 +27,7 @@ function isUserFacingAuthErrorCode(
 
 export default function AuthErrorNotice() {
   const [errorCode, setErrorCode] = useState<UserFacingAuthErrorCode | null>(null);
+  const [loginOpen, setLoginOpen] = useState(false);
   const [copied, setCopied] = useState(false);
   const copiedTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
 
@@ -92,12 +98,14 @@ export default function AuthErrorNotice() {
     };
   }, []);
 
-  if (!errorCode) return null;
+  if (!errorCode && !loginOpen) return null;
 
-  const diagCode = AUTH_ERROR_DIAG_CODES[errorCode];
+  const diagCode = errorCode ? AUTH_ERROR_DIAG_CODES[errorCode] : undefined;
 
   return (
-    <div
+    <>
+    <LoginSheet isOpen={loginOpen} onClose={() => setLoginOpen(false)} />
+    {errorCode && <div
       role="alert"
       aria-live="assertive"
       className="fixed left-4 right-4 top-[calc(var(--safe-area-inset-top,env(safe-area-inset-top))+1rem)] z-[12000] mx-auto max-w-lg rounded-2xl border border-red-500/30 bg-bg-secondary px-4 py-3 shadow-xl"
@@ -115,6 +123,16 @@ export default function AuthErrorNotice() {
           <X size={18} />
         </button>
       </div>
+      {errorCode !== "oauth_pending" && (
+        <button type="button" onClick={() => {
+          // A callback may have arrived after the hint was rendered.
+          if (isOAuthExchangePending()) { publishAuthError("oauth_pending"); return; }
+          window.dispatchEvent(new Event(LOGIN_RECOVERY_OPEN_EVENT));
+          clearAuthError();
+          setErrorCode(null);
+          setLoginOpen(true);
+        }} className="mt-2 rounded-lg border border-border px-2.5 py-1.5 text-xs text-text-secondary">다시 로그인</button>
+      )}
       {errorCode === "oauth_pending" && (
         <button type="button" onClick={() => window.location.reload()} className="mt-2 rounded-lg border border-border px-2.5 py-1.5 text-xs text-text-secondary">새로고침</button>
       )}
@@ -138,6 +156,7 @@ export default function AuthErrorNotice() {
           </a>
         </div>
       )}
-    </div>
+    </div>}
+    </>
   );
 }

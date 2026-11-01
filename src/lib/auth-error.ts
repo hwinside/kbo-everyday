@@ -1,3 +1,4 @@
+export const LOGIN_RECOVERY_OPEN_EVENT = "keubo:login-recovery-open";
 export const AUTH_ERROR_CLEAR_EVENT = "keubo:auth-error-clear";
 export const AUTH_ERROR_EVENT = "keubo:auth-error";
 export const AUTH_ERROR_STORAGE_KEY = "kbo-auth-error";
@@ -38,7 +39,7 @@ export type NaverLoginErrorCode =
 export type UserFacingAuthErrorCode =
   | typeof KAKAO_EMAIL_UNVERIFIED_CODE
   | NaverLoginErrorCode
-  | "oauth_start" | "oauth_exchange" | "oauth_pending" | "oauth_provider";
+  | "oauth_return" | "oauth_start" | "oauth_exchange" | "oauth_pending" | "oauth_provider";
 
 /**
  * OAuth callback 오류 표식 파라미터 — 서버 오류 callback(`/?auth_error=…`)과 provider 오류가 쓰는 키 전체.
@@ -59,6 +60,7 @@ const NAVER_LOGIN_GENERIC_MESSAGE =
 export const AUTH_ERROR_MESSAGES: Record<UserFacingAuthErrorCode, string> = {
   [KAKAO_EMAIL_UNVERIFIED_CODE]:
     "카카오 계정의 이메일 인증이 확인되지 않아 가입을 진행하지 않았어요. 카카오 계정에서 이메일을 인증한 뒤 다시 시도해 주세요.",
+  oauth_return: "아직 로그인 완료가 확인되지 않았어요. 인증을 마쳤는데도 그대로라면 다시 로그인해 주세요.",
   oauth_start: "로그인을 시작하지 못했어요. 잠시 후 로그인 버튼을 다시 눌러 주세요.",
   oauth_exchange: "로그인을 완료하지 못했어요. 로그인 버튼을 눌러 다시 시작해 주세요.",
   oauth_pending: "로그인 확인이 지연되고 있어요. 잠시 기다려 주세요. 계속 멈춰 있으면 새로고침 후 다시 로그인해 주세요.",
@@ -83,6 +85,7 @@ export const AUTH_ERROR_MESSAGES: Record<UserFacingAuthErrorCode, string> = {
  * 카카오 축은 메시지 자체가 자가해결 안내라 진단코드를 붙이지 않는다.
  */
 export const AUTH_ERROR_DIAG_CODES: Partial<Record<UserFacingAuthErrorCode, string>> = {
+  oauth_return: "OA-RETURN",
   oauth_start: "OA-START",
   oauth_exchange: "OA-EXCHANGE",
   oauth_pending: "OA-PENDING",

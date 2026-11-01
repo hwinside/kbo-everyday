@@ -14,7 +14,7 @@ import InAppBrowserModal from "./InAppBrowserModal";
 
 import { beginOAuthAttempt, observeOAuth } from "@/lib/auth/oauth-diagnostics";
 import { oauthFailure } from "@/lib/auth/oauth-diagnostic-schema";
-import { clearAuthError, publishAuthError } from "@/lib/auth-error";
+import { LOGIN_RECOVERY_OPEN_EVENT, clearAuthError, publishAuthError } from "@/lib/auth-error";
 import { isOAuthExchangePending, registerDeepLinkListener } from "@/lib/capacitor/auth";
 
 interface LoginSheetProps {
@@ -56,6 +56,12 @@ export default function LoginSheet({ isOpen, onClose }: LoginSheetProps) {
       onClose();
     }
   }, [isOpen, onClose, user]);
+
+  useEffect(() => {
+    const closeForRecovery = () => { if (isOpen) onClose(); };
+    window.addEventListener(LOGIN_RECOVERY_OPEN_EVENT, closeForRecovery);
+    return () => window.removeEventListener(LOGIN_RECOVERY_OPEN_EVENT, closeForRecovery);
+  }, [isOpen, onClose]);
 
   const starting = useRef(false);
   const runProvider = useCallback(async (provider: Provider) => {
