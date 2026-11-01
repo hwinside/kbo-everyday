@@ -28,8 +28,14 @@ test('real GET uses conditional state write, and never returns a rejected late s
       if (method === 'POST') { assert.equal(db.row, null); db.row = body; return new Response(null, { status: 201 }); }
       if (method === 'PATCH') {
         patches++;
-        const expected = JSON.parse(url.searchParams.get('prev_state')!.slice(3));
-        assert.deepEqual(expected, db.row!.prev_state!, 'conditional comparison binds exact JSON/revision');
+        if (db.row!.prev_state!.revision) {
+          assert.equal(url.searchParams.get('prev_state->>revision'), `eq.${db.row!.prev_state!.revision}`);
+        } else {
+          assert.equal(url.searchParams.get('prev_state->>revision'), 'is.null');
+          assert.equal(url.searchParams.get('updated_at'), `eq.${db.row!.updated_at}`);
+        }
+        assert.equal(url.searchParams.has('prev_state'), false, 'full boxscore must not inflate URL');
+        assert.ok(url.href.length < 500);
         db.row = { ...db.row, ...body };
         return Response.json([{ game_id: gameId }]);
       }
@@ -43,6 +49,7 @@ test('real GET uses conditional state write, and never returns a rejected late s
     assert.equal(first.status, 200);
     assert.equal(db.row!.prev_state!.live.inning, 2);
     const initialRevision = db.row!.prev_state!.revision;
+    delete db.row!.prev_state!.revision; // Existing production row before rollout.
     await new Promise(resolve => setTimeout(resolve, 5));
     const second = await request();
     assert.equal(second.status, 200);

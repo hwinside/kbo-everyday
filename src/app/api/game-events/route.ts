@@ -217,7 +217,7 @@ async function getEventsWithinBudget(req: NextRequest, deadline: number, signal:
     const committed = await commitGameEventObservation({
       async read() {
         const { data, error } = await supabaseAdmin.from("game_event_state")
-          .select("prev_state, event_history").eq("game_id", gameId)
+          .select("prev_state, event_history, updated_at").eq("game_id", gameId)
           .abortSignal(signal).maybeSingle();
         if (error) throw error;
         return data as EventStateRow | null;
@@ -232,9 +232,15 @@ async function getEventsWithinBudget(req: NextRequest, deadline: number, signal:
           return true;
         }
         let query = supabaseAdmin.from("game_event_state").update(value).eq("game_id", gameId);
-        query = expected.prev_state === null
-          ? query.is("prev_state", null)
-          : query.eq("prev_state", JSON.stringify(expected.prev_state));
+        const revision = expected.prev_state?.revision;
+        if (revision) {
+          query = query.eq("prev_state->>revision", revision);
+        } else {
+          // First adoption of legacy rows: their RPC updated_at is the version.
+          // Never put the full boxscore JSON into a PostgREST URL (URI limits).
+          if (!expected.updated_at) throw new Error("event_state_missing_version");
+          query = query.is("prev_state->>revision", null).eq("updated_at", expected.updated_at);
+        }
         const { data, error } = await query.select("game_id").abortSignal(signal);
         if (error) throw error;
         return (data?.length ?? 0) === 1;

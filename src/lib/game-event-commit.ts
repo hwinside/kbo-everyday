@@ -4,12 +4,13 @@ import type { GameEvent } from "@/types/game-events";
 import type { LiveGameData } from "@/lib/hooks/useLiveGame";
 
 export interface EventStateRow {
+  updated_at?: string;
   prev_state: PrevGameState | null;
   event_history: GameEvent[] | null;
 }
 export interface EventStateStore {
   read(): Promise<EventStateRow | null>;
-  /** Atomic comparison with the exact JSON baseline (revision prevents ABA). */
+  /** Atomic comparison with its revision (legacy rows use updated_at). */
   replace(expected: EventStateRow | null, next: EventStateRow): Promise<boolean>;
 }
 
