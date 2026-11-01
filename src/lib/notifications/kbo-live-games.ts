@@ -525,12 +525,17 @@ async function fetchKboLiveGamesUnfiltered(
   fetchNaverImpl: typeof fetchNaverGames = fetchNaverGames,
   fetchNaverEvidenceImpl: NaverLiveEvidenceFetcher = fetchNaverLiveEvidence,
   requiredGameId?: string,
+  discoveryOptions?: { kboBudgetMs?: number; observe?: (event: { source: string; outcome: string; elapsedMs: number }) => void },
 ): Promise<{
   ok: boolean;
   games: KboRawGame[];
   trace: LiveGamesTrace;
 }> {
   const sourceAtMs = Date.now();
+  const observe = (source: string, outcome: string, startedAt: number) => {
+    discoveryOptions?.observe?.({ source, outcome, elapsedMs: Date.now() - startedAt });
+  };
+  const kboBudgetMs = discoveryOptions?.kboBudgetMs ?? KBO_PRIMARY_BUDGET_MS;
   const absoluteDeadlineAtMs = deadlineAtMs ?? sourceAtMs + 5_000;
   // A bare empty scoreboard can be degraded. Require either a successful KBO
   // calendar gap witness or the existing Naver cross-check before accepting it.
@@ -542,7 +547,7 @@ async function fetchKboLiveGamesUnfiltered(
   try {
     const kboDeadlineAtMs = Math.min(
         absoluteDeadlineAtMs,
-      Date.now() + KBO_PRIMARY_BUDGET_MS,
+      Date.now() + kboBudgetMs,
     );
     const result = await runSourceBeforeDeadline(
       async (signal) => {
@@ -564,8 +569,10 @@ async function fetchKboLiveGamesUnfiltered(
       },
       kboDeadlineAtMs,
     );
+    observe("kbo-http", String(result.response.status), sourceAtMs);
     if (result.response.ok) {
       const games = parseKboGameListPayload(result.json);
+      observe("kbo-schema", games === null ? "invalid" : games.length ? "games" : "empty", sourceAtMs);
       const fetchedAtMs = Date.now();
       if (
         games !== null
@@ -614,15 +621,18 @@ async function fetchKboLiveGamesUnfiltered(
         }
       }
     }
-  } catch {
+  } catch (error) {
+    observe("kbo", error instanceof Error && error.name === "AbortError" ? "deadline" : "fetch-or-parse-failed", sourceAtMs);
     // Naver failover below.
   }
 
+  const naverStartedAt = Date.now();
   try {
     const games = await runSourceBeforeDeadline(
       (signal) => fetchNaverImpl(date, undefined, { signal }),
       absoluteDeadlineAtMs,
     );
+    observe("naver", "schedule-ok", naverStartedAt);
     // KBO empty 는 Naver 도 무경기일 때만 인정. Naver 에 경기가 있으면 KBO soft-empty
     // 로 보고 Naver 결과를 사용한다(서비스 전체 블랙홀 방지).
     if (kboEmptyResult && games.length === 0) return kboEmptyResult;
@@ -642,7 +652,8 @@ async function fetchKboLiveGamesUnfiltered(
         deadlineAtMs: absoluteDeadlineAtMs,
       },
     };
-  } catch {
+  } catch (error) {
+    observe("naver", error instanceof Error && error.name === "AbortError" ? "deadline" : "fetch-or-budget-failed", naverStartedAt);
     // KBO calendar로 확인하지 못한 soft-empty는 Naver가 무경기를 정상 확인한 경우에만
     // authoritative로 인정한다. Naver 확인 자체가 실패하면 dual-source 불확실이므로
     // ok:false fail-close — soft-empty가 검증 없이 정상 무경기로 둔갑해 watchdog이
@@ -801,7 +812,11 @@ async function eligibleLiveResult(
 
 export async function fetchKboLiveGames(...args: Parameters<typeof fetchKboLiveGamesUnfiltered>) {
   const deadline = args[1] ?? Date.now() + 5000;
-  return eligibleLiveResult(await fetchKboLiveGamesUnfiltered(...args), args[0], deadline);
+  const result = await fetchKboLiveGamesUnfiltered(...args);
+  const startedAt = Date.now();
+  const eligible = await eligibleLiveResult(result, args[0], deadline);
+  if (result.ok) args[6]?.observe?.({ source: "postseason-eligibility", outcome: eligible.ok ? "ok" : "failed", elapsedMs: Date.now() - startedAt });
+  return eligible;
 }
 
 export async function fetchLiveGamesNaverPrimary(...args: Parameters<typeof fetchLiveGamesNaverPrimaryUnfiltered>) {
