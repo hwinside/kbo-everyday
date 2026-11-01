@@ -248,3 +248,31 @@ test('explicit provider cancellation cancels the return hint without exchanging 
   h.fire('fan.keubo.app://auth/callback?error=access_denied'); watch.expire();
   assert.equal(h.calls(), 0); assert.deepEqual(watch.notices, []); assert.equal(watch.storage.size, 0);
 });
+
+test('SDK missing verifier is classified by name or code without inspecting raw messages', () => {
+  const { AuthPKCECodeVerifierMissingError } = require('@supabase/auth-js');
+  const sdkError = new AuthPKCECodeVerifierMissingError();
+  assert.equal(schema.oauthFailure(sdkError), 'pkce');
+  const unreadableMessage = { get message() { throw Error('must not read raw message'); } };
+  for (const fields of [{ name: sdkError.name }, { code: sdkError.code }]) {
+    const error = Object.defineProperties({ ...fields }, Object.getOwnPropertyDescriptors(unreadableMessage));
+    assert.equal(schema.oauthFailure(error), 'pkce');
+  }
+  assert.equal(schema.oauthFailure({ message: sdkError.message }), 'other');
+  assert.equal(schema.oauthFailure({ code: 'pkce_code_verifier_not_found_extra' }), 'other');
+});
+test('native callback missing verifier emits pkce and a retry notice, without exposing SDK error', async () => {
+  const { AuthPKCECodeVerifierMissingError } = require('@supabase/auth-js');
+  for (const thrown of [false, true]) {
+    const h = nativeHarness({ exchange: () => {
+      const error = new AuthPKCECodeVerifierMissingError();
+      if (thrown) throw error;
+      return { data: { session: null }, error };
+    } });
+    h.fire(); await flush();
+    assert(h.events.some(e => e[0] === 'failed' && e[1] === 'pkce'));
+    assert.deepEqual(h.notices, ['oauth_exchange']);
+    assert.equal(h.lib.isOAuthExchangePending(), false);
+    assert(!JSON.stringify(h.events).includes('AuthPKCECodeVerifierMissingError'));
+  }
+});
