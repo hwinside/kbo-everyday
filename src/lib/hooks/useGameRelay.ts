@@ -15,6 +15,7 @@ import {
   consumeLivePollStream,
   type LivePollEnvelope,
 } from "@/lib/game/live-poll-stream";
+import { shouldAcceptRelaySnapshot } from "@/lib/game/relay-snapshot-age";
 import { relayRetryDelayMs } from "@/lib/game/relay-retry";
 import { resolveGameLiveDate } from "@/lib/game-live-date";
 import { supabase } from "@/lib/supabase/client";
@@ -126,6 +127,7 @@ export function useGameRelay(
   // Realtime(B2): 마지막으로 성공한 relay 데이터(poll 또는 Realtime relay frame) 도착
   // 시각. RELAY_WATCHDOG_MS 안이면 3초 폴링 tick 을 억제하고, 지나면 watchdog poll 이
   // 자동 재개돼 self-heal 한다 — content-only 라 무변경 구간엔 watchdog 주기당 poll 1회.
+  const lastRelayUpdatedAtRef = useRef<string | null>(null);
   const lastRelayFreshAtRef = useRef<number | null>(null);
   // 성공한 relay baseline 을 한 번이라도 받았는가(삼순 3차). baseline 전엔 항상 폴링해
   // heartbeat 가 초기 fetch 실패를 가려 빈 화면+retry 억제가 되던 문제를 제거한다.
@@ -278,6 +280,14 @@ export function useGameRelay(
           })) {
             // innings만 병합(delta면 과거 이닝 유지, full이면 재구성), matchup/linescore/
             // currentInning 등 라이브 필드는 최신 응답 그대로 유지.
+            if (!shouldAcceptRelaySnapshot(lastRelayUpdatedAtRef.current, json.updatedAt)) {
+              if (json.degraded) markDelayed();
+              settleRelay(false);
+              releaseRelaySlot();
+              armEventsTailTimeout();
+              return;
+            }
+            lastRelayUpdatedAtRef.current = json.updatedAt ?? null;
             const mergedInnings = mergeDeltaInnings(cache, json.innings, json.partial === true);
             const merged: GameRelayResponse = {
               ...json,
@@ -285,11 +295,12 @@ export function useGameRelay(
               partial: false,
             };
             setData(merged);
-            clearDelay();
-            relaySucceeded = true;
+            if (json.degraded) markDelayed();
+            else clearDelay();
+            relaySucceeded = !json.degraded;
             // B2: 성공한 relay baseline 확립 + watchdog 신선도 갱신(다음 tick 억제 근거).
             relayBaselineRef.current = true;
-            lastRelayFreshAtRef.current = Date.now();
+            if (!json.degraded) lastRelayFreshAtRef.current = Date.now();
           }
           settleRelay(relaySucceeded);
           // 통합 stream의 events가 늦어져도 relay poll slot은 frame 도착 즉시 해제한다.
@@ -413,6 +424,7 @@ export function useGameRelay(
     liveFrameOwnerSeqRef.current = 0;
     detailFrameOwnerSeqRef.current = 0;
     lastRelayFreshAtRef.current = null;
+    lastRelayUpdatedAtRef.current = null;
     relayBaselineRef.current = false;
     lastAppliedFrameIdRef.current = 0;
     relayGenerationRef.current = 0;
@@ -477,11 +489,15 @@ export function useGameRelay(
             if (row.kind === "relay-full") relayBaselineRef.current = true;
             // 삼순 4차 ②: watchdog freshness 는 relay 성공에만 갱신한다(타 채널 제외) —
             // relay 만 죽고 live/events 가 변하면 watchdog 이 계속 가려지는 마스킹 방지.
-            lastRelayFreshAtRef.current = Date.now();
+            const relayData = row.payload.data as GameRelayResponse;
+            if (!shouldAcceptRelaySnapshot(lastRelayUpdatedAtRef.current, relayData.updatedAt)) return;
+            lastRelayUpdatedAtRef.current = relayData.updatedAt ?? null;
+            if (!relayData.degraded) lastRelayFreshAtRef.current = Date.now();
             // P0-3: Realtime 최신 relay 적용 → generation 증가. 이후 늦게 끝난 poll 응답은 버려진다.
             relayGenerationRef.current += 1;
-            applyRealtimeRelay(row.payload.data as GameRelayResponse);
-            clearDelay();
+            applyRealtimeRelay(relayData);
+            if (relayData.degraded) setIsDelayed(true);
+            else clearDelay();
           } else if (row.kind === "events") {
             applyRealtimeEvents(row.payload.data as { events?: GameEvent[] });
           } else if (row.kind === "live") {

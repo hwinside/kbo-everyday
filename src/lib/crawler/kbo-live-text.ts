@@ -86,6 +86,9 @@ export function parseKboLiveText(gameId: string, scoreHtml: string, textHtml: st
   return { gameId, updatedAt: new Date().toISOString(), rows: chronological.reverse(), linescore: { away: side(0), home: side(1) }, boxScore: { awayBatters: batters(0), homeBatters: batters(1), awayPitchers: pitchers(0), homePitchers: pitchers(1) } };
 }
 
+export const KBO_SNAPSHOT_FRESH_MS = 10_000;
+export const KBO_SNAPSHOT_RETENTION_MS = 24 * 60 * 60_000;
+
 export class KboCollectionBusyError extends Error {}
 
 export type RedisCommand = (args: (string | number)[], signal: AbortSignal) => Promise<unknown>;
@@ -101,7 +104,7 @@ async function redis(args: (string | number)[], signal: AbortSignal): Promise<un
 }
 
 /** Shared admission remains closed for 10s even on upstream failure. No local fallback on Redis failure. */
-export async function loadKboLiveText(gameId: string, opts: { signal?: AbortSignal; srId?: string; command?: RedisCommand; fetcher?: typeof fetch } = {}): Promise<KboLiveText> {
+export async function loadKboLiveText(gameId: string, opts: { signal?: AbortSignal; srId?: string; command?: RedisCommand; fetcher?: typeof fetch; allowStaleOnError?: boolean } = {}): Promise<KboLiveText> {
   if (!isCanonicalKboGameId(gameId)) throw new Error('invalid game id');
   // Respect the caller's absolute deadline; only standalone relay calls own a timer.
   const signal = opts.signal ?? AbortSignal.timeout(2800);
@@ -110,6 +113,7 @@ export async function loadKboLiveText(gameId: string, opts: { signal?: AbortSign
   if (!['production', 'preview', 'development'].includes(environment)) throw new Error('Invalid KBO cache environment');
   // Snapshot and admission share this namespace; Preview never reads/writes production keys.
   const key = `kbo:live-text:v1:${environment}:${gameId}`;
+  let lastGood: KboLiveText | null = null;
   const readSnapshot = async () => {
     signal.throwIfAborted();
     const cached = await command(['GET', key], signal);
@@ -117,10 +121,14 @@ export async function loadKboLiveText(gameId: string, opts: { signal?: AbortSign
     if (typeof cached !== 'string') return null;
     const data = JSON.parse(cached) as KboLiveText;
     const age = Date.now() - Date.parse(data.updatedAt);
-    return data.gameId === gameId && age >= 0 && age < 10_000 ? data : null;
+    if (data.gameId !== gameId || !Number.isFinite(age) || age < 0 || age >= KBO_SNAPSHOT_RETENTION_MS ||
+        !Array.isArray(data.rows) || !data.rows.length || !data.linescore || !data.boxScore) return null;
+    lastGood = data;
+    return age < KBO_SNAPSHOT_FRESH_MS ? data : null;
   };
   const cached = await readSnapshot();
   if (cached) return cached;
+  try {
   const token = crypto.randomUUID();
   if (await command(['SET', `${key}:admission`, token, 'NX', 'PX', 10_000], signal) !== 'OK') {
     // Detail and relay often arrive together on a cold page. The admission loser
@@ -150,7 +158,13 @@ export async function loadKboLiveText(gameId: string, opts: { signal?: AbortSign
   const data = parseKboLiveText(gameId, views[0], views[1]);
   signal.throwIfAborted();
   // The admission token fences late writers after lease expiry.
-  const saved = await command(['EVAL', "if redis.call('GET',KEYS[1])==ARGV[1] then return redis.call('SET',KEYS[2],ARGV[2],'PX',10000) else return nil end", 2, `${key}:admission`, key, token, JSON.stringify(data)], signal);
+  const saved = await command(['EVAL', "if redis.call('GET',KEYS[1])==ARGV[1] then return redis.call('SET',KEYS[2],ARGV[2],'PX',86400000) else return nil end", 2, `${key}:admission`, key, token, JSON.stringify(data)], signal);
   if (saved !== 'OK') throw new Error('KBO snapshot publish failed');
   return data;
+  } catch (error) {
+    // Never refresh updatedAt/TTL on a failed collection. This response is
+    // explicitly degraded by the caller; it is not fresh collection evidence.
+    if (opts.allowStaleOnError && lastGood) return lastGood;
+    throw error;
+  }
 }

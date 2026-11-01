@@ -185,3 +185,47 @@ test('busy reader respects caller abort and never returns a later snapshot', asy
     assert.equal(gets, 2);
   } finally { clearTimeout(timer); }
 });
+
+test('ten-minute upstream outage preserves last-good body and original observation time', async () => {
+  const snapshot = { ...parseKboLiveText(gameId, v1, v2), updatedAt: new Date(Date.now() - 10 * 60_000).toISOString() };
+  let published = false;
+  const command: RedisCommand = async args => {
+    if (args[0] === 'GET') return JSON.stringify(snapshot);
+    if (args[0] === 'SET') return 'OK';
+    if (args[0] === 'EVAL') published = true;
+    return null;
+  };
+  const fetcher = (async () => { throw new Error('upstream offline'); }) as typeof fetch;
+  const result = await loadKboLiveText(gameId, { command, fetcher, srId: '5', allowStaleOnError: true });
+  assert.deepEqual(result, snapshot);
+  assert.equal(published, false, 'failed collection never refreshes stored TTL/time');
+  await assert.rejects(loadKboLiveText(gameId, { command, fetcher, srId: '5' }), /offline/,
+    'strict consumers must not silently accept stale snapshots');
+});
+
+test('cold, wrong-game, future and over-retention snapshots are never successful fallback', async () => {
+  const snapshot = parseKboLiveText(gameId, v1, v2);
+  for (const value of [null, { ...snapshot, gameId: '20261026HTSS0' },
+    { ...snapshot, updatedAt: new Date(Date.now() + 60_000).toISOString() },
+    { ...snapshot, updatedAt: new Date(Date.now() - 25 * 3600_000).toISOString() }]) {
+    const command: RedisCommand = async args => args[0] === 'GET' ? (value && JSON.stringify(value)) : 'OK';
+    const fetcher = (async () => { throw new Error('offline'); }) as typeof fetch;
+    await assert.rejects(loadKboLiveText(gameId, { command, fetcher, srId: '5', allowStaleOnError: true }));
+  }
+});
+
+test('new successful collection replaces stale snapshot and retains it beyond freshness window', async () => {
+  const old = { ...parseKboLiveText(gameId, v1, v2), updatedAt: new Date(Date.now() - 600_000).toISOString() };
+  let stored = JSON.stringify(old);
+  const command: RedisCommand = async args => {
+    if (args[0] === 'GET') return stored;
+    if (args[0] === 'SET') return 'OK';
+    assert.match(String(args[1]), /'PX',86400000/, 'durable last-good must survive the 10-second freshness expiry');
+    stored = String(args[6]);
+    return 'OK';
+  };
+  const fetcher = (async url => new Response(String(url).includes('View1') ? v1 : v2)) as typeof fetch;
+  const recovered = await loadKboLiveText(gameId, { command, fetcher, srId: '5', allowStaleOnError: true });
+  assert.ok(Date.parse(recovered.updatedAt) > Date.parse(old.updatedAt));
+  assert.deepEqual(JSON.parse(stored), recovered);
+});
