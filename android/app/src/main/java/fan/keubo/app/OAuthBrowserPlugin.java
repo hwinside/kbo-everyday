@@ -2,6 +2,7 @@ package fan.keubo.app;
 
 import android.content.Intent;
 import android.net.Uri;
+import android.webkit.CookieManager;
 
 import androidx.browser.customtabs.CustomTabsClient;
 import androidx.browser.customtabs.CustomTabsIntent;
@@ -45,6 +46,12 @@ public class OAuthBrowserPlugin extends Plugin {
         }
         getActivity().runOnUiThread(() -> {
             try {
+                // Supabase has written the PKCE verifier before JS calls open(). WebView
+                // otherwise persists cookies later: process death while the Custom Tab
+                // is foreground can lose the verifier. flush() completes disk writes
+                // synchronously; never launch the browser before it returns. Keep the
+                // existing cookie store (no second copy of the verifier or token logs).
+                CookieManager.getInstance().flush();
                 CustomTabsIntent customTabs = new CustomTabsIntent.Builder().build();
                 // ignoreDefault=true: 사용자 기본(삼성 인터넷)을 무시하고 Chrome 계열에서만 선택.
                 // 설치된 Chrome이 없으면 null → setPackage 생략(기본 Custom Tab 폴백).
