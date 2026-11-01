@@ -10,7 +10,7 @@ rejection cannot settle an already-rejected promise either.
 
 The fix listens only while home imports are active. On the first same-origin
 Next JS resource error, capture prevents the original loader from rejecting.
-After 1s it appends one cloned script, retaining the deployment query and adding
+After 1s it appends one fresh script, retaining the deployment query and adding
 `__kbo_chunk_retry=1`. Successful registration resolves the original loader;
 second failure or 10s timeout forwards an error to the original script. It does
 not edit private runtime maps. Non-resource application errors are untouched.
@@ -66,3 +66,23 @@ Independent reviewer QA should compare baseline and preview:
 - Runtime fixture tests prove request/registration semantics, not real WebKit
   script scheduling/CSP/network behavior. Preview and iOS QA are required.
 - No production deployment or error-rate improvement is claimed by this PR.
+
+## R1: WebKit NO-GO corrections (2026-11-02)
+
+- A cloned script copies its HTML "already started" state. WebKit makes no
+  request for that clone. Create a fresh script and preserve its attributes/nonce.
+- Registration uses `document.currentScript.getAttribute("src")`. Absolute src
+  breaks Turbopack's canonical `/_next/` key. Preserve the relative pathname and
+  deployment query when inserting the retry script.
+- The old jsdom fixture manually registered a hardcoded chunk key and could not
+  expose either browser defect. It now registers the actual script element,
+  observes original-target errors, and has a per-test timeout.
+- `node --test tests/chunk-network-retry-webkit.test.cjs` serves the shipped
+  runtime and real script responses locally, with serviceWorkers blocked. It
+  verifies transient recovery without navigation, persistent rejection, and
+  mutations removing capture suppression / final failure forwarding.
+- Author checks: unit 13/13, WebKit 4/4 (including two mutations), tsc and eslint.
+  These are local browser contract tests, not independent preview or iOS QA.
+- Reviewer should record final URL and deployed SHA, block service workers for
+  route-based injection, and verify `__kbo_chunk_retry=1` plus no navigation.
+  Previous route-injection results without SW blocking are withdrawn evidence.

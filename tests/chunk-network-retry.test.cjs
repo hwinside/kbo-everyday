@@ -1,4 +1,5 @@
-const { test } = require('node:test');
+const { test: nodeTest } = require('node:test');
+const test = (name, fn) => nodeTest(name, { timeout: 15000 }, fn);
 const assert = require('node:assert/strict');
 const { build } = require('esbuild');
 const { readFileSync } = require('node:fs');
@@ -21,15 +22,17 @@ async function fixture({ retry = true, permanent = false, foreign = false } = {}
   w.TURBOPACK.push(['static/chunks/boot.js',{otherChunks:[],runtimeModuleIds:[1]}]);
   await new Promise(r => setImmediate(r));
   const requests = [];
+  let originalErrors = 0;
   const append = w.document.head.appendChild.bind(w.document.head);
   w.document.head.appendChild = script => {
     requests.push(script.src);
+    if (requests.length === 1) script.addEventListener('error', () => { originalErrors++; });
     const result = append(script);
     queueMicrotask(() => {
       if (requests.length === 1 || permanent || foreign) script.dispatchEvent(new w.Event('error'));
       else {
         // Real Turbopack registration, canonical chunk path (query stripped).
-        w.TURBOPACK.push(['static/chunks/fixture.js', 2, ctx => ctx.v('section restored')]);
+        w.TURBOPACK.push([script, 2, ctx => ctx.v('section restored')]);
         script.dispatchEvent(new w.Event('load'));
       }
     });
@@ -39,7 +42,7 @@ async function fixture({ retry = true, permanent = false, foreign = false } = {}
   const set = w.setTimeout.bind(w);
   w.setTimeout = (fn, ms) => set(fn, ms === 1000 ? 1 : ms);
   const release = retry ? w.recovery.acquireChunkNetworkRetry() : () => {};
-  return {w,requests,release,close:()=>dom.window.close()};
+  return {w,requests,release,get originalErrors(){return originalErrors;},close:()=>dom.window.close()};
 }
 
 test('shipped runtime caches a rejected URL: second import does not request again',async()=>{
@@ -55,6 +58,7 @@ test('one transient script failure makes a real second request and resolves the 
   const f=await fixture();
   try {
     assert.equal(await f.w.load(),'section restored');
+    assert.equal(f.originalErrors,0,'capture must suppress the original loader target error');
     assert.equal(f.requests.length,2);
     const url=new URL(f.requests[1]);
     assert.equal(url.searchParams.get('dpl'),'original');
@@ -67,6 +71,7 @@ test('persistent failure rejects the original loader after one network retry, wi
   try {
     await assert.rejects(f.w.load(),/Failed to load chunk/);
     await assert.rejects(f.w.load(),/Failed to load chunk/);
+    assert.equal(f.originalErrors,1,'final failure must reach original target exactly once');
     assert.equal(f.requests.length,2);
   } finally {f.release();f.close();}
 });

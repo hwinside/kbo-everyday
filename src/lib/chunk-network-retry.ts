@@ -20,13 +20,19 @@ function onScriptError(event: Event) {
   // promise pending until the retry registers the chunk or fails definitively.
   event.stopImmediatePropagation();
   event.preventDefault();
-  const retry = script.cloneNode(false) as HTMLScriptElement;
-  // A clone must not inherit unrelated inline handlers.
-  retry.removeAttribute("onerror");
-  retry.removeAttribute("onload");
+  // cloneNode copies the HTML script "already started" flag. In WebKit that
+  // clone never fetches or executes, even after its src is changed.
+  const retry = document.createElement("script");
+  for (const { name, value } of Array.from(script.attributes)) {
+    if (!["src", "onerror", "onload"].includes(name)) retry.setAttribute(name, value);
+  }
+  // CSP nonce can be hidden from getAttribute after insertion.
+  if (script.nonce) retry.nonce = script.nonce;
   url.searchParams.set("__kbo_chunk_retry", "1");
   attempted.add(url.href);
-  retry.src = url.href;
+  // Turbopack reads getAttribute("src") at registration, not script.src.
+  // Keep its /_next/ relative prefix so it resolves the original chunk key.
+  retry.setAttribute("src", url.pathname + url.search + url.hash);
   let settled = false;
   let timeout: ReturnType<typeof setTimeout>;
   const finish = (ok: boolean) => {
