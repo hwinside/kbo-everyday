@@ -109,3 +109,29 @@ test('box-score-before-live pitcher update emits once, not permanently lost', ()
   const second = generateEvents(id, first.nextState, live({currentPitcher:'이승민'}), box(['후라도','이승민']));
   assert.equal(second.events.filter(e => e.type === 'pitching_change').length, 0);
 });
+
+test('half-inning transition preserves delayed changes on both teams and emits adjacent multi-change sequence', () => {
+  const previous = state({ inning: 6, isTop: true });
+  previous.boxScore!.awayPitchers = box(['올러']).homePitchers;
+  const nextBox = box(['후라도', '이승민', '원태인']);
+  nextBox.awayPitchers = box(['올러', '양현종']).homePitchers;
+  const result = generateEvents(id, previous, live({ inning: 6, isTop: false }), nextBox);
+  const changes = result.events.filter(e => e.type === 'pitching_change');
+  assert.deepEqual(changes.map(e => [e.detail.team, e.detail.playerOut, e.detail.playerIn]),
+    [['삼성', '후라도', '이승민'], ['삼성', '이승민', '원태인'], ['KIA', '올러', '양현종']]);
+  assert.equal(new Set(changes.map(e => e.id)).size, 3);
+  assert.ok(changes.every(e => e.detail.timing === 'observed' && e.text.includes('교체 이닝 미확인')));
+  const again = generateEvents(id, result.nextState, live({ inning: 7, isTop: true }), nextBox);
+  assert.equal(again.events.filter(e => e.type === 'pitching_change').length, 0);
+});
+
+test('same roster extension has inning-independent identities; corrupt and empty baselines never invent chains', () => {
+  const a = generateEvents(id, state(), live({inning: 2}), box(['후라도','이승민','원태인']));
+  const b = generateEvents(id, state(), live({inning: 3}), box(['후라도','이승민','원태인']));
+  assert.deepEqual(a.events.filter(e=>e.type==='pitching_change').map(e=>e.id), b.events.filter(e=>e.type==='pitching_change').map(e=>e.id));
+  for (const names of [['후라도','후라도','이승민'],['후라도','','이승민'],['후라도','올러','후라도']]) {
+    assert.equal(generateEvents(id,state(),live(),box(names)).events.filter(e=>e.type==='pitching_change').length,0);
+  }
+  const empty = state();empty.boxScore=box([]);
+  assert.equal(generateEvents(id,empty,live(),box(['후라도','이승민'])).events.filter(e=>e.type==='pitching_change').length,0);
+});
