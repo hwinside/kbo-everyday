@@ -53,7 +53,8 @@ export const maxDuration = 60;
 const LOCK_KEY = "kbo:relay:publisher:lock:v1";
 const LOCK_TTL_MS = 20_000;
 const LOCK_RENEW_EVERY_MS = 8_000;
-const LOOP_BUDGET_MS = 50_000;
+// Reserve 15s for ownership check, state writes, observability and release.
+const LOOP_BUDGET_MS = 45_000;
 // 단일 tick(모든 라이브 경기 채널)의 handler 상한. 업스트림 hang 이 이 값을 넘으면
 // tick 을 실패 집계로 끊어 loop 가 TTL·maxDuration 을 넘기지 않게 한다(삼순 3차 lease).
 const TICK_TIMEOUT_MS = 15_000;
@@ -134,6 +135,7 @@ function sleep(ms: number): Promise<void> {
 }
 
 export async function GET(req: NextRequest) {
+  const invocationStartedAt = Date.now();
   const authHeader = req.headers.get("authorization");
   if (!CRON_SECRET || authHeader !== `Bearer ${CRON_SECRET}`) {
     return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
@@ -153,6 +155,7 @@ export async function GET(req: NextRequest) {
   const token = randomUUID();
   const locked = await acquireLock(token);
   if (!locked) {
+    console.warn("[relay-publisher] lock-unavailable", { region: process.env.VERCEL_REGION ?? "unknown" });
     return NextResponse.json({ skipped: true, reason: "lock-held" });
   }
 
@@ -179,12 +182,14 @@ export async function GET(req: NextRequest) {
     const { error: gcError } = await supabase
       .from("game_relay_frames")
       .delete()
-      .lt("created_at", gcCutoff);
+      .lt("created_at", gcCutoff)
+      .abortSignal(AbortSignal.timeout(3_000));
 
     let gameIds: string[];
     try {
       gameIds = await listLiveGameIds(date);
     } catch (e) {
+      console.error("[relay-publisher] discovery-failed", { region: process.env.VERCEL_REGION ?? "unknown", elapsedMs: Date.now() - invocationStartedAt });
       return NextResponse.json(
         { error: "live-games-fetch-failed", detail: e instanceof Error ? e.message : String(e) },
         { status: 502 },
@@ -202,7 +207,7 @@ export async function GET(req: NextRequest) {
     // 삼순 3-2 확정: 인보케이션 단조 epoch 선예약. 이 인보케이션의 모든 프레임이 이 epoch 을
     // 싣고, RPC 가 (epoch, ordinal) <= cursor 를 원자 거부해 durable ordering 을 DB 가 보장한다
     // (JS 레벨 fence 로는 cross-invocation overlap 을 못 막던 것을 대체).
-    const { data: epochData, error: epochError } = await supabase.rpc("reserve_relay_epoch");
+    const { data: epochData, error: epochError } = await supabase.rpc("reserve_relay_epoch").abortSignal(AbortSignal.timeout(3_000));
     const epoch = Number(epochData);
     if (epochError || !Number.isFinite(epoch)) {
       return NextResponse.json(
@@ -264,7 +269,8 @@ export async function GET(req: NextRequest) {
     // frames-stale 발현 마커 수집 — 같은 경기가 한 인보케이션 안에서 여러 발현 지점을
     // 지나도(임계→배증) 각 지점이 한 번씩만 쌓인다(shouldEmitFramesStale 이 상한).
     const framesStaleMarkers: string[] = [];
-    const startedAt = Date.now();
+    // Include discovery/GC/epoch work in the 45s budget; reserve cleanup time.
+    const startedAt = invocationStartedAt;
     // inFlight (목적 재정의 — 삼순 확정): durable ordering 은 이제 DB RPC 가 (epoch, ordinal)
     // <= cursor 원자 거부로 보장한다(늦은 A 는 INSERT 자체가 거부돼 DB id 를 못 받으므로 역전
     // 불가). 따라서 과거의 await-outstanding(락 해제 전 전량 await)은 제거했다. inFlight 는 다른
@@ -295,7 +301,7 @@ export async function GET(req: NextRequest) {
               new Promise<TickResult>((resolve) =>
                 setTimeout(
                   () => { ac.abort(); resolve({ inserted: 0, skippedUnchanged: 0, skippedOversize: 0, framesStaleStreak: null, stale: 0, lockBusy: 0, errors: [`${gameId}:tick-timeout`] }); },
-                  TICK_TIMEOUT_MS,
+                  Math.max(1, Math.min(TICK_TIMEOUT_MS, LOOP_BUDGET_MS - (Date.now() - startedAt))),
                 ),
               ),
             ]);

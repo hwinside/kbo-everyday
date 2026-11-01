@@ -237,7 +237,12 @@ export async function saveStatesAndSelectPersistable(params: {
 
 /** 오늘 라이브 상태인 경기 gameId 목록. 실패는 그대로 throw (cron 이 5xx 로 노출). */
 export async function listLiveGameIds(date: string): Promise<string[]> {
-  const result = await fetchKboLiveGames(date, Date.now() + 2500);
+  // Publisher has a minute-long invocation; do not use the latency budget of a
+  // user-facing poll. Leave time for Naver and postseason eligibility as well.
+  const result = await fetchKboLiveGames(date, Date.now() + 10_000, undefined, undefined, undefined, undefined, {
+    kboBudgetMs: 5_000,
+    observe: (event) => console.info("[relay-publisher-discovery]", JSON.stringify(event)),
+  });
   if (!result.ok) throw new Error("publisher game discovery failed");
   return result.games.filter(g => g.GAME_STATE_SC === "2" && !isKboGameCancelled(g.CANCEL_SC_ID)).map(g => g.G_ID);
 }
