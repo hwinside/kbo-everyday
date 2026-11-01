@@ -8,13 +8,16 @@ import ts from "typescript";
 import { summaryPostseasonFacts } from "../src/lib/game-summary/postseason-facts";
 import type { KboGame } from "../src/lib/crawler/kbo-api";
 
+process.env.NEXT_PUBLIC_SUPABASE_URL = 'https://summary-route.test';
+process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY = 'test-only';
+process.env.SUPABASE_SERVICE_ROLE_KEY = 'test-only';
 const nativeRequire = createRequire(import.meta.url);
 const source = readFileSync(resolve("src/app/api/game-summary/route.ts"), "utf8");
 const compiled = ts.transpileModule(source, { compilerOptions: { module: ts.ModuleKind.CommonJS, target: ts.ScriptTarget.ES2022 } }).outputText;
 const wc = { gameId: "20261014OBLG0", srId: "4", gameLabel: "WC1", status: "final", awayTeamId: 2, homeTeamId: 1, awayName: "두산", homeName: "LG", awayScore: 1, homeScore: 4 } as KboGame;
 const seeds = [{ rank: 4, teamId: 1, name: "LG" }, { rank: 5, teamId: 2, name: "두산" }];
 
-async function callRoute(game: KboGame, games: KboGame[], missing = false, narrative?: string, fields: Record<string, unknown> = {}) {
+async function callRoute(game: KboGame, games: KboGame[], missing = false, narrative?: string, fields: Record<string, unknown> = {}, failure?: "model" | "roster-score" | "save") {
   const calls = { standings: 0, series: 0, facts: 0, generated: 0 };
   const prompts: string[] = [];
   const facts = summaryPostseasonFacts(game, games, seeds);
@@ -23,13 +26,22 @@ async function callRoute(game: KboGame, games: KboGame[], missing = false, narra
   const st = [{ teamId: 2, teamName: "두산", ranking: 5 }, { teamId: 1, teamName: "LG", ranking: 4 }].map(x => ({ ...x, wins: 70, losses: 60, winRate: 0.54, gamesBehind: 10 }));
   const dbQuery = { select: () => dbQuery, eq: () => dbQuery, maybeSingle: async () => ({ data: null }) };
   const mocks: Record<string, unknown> = {
+    "@/lib/config/runtime-switches": { isFeatureDisabled: async () => false },
     "next/server": { NextResponse: { json: (value: unknown, init?: ResponseInit) => Response.json(value, init) }, after: () => {} },
-    "@/lib/supabase/admin": { supabaseAdmin: { from: () => dbQuery, rpc: async (name: string) => ({ data: name.startsWith("claim") ? 1 : true }) } },
+    "@/lib/supabase/admin": { supabaseAdmin: { from: () => dbQuery, rpc: async (name: string) => ({ data: name.startsWith("claim") ? 1 : failure === "save" ? false : true }) } },
     "@/lib/constants/teams": { TEAMS: [{ id: 1, shortName: "LG" }, { id: 2, shortName: "두산" }], isAllStarGameId: () => false },
     "@/lib/crawler/kbo-api": {
       fetchGames: async () => [game], fetchBoxScore: async () => box, fetchGameLinescore: async () => lines,
       fetchStandings: async () => { calls.standings++; return st; }, buildRankMap: () => new Map([[1, 4], [2, 5]]),
     },
+    "@/lib/crawler/kbo-live-text": { loadKboLiveText: async () => ({
+      gameId: game.gameId, linescore: failure === "roster-score" ? { ...lines, away: { ...lines.away, R: 99 } } : lines, boxScore: {
+        awayBatters: [{ name: "두산타자", atBats: 4, runs: game.awayScore, hits: 1 }],
+        homeBatters: [{ name: "LG타자", atBats: 4, runs: game.homeScore, hits: 1 }],
+        awayPitchers: [{ name: "두산투수", inningsPitched: "8", runs: game.homeScore, earnedRuns: game.homeScore, pitchCount: 80 }],
+        homePitchers: [{ name: "LG투수", inningsPitched: "9", runs: game.awayScore, earnedRuns: 0, pitchCount: 90 }],
+      },
+    }) },
     "@/lib/crawler/naver-record": { hasInningBreakdown: () => true },
     "@/lib/crawler/resolve-game-series": { resolveGameSeries: async () => game.srId },
     "@/lib/monitoring/api-fallback-tracker": { trackApiDegradation: async () => {} },
@@ -43,6 +55,7 @@ async function callRoute(game: KboGame, games: KboGame[], missing = false, narra
     require: (id: string) => mocks[id] ?? nativeRequire(id.startsWith("@/") ? resolve("src", id.slice(2)) : id),
     fetch: async (_url: string, init: RequestInit) => {
       calls.generated++;
+      if (failure === "model") throw new Error("model offline");
       prompts.push(JSON.parse(String(init.body)).contents[0].parts[0].text);
       const draw = game.awayScore === game.homeScore;
       return Response.json({ candidates: [{ content: { parts: [{ text: JSON.stringify({ headline: draw ? "LG와 두산 무승부" : "LG, 두산에 승리", winner: draw ? "무승부" : "LG", insight: narrative ?? "안정적인 투구가 돋보였다.", standingsImpact: "stale", seriesContext: "stale", ...fields }) }] } }] });
@@ -133,4 +146,27 @@ test("POST sanitizes nested sentences and supplies a score headline if the entir
   assert.equal(result.calls.generated, 2);
   assert.match(result.body.summary.headline, /1 - 4/);
   assert.equal(result.body.summary.gameFlow.late, "투수진이 활약했다. 평균자책점 0.50의 호투였다.");
+});
+
+ test("POST false shutout falls back to canonical record summary after retries", async () => {
+  const result = await callRoute(wc, [wc], false, "LG투수는 단 1점도 내주지 않았다.");
+  assert.equal(result.status, 200);
+  assert.equal(result.calls.generated, 2);
+  assert.equal(result.body.source, "record-template");
+  assert.equal(result.body.summary.summaryKind, "record");
+  assert.doesNotMatch(JSON.stringify(result.body.summary), /단 1점도|무실점/);
+  assert.match(result.body.summary.headline, /4:1/);
+  assert.equal(result.body.summary._verifiedPitcherFacts, undefined);
+});
+
+test("POST model outage uses records, but wrong-game scores and failed save never claim success", async () => {
+  const offline = await callRoute(wc, [wc], false, undefined, {}, "model");
+  assert.equal(offline.status, 200);
+  assert.equal(offline.body.source, "record-template");
+  const mismatch = await callRoute(wc, [wc], false, undefined, {}, "roster-score");
+  assert.equal(mismatch.status, 503);
+  assert.equal(mismatch.calls.generated, 0);
+  const notSaved = await callRoute(wc, [wc], false, "LG투수 무실점", {}, "save");
+  assert.equal(notSaved.status, 409);
+  assert.equal(notSaved.body.summary, undefined);
 });

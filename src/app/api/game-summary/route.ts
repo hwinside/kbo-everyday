@@ -1,3 +1,5 @@
+import { loadKboLiveText } from "@/lib/crawler/kbo-live-text";
+import { buildRecordSummary, hasFalseShutoutClaim, hasFalsePitcherInnings, hasVerifiedPitcherClaims } from "@/lib/game-summary/record-fallback";
 import { hasUnsupportedPlayerInning, hasVerifiedInningClaims } from "@/lib/game-summary/inning-claims";
 import { loadSummaryPostseasonFacts } from "@/lib/game-summary/postseason-facts";
 import { isPostseason } from "@/lib/crawler/game-series";
@@ -36,7 +38,7 @@ import {
 } from "@/lib/game-summary/failure-observability";
 const GEMINI_API_KEY = process.env.GEMINI_API_KEY;
 const GEMINI_URL = `https://generativelanguage.googleapis.com/v1beta/models/gemini-2.5-flash:generateContent?key=${GEMINI_API_KEY}`;
-const PROMPT_VERSION = 15; // 포스트시즌 문맥 분리 — 이전 저장 요약 재생성
+const PROMPT_VERSION = 16; // 포스트시즌 문맥 분리 — 이전 저장 요약 재생성
 
 // (2026-08-29 LG:롯데 콜드게임 인시던트, 삼순 A안) 생성 단계 실패의 durable 관측.
 // 기존엔 console.error 만 남아 Vercel 로그 보존창을 놔치면 실패 지점을 소급 판정할 수
@@ -138,17 +140,30 @@ async function fetchCanonicalSummarySource(gameId: string, includeBoxScore: bool
   }
 
   try {
-    const [games, kboLinescore, boxScore] = await Promise.all([
+    const [games, kboLinescore, initialBoxScore] = await Promise.all([
       fetchGames(meta.dateStr),
       fetchGameLinescore(gameId),
-      includeBoxScore ? fetchBoxScore(gameId, meta.dateStr.slice(0, 4)) : Promise.resolve(null),
+      includeBoxScore ? fetchBoxScore(gameId, meta.dateStr.slice(0, 4)).catch(() => null) : Promise.resolve(null),
     ]);
     const game = games.find((candidate) => candidate.gameId === gameId);
+    let boxScore = initialBoxScore;
+    let officialText: Awaited<ReturnType<typeof loadKboLiveText>> | null = null;
+    if (includeBoxScore && game?.status === "final" &&
+        (!boxScore?.awayBatters.length || !boxScore.homeBatters.length ||
+         !boxScore.awayPitchers.length || !boxScore.homePitchers.length)) {
+      officialText = await loadKboLiveText(gameId, { srId: game.srId });
+      // Bind the HTML record to the independently fetched final game score.
+      if (officialText.linescore.away.R !== game.awayScore || officialText.linescore.home.R !== game.homeScore) {
+        throw new Error("KBO boxscore final score mismatch");
+      }
+      boxScore = officialText.boxScore;
+    }
     // KBO GetScoreBoard가 '-' 이닝을 주면 linescore=null/이닝 부재 → canonicalGate가
     // canonical-not-settled(409)로 종료 경기 요약을 거부한다(2026-07-28 사고). 경기목록
     // canonical.status가 final인데 이닝표만 없을 때, game-detail과 동일한 Naver record
     // scoreBoard로 이닝표를 fallback한다(스코어 R 교차검증은 canonicalGate가 그대로 수행).
     let linescore = kboLinescore;
+    if (!hasInningBreakdown(linescore) && officialText) linescore = { status: "final", ...officialText.linescore };
     if (game?.status === "final" && !hasInningBreakdown(linescore)) {
       // KBO GetScoreBoard 이닝표 열화(2026-07-28 종료경기 AI요약 전면 중단 사고) 실시간 감지.
       // durable RPC 로 window count + cooldown 을 판정(서버리스 분산에도 경보 1회 보장) 후
@@ -478,7 +493,7 @@ async function getCached(gameId: string): Promise<{ summary: Record<string, unkn
       .select("summary, prompt_version")
       .eq("game_id", cacheKey(gameId))
       .maybeSingle(); // cache/optional lookup: no-rowuB294 uC815uC0C1 u2014 406 uBC29uC9C0
-    if (!data?.summary || !hasVerifiedInningClaims(data.summary as Record<string, unknown>)) return null;
+    if (!data?.summary || !hasVerifiedInningClaims(data.summary as Record<string, unknown>) || !hasVerifiedPitcherClaims(data.summary as Record<string, unknown>)) return null;
     const outdated = (data.prompt_version ?? 0) < PROMPT_VERSION;
     return { summary: data.summary as Record<string, unknown>, outdated };
   } catch {
@@ -549,6 +564,7 @@ function normalizeSummary(s: Record<string, unknown>): Record<string, unknown> {
 function publicSummary(s: Record<string, unknown>): Record<string, unknown> {
   const copy = structuredClone(s);
   delete copy._verifiedPlayerNames;
+  delete copy._verifiedPitcherFacts;
   delete copy._cacheFingerprint;
   delete copy._cachedAwayScore;
   delete copy._cachedHomeScore;
@@ -584,10 +600,6 @@ export async function GET(req: NextRequest) {
 }
 
 export async function POST(req: NextRequest) {
-  if (!GEMINI_API_KEY) {
-    return NextResponse.json({ error: "GEMINI_API_KEY not configured" }, { status: 500 });
-  }
-
   const requestBody = await req.json() as Partial<BoxScoreInput>;
   if (!requestBody.gameId) {
     return NextResponse.json({ error: "gameId required" }, { status: 400 });
@@ -659,6 +671,56 @@ export async function POST(req: NextRequest) {
     );
   }
 
+  const playerNames = [...allBatters, ...allPitchers].map(player => player.name).filter(Boolean);
+  const finalize = async (summary: Record<string, unknown>, source: string) => {
+      // LLM 호출 중 canonical이 바뀌었으면 이전 요청이 최신 캐시를 덮지 못하게 저장을 거부한다.
+      const latestCanonical = await fetchCanonicalSummarySource(body.gameId, false);
+      if (
+        latestCanonical.reason !== "ok" ||
+        !shouldSaveGeneratedSummary(generationFingerprint, latestCanonical.fingerprint)
+      ) {
+        // final 전이 직후 게임목록↔스코어보드 수렴 시차 구간에서 반복될 수 있는 핵심 관측 대상.
+        reportGenerationFailure(
+          body.gameId,
+          "canonical-race",
+          `latest=${latestCanonical.reason} generationFp=${JSON.stringify(generationFingerprint)} latestFp=${JSON.stringify(latestCanonical.fingerprint ?? null)}`,
+        );
+        return NextResponse.json(
+          { error: "canonical-changed-during-generation", source: "canonical-race" },
+          { status: 409 },
+        );
+      }
+
+      // DB JSON 내부에만 보관하고 API 응답에서는 별도 fingerprint 필드로 분리한다.
+      summary._verifiedPlayerNames = playerNames;
+      summary._verifiedPitcherFacts = allPitchers.map(({ name, ip, r, er }) => ({ name, ip, r, er }));
+      summary._cacheFingerprint = generationFingerprint;
+      const saveResult = await saveCache(body.gameId, summary, generationToken);
+      if (saveResult !== "saved") {
+        reportGenerationFailure(
+          body.gameId,
+          saveResult === "superseded" ? "save-superseded" : "save-failed",
+          `token=${String(generationToken)}`,
+        );
+        return NextResponse.json(
+          {
+            error: saveResult === "superseded"
+              ? "newer-generation-already-saved"
+              : "cache-write-failed",
+            source: "cache-write-fence",
+          },
+          { status: saveResult === "superseded" ? 409 : 503 },
+        );
+      }
+      return NextResponse.json({
+        summary: publicSummary(summary),
+        fingerprint: generationFingerprint,
+        source,
+      });
+  };
+  const fallback = () => finalize(buildRecordSummary(body), "record-template");
+  if (!GEMINI_API_KEY) return fallback();
+
   // 맥락 데이터 병렬 조회 (실패해도 진행)
   const meta = parseGameMeta(body.gameId);
   const [seriesCtx, standingsCtx] = await Promise.all([
@@ -680,6 +742,7 @@ export async function POST(req: NextRequest) {
     try {
       const geminiRes = await fetch(GEMINI_URL, {
         method: "POST",
+        signal: AbortSignal.timeout(8_000),
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
           contents: [{ parts: [{ text: prompt }] }],
@@ -697,7 +760,7 @@ export async function POST(req: NextRequest) {
         console.error(`Gemini API error (attempt ${attempt}):`, geminiRes.status, errText);
         if (attempt === MAX_ATTEMPTS) {
           reportGenerationFailure(body.gameId, "gemini-api", `http=${geminiRes.status} ${errText.slice(0, 200)}`);
-          return NextResponse.json({ error: "Gemini API failed" }, { status: 502 });
+          return fallback();
         }
         continue;
       }
@@ -710,7 +773,7 @@ export async function POST(req: NextRequest) {
       if (!rawText) {
         if (attempt === MAX_ATTEMPTS) {
           reportGenerationFailure(body.gameId, "gemini-empty", "no text part in response");
-          return NextResponse.json({ error: "Empty Gemini response" }, { status: 502 });
+          return fallback();
         }
         continue;
       }
@@ -726,7 +789,7 @@ export async function POST(req: NextRequest) {
             console.error("JSON parse failed:", jsonMatch[0].slice(0, 500));
             if (attempt === MAX_ATTEMPTS) {
               reportGenerationFailure(body.gameId, "gemini-parse", "JSON.parse failed on extracted braces");
-              return NextResponse.json({ error: "Invalid Gemini response format" }, { status: 502 });
+              return fallback();
             }
             continue;
           }
@@ -734,7 +797,7 @@ export async function POST(req: NextRequest) {
           console.error("No JSON found:", rawText.slice(0, 500));
           if (attempt === MAX_ATTEMPTS) {
             reportGenerationFailure(body.gameId, "gemini-parse", "no JSON object in response text");
-            return NextResponse.json({ error: "Invalid Gemini response format" }, { status: 502 });
+            return fallback();
           }
           continue;
         }
@@ -762,7 +825,7 @@ export async function POST(req: NextRequest) {
         console.error(`Score mismatch (attempt ${attempt}): actual ${body.awayScore}-${body.homeScore}, headline says 0-0.`);
         if (attempt === MAX_ATTEMPTS) {
           reportGenerationFailure(body.gameId, "score-mismatch", `actual ${finalAwayScore}-${finalHomeScore}, headline claims 0-0`);
-          return NextResponse.json({ error: "Generated summary score mismatch, discarded" }, { status: 422 });
+          return fallback();
         }
         continue;
       }
@@ -792,7 +855,7 @@ export async function POST(req: NextRequest) {
       if (winnerMismatch) {
         if (attempt === MAX_ATTEMPTS) {
           reportGenerationFailure(body.gameId, "winner-mismatch", `score=${finalAwayScore}-${finalHomeScore} llmWinner=${String(llmWinner)}`);
-          return NextResponse.json({ error: "Generated summary winner mismatch after retries, discarded" }, { status: 422 });
+          return fallback();
         }
         continue;
       }
@@ -810,18 +873,17 @@ export async function POST(req: NextRequest) {
         (summary.mvpBatter as Record<string, unknown> | undefined)?.reason,
         (summary.mvpPitcher as Record<string, unknown> | undefined)?.reason,
       ].filter((s): s is string => typeof s === "string");
-      const playerNames = [...allBatters, ...allPitchers].map(player => player.name).filter(Boolean);
       const unsupportedInning = hasUnsupportedPlayerInning(summary, playerNames);
       // An empty roster is not evidence of a bad summary — postseason and
       // boxscore-less games legitimately arrive with no player rows, and
       // rejecting them unconditionally blocked every such summary with a 422.
       // Without names only inning-free prose can pass the attribution guard.
-      const consistencyViolation = unsupportedInning || narrativeParts.some(hasBaseRunnerContradiction);
+      const consistencyViolation = unsupportedInning || hasFalseShutoutClaim(summary, allPitchers) || hasFalsePitcherInnings(summary, allPitchers) || narrativeParts.some(hasBaseRunnerContradiction);
       if (consistencyViolation) {
         console.error(`Consistency violation (attempt ${attempt}): unsupported inning attribution or arithmetic. headline="${summary.headline}"`);
         if (attempt === MAX_ATTEMPTS) {
           reportGenerationFailure(body.gameId, "consistency-violation", "unsupported player-inning attribution or bases-loaded arithmetic");
-          return NextResponse.json({ error: "Generated summary internal contradiction after retries, discarded" }, { status: 422 });
+          return fallback();
         }
         continue;
       }
@@ -841,57 +903,15 @@ export async function POST(req: NextRequest) {
       // winner 필드는 내부 검증용이므로 클라이언트에 보내기 전 제거
       delete summary.winner;
 
-      // LLM 호출 중 canonical이 바뀌었으면 이전 요청이 최신 캐시를 덮지 못하게 저장을 거부한다.
-      const latestCanonical = await fetchCanonicalSummarySource(body.gameId, false);
-      if (
-        latestCanonical.reason !== "ok" ||
-        !shouldSaveGeneratedSummary(generationFingerprint, latestCanonical.fingerprint)
-      ) {
-        // final 전이 직후 게임목록↔스코어보드 수렴 시차 구간에서 반복될 수 있는 핵심 관측 대상.
-        reportGenerationFailure(
-          body.gameId,
-          "canonical-race",
-          `latest=${latestCanonical.reason} generationFp=${JSON.stringify(generationFingerprint)} latestFp=${JSON.stringify(latestCanonical.fingerprint ?? null)}`,
-        );
-        return NextResponse.json(
-          { error: "canonical-changed-during-generation", source: "canonical-race" },
-          { status: 409 },
-        );
-      }
-
-      // DB JSON 내부에만 보관하고 API 응답에서는 별도 fingerprint 필드로 분리한다.
-      summary._verifiedPlayerNames = playerNames;
-      summary._cacheFingerprint = generationFingerprint;
-      const saveResult = await saveCache(body.gameId, summary, generationToken);
-      if (saveResult !== "saved") {
-        reportGenerationFailure(
-          body.gameId,
-          saveResult === "superseded" ? "save-superseded" : "save-failed",
-          `token=${String(generationToken)}`,
-        );
-        return NextResponse.json(
-          {
-            error: saveResult === "superseded"
-              ? "newer-generation-already-saved"
-              : "cache-write-failed",
-            source: "cache-write-fence",
-          },
-          { status: saveResult === "superseded" ? 409 : 503 },
-        );
-      }
-      return NextResponse.json({
-        summary: publicSummary(summary),
-        fingerprint: generationFingerprint,
-        source: "generated",
-      });
+      return finalize(summary, "generated");
     } catch (err) {
       console.error(`Game summary generation error (attempt ${attempt}):`, err);
       if (attempt === MAX_ATTEMPTS) {
         reportGenerationFailure(body.gameId, "generation-exception", (err as Error)?.message?.slice(0, 200) ?? "unknown");
-        return NextResponse.json({ error: "Generation failed" }, { status: 500 });
+          return fallback();
       }
     }
   }
 
-  return NextResponse.json({ error: "Generation failed after retries" }, { status: 500 });
+          return fallback();
 }

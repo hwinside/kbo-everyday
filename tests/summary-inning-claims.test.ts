@@ -24,11 +24,11 @@ test('actual public GET hides unverified/unsafe cache and strips internal eviden
   const original = globalThis.fetch;
   try {
     for (const mode of ['legacy', 'unsafe', 'empty-roster-unsafe', 'safe']) {
-      const summary = { headline: mode.includes('unsafe') ? '문보경의 1회 2점 홈런' : 'LG 역전승', ...(mode === 'legacy' ? {} : { _verifiedPlayerNames: mode === 'empty-roster-unsafe' ? [] : ['문보경'] }) };
+      const summary = { headline: mode.includes('unsafe') ? '문보경의 1회 2점 홈런' : 'LG 역전승', ...(mode === 'legacy' ? {} : { _verifiedPitcherFacts: [], _verifiedPlayerNames: mode === 'empty-roster-unsafe' ? [] : ['문보경'] }) };
       globalThis.fetch = (async () => Response.json({ summary, prompt_version: 15 })) as typeof fetch;
       const response = await GET(new NextRequest('https://summary.test/api/game-summary?gameId=20261026LGHT0'));
       const body = await response.json();
-      if (mode === 'safe') { assert.equal(body.summary.headline, 'LG 역전승'); assert.equal(body.summary._verifiedPlayerNames, undefined); }
+      if (mode === 'safe') { assert.equal(body.summary.headline, 'LG 역전승'); assert.equal(body.summary._verifiedPlayerNames, undefined); assert.equal(body.summary._verifiedPitcherFacts, undefined); }
       else assert.equal(body.summary, null);
     }
   } finally { globalThis.fetch = original; }

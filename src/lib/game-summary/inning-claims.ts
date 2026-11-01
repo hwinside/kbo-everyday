@@ -19,7 +19,7 @@ export function hasUnsupportedPlayerInning(summary: unknown, playerNames: string
   const names = playerNames.map(name => name.trim()).filter(Boolean);
   // Without a roster we cannot distinguish a team inning fact from an unknown
   // player's invented attribution. Fail closed for inning prose, not all summaries.
-  return strings(summary).some(text => INNING.test(text) && (names.length === 0 || names.some(name => text.includes(name))));
+  return strings(summary).some(text => INNING.test(text) && (names.length === 0 || names.some(name => text.includes(name)) || /(?:마운드|투수|불펜).*교체|교체.*(?:마운드|투수|불펜)/.test(text)));
 }
 
 export function hasVerifiedInningClaims(summary: Record<string, unknown>): boolean {
