@@ -1,4 +1,4 @@
-import { loadKboLiveText } from '@/lib/crawler/kbo-live-text';
+import { loadKboLiveText, KBO_SNAPSHOT_FRESH_MS } from '@/lib/crawler/kbo-live-text';
 import { NextRequest, NextResponse, after } from "next/server";
 import {
   markApiRecovered,
@@ -186,6 +186,8 @@ export interface RelayLinescore {
 
 export interface GameRelayResponse {
   source?: "kbo" | "naver";
+  /** Last successful snapshot retained during collection failure. */
+  degraded?: boolean;
   gameId: string;
   currentInning: number;
   innings: InningRelay[];
@@ -1077,15 +1079,17 @@ export async function GET(req: NextRequest) {
   try {
     const kbo = await loadKboLiveText(gameId, {
       signal: AbortSignal.any([req.signal, AbortSignal.timeout(2800)]),
+      allowStaleOnError: true,
     });
     const innings = parseInningRelays(kbo.rows);
     if (!innings.length) throw new Error("KBO innings unavailable");
+    const degraded = Date.now() - Date.parse(kbo.updatedAt) >= KBO_SNAPSHOT_FRESH_MS;
     return buildRelayJsonResponse({
-      gameId, source: "kbo", currentInning: Math.max(...innings.map(i => i.inning)),
+      gameId, source: "kbo", ...(degraded ? { degraded: true } : {}), currentInning: Math.max(...innings.map(i => i.inning)),
       innings, linescore: kbo.linescore, updatedAt: kbo.updatedAt,
-    }, edgeCacheHeadersForRemaining(
-      10_000 - (Date.now() - Date.parse(kbo.updatedAt)), RELAY_EDGE_TTL_SECONDS,
-    ), false);
+    }, degraded ? NO_STORE_HEADERS : edgeCacheHeadersForRemaining(
+      KBO_SNAPSHOT_FRESH_MS - (Date.now() - Date.parse(kbo.updatedAt)), RELAY_EDGE_TTL_SECONDS,
+    ), degraded);
   } catch {
     // Busy admission throttles KBO only; it must not suppress Naver recovery.
     // Preserve the established Naver fallback and failure contract. Never return empty 200.
