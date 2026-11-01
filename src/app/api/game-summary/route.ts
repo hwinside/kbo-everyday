@@ -367,7 +367,7 @@ function buildPrompt(data: BoxScoreInput, seriesCtx: string | null, standingsCtx
 
   return `당신은 KBO 프로야구를 20년 넘게 현장에서 취재해온 베테란 스포츠 기자입니다.
 마감 시간에 쫓기며 오늘 직접 본 경기의 기사를 쓰고 있습니다.
-독자는 야구를 사랑하는 팬입니다. 건조한 통계 나열이 아니라, 경기장에 있는 듯한 현장감을 전달하세요.
+독자는 야구를 사랑하는 팬입니다. 건조한 통계 나열이 아니라, 확인된 팀 득점 흐름과 선수 경기 전체 기록을 분리해 이해하기 쉽게 전달하세요.
 
 ## 핵심 원칙 — 반드시 따를 것
 1. **매 경기가 다른 이야기다.** 경기 성격에 따라 리드문, 서술 순서, 강조점을 완전히 바꿔라.
@@ -375,7 +375,7 @@ function buildPrompt(data: BoxScoreInput, seriesCtx: string | null, standingsCtx
    - 접전이면 끝까지 손에 땀 쥐는 긴장감
    - 역전극이면 역전 드라마가 중심
    - 투수전이면 투수 대결의 서사
-   - 홈런이 결정적이었으면 홈런 장면이 리드
+   - 홈런 기록은 경기 전체 개수만 사용하고 홈런 장면이나 시점은 만들지 마라
 2. **템플릿 금지.** "X팀이 Y팀을 Z-W로 꺾었다"로 시작하는 판에 박은 리드를 쓰지 마라.
 3. **팩트만. 창작 절대 금지.** 박스스코어와 이닝별 점수에 있는 것만 사용. 없는 장면, 없는 감정, 없는 관중 반응을 절대 만들지 마라. "선수(숫자)" 형식의 이름은 언급하지 말고 팀명으로 대체.
    **특히 금지하는 창작 유형:**
@@ -406,15 +406,15 @@ ${regular ? `6. **경기 맥락을 활용하라.** 시리즈 상황(스윕, 위�
    - seriesCanceledCount가 0이면 취소 언급 자체 금지.
    - 시리즈 승수·날짜·스코어는 '## 시리즈 스냅샷'에 있는 값만 사용. 창작 금지.` : "6. 경기 의미는 아래 포스트시즌 확정 사실만 사용한다. 정규시즌 순위/3연전 해석을 적용하지 않는다."}
 7. **상투구/클리셰 절대 금지.** 아래 표현은 쓰지 마라. 더 구체적이고 이 경기만의 표현으로 대체:
-   - "팽팽한 투수전 양상" → 구체적 상황 ("양 선발이 5회까지 무안타로 맞섰다" 등)
-   - "경기의 결정적인 승부처는" → 바로 장면부터 시작 ("5회말 2사 만루, X의 타석에서~")
+   - "팽팽한 투수전 양상" → 확인된 최종 점수와 투수의 경기 전체 기록으로 설명
+   - "경기의 결정적인 승부처는" → 팀 단위 득점 타임라인의 점수 변화로 설명
    - "분위기를 가져왔다/반전에 성공" → 구체적 결과로 ("이 안타로 2점 리드를 만들며~")
    - "흐름을 결정지었다/바꾸었다" → 실제 스코어 변화로 서술
    - "침묵을 깨고/깨뜨렸다" → "X이닝 만에 첫 안타가 나왔고" 등 팩트로
    - "여세를 몰아 갔다/발판을 마련" → 후속 득점의 구체적 전개로
    - "한 치 앞을 알 수 없는" → 실제 스코어 변동으로 긴장감 전달
    - "명승부" → 쓰지 말고 독자가 읽고 느끼게 하라
-   핵심: 추상적 평가어 대신 **구체적 장면 + 숫자**로 서술하라.
+   핵심: 추상적 평가어 대신 **확인된 기록 + 숫자**로 서술하라.
 
 ## 경기 데이터
 ${awayTeam}(원정) ${awayScore} : ${homeScore} ${homeTeam}(홈) (${result})
@@ -425,8 +425,8 @@ ${linescoreStr}${scoringNarrative}${errorStr}
 ## 주요 팩트
 - 홈런: ${hrHitters.length > 0 ? hrHitters.join(", ") : "없음"}
 - 멀티히트: ${multiHitters.length > 0 ? multiHitters.join(", ") : "없음"}
-- ${awayTeam} 선발: ${awayStarter?.name} ${awayStarter?.ip}이닝 ${awayStarter?.er}자책 ${awayStarter?.so}삼진 ${awayStarter?.np}투구${awayStarter?.result ? ` (${awayStarter.result})` : ""}
-- ${homeTeam} 선발: ${homeStarter?.name} ${homeStarter?.ip}이닝 ${homeStarter?.er}자책 ${homeStarter?.so}삼진 ${homeStarter?.np}투구${homeStarter?.result ? ` (${homeStarter.result})` : ""}
+- ${awayTeam} 선발: ${awayStarter?.name} ${awayStarter?.ip}이닝 ${awayStarter?.r}실점 ${awayStarter?.er}자책 ${awayStarter?.so}삼진 ${awayStarter?.np}투구${awayStarter?.result ? ` (${awayStarter.result})` : ""}
+- ${homeTeam} 선발: ${homeStarter?.name} ${homeStarter?.ip}이닝 ${homeStarter?.r}실점 ${homeStarter?.er}자책 ${homeStarter?.so}삼진 ${homeStarter?.np}투구${homeStarter?.result ? ` (${homeStarter.result})` : ""}
 
 ## ${awayTeam} 타자 상세
 ${awayBatters.map(b => `${b.name}: ${b.ab}타수 ${b.h}안타 ${b.r}득점 ${b.rbi}타점 ${b.hr}홈런 ${b.bb}볼넷 ${b.so}삼진`).join("\n")}
@@ -435,10 +435,10 @@ ${awayBatters.map(b => `${b.name}: ${b.ab}타수 ${b.h}안타 ${b.r}득점 ${b.r
 ${homeBatters.map(b => `${b.name}: ${b.ab}타수 ${b.h}안타 ${b.r}득점 ${b.rbi}타점 ${b.hr}홈런 ${b.bb}볼넷 ${b.so}삼진`).join("\n")}
 
 ## ${awayTeam} 투수 상세
-${awayPitchers.map(p => `${p.name}: ${p.ip}이닝 피안타${p.h} ${p.er}자책 ${p.bb}볼넷 ${p.so}삼진 ${p.np}투구${p.result ? ` (${p.result})` : ""}`).join("\n")}
+${awayPitchers.map(p => `${p.name}: ${p.ip}이닝 피안타${p.h} ${p.r}실점 ${p.er}자책 ${p.bb}볼넷 ${p.so}삼진 ${p.np}투구${p.result ? ` (${p.result})` : ""}`).join("\n")}
 
 ## ${homeTeam} 투수 상세
-${homePitchers.map(p => `${p.name}: ${p.ip}이닝 피안타${p.h} ${p.er}자책 ${p.bb}볼넷 ${p.so}삼진 ${p.np}투구${p.result ? ` (${p.result})` : ""}`).join("\n")}
+${homePitchers.map(p => `${p.name}: ${p.ip}이닝 피안타${p.h} ${p.r}실점 ${p.er}자책 ${p.bb}볼넷 ${p.so}삼진 ${p.np}투구${p.result ? ` (${p.result})` : ""}`).join("\n")}
 ${contextSection}
 
 ## 출력 형식 (JSON 객체 하나만 출력. 마크다운/설명 텍스트 절대 금지.)
@@ -446,21 +446,28 @@ ${contextSection}
   "winner": "${winnerTeam || '무승부'}",
   "headline": "신문 1면 헤드라인. 핵심 이벤트+점수+팀명. 임팩트 있게. 매번 다른 구조로. 반드시 ${result}을 정확히 반영. ★ 시리즈 상태가 completed인 경우: '발판 마련/위닝시리즈/추격의 발판/리드 굳힘/스윕 직전' 같은 진행형 시리즈 표현을 헤드라인에 절대 넣지 마라. 이 경기가 시리즈 마지막 경기면 확정된 결과(승리/패배)만 반영. (예: 'LG, 9회 2점으로 끝내기 역전승', '원태인 7이닝 1실점 역투, 삼성 투수전 제압')",
   "gameFlow": {
-    "early": "초반(1~3회) 경기 흐름. 선발 투수 상태, 선취점 상황. 이닝별 점수 참고. 2~3문장.",
-    "mid": "중반(4~6회) 경기 흐름. 전환점, 추가 득점, 투수 교체 등. 2~3문장.",
-    "late": "후반(7~9회+) 경기 흐름. 추격/역전/마무리. 2~3문장."
+    "early": "초반(1~3회) 팀 이름과 이닝별 팀 득점만. 선수 이름·개인 기록·투수 상태·등판 교체 언급 금지. 1~2문장.",
+    "mid": "중반(4~6회) 팀 이름과 팀 득점 변화만. 선수 이름·투수 교체·개인 기록 언급 금지. 1~2문장.",
+    "late": "후반(7~9회+) 팀 이름과 팀 득점 변화만. 선수 이름·투수 교체·개인 기록 언급 금지. 1~2문장."
   },
-  "turningPoint": "이 경기의 결정적 승부처. 구체적 상황+숫자+왜 경기를 갈랐는지 해석. 무승부여도 가장 팽팽했던 순간. 3~4문장. 반드시 작성. 빈 문자열 절대 금지. ★ 주자 상황(만루/주자 수)·출루 과정(연속 안타/볼넷/진루타)은 박스스코어에 없으니 절대 지어내지 마라. 득점 타임라인의 이닝·팀 득점과 선수 타점/홈런 수로만 서술하라 (예: '8회말 LG가 3점을 더해 4-2로 역전했다' OK / '8회말 문보경의 홈런' 또는 '2사 만루에서 3점 홈런' NG).",
+  "turningPoint": "이 경기의 결정적 승부처. 구체적 상황+숫자+왜 경기를 갈랐는지 해석. 무승부여도 가장 팽팽했던 순간. 3~4문장. 반드시 작성. 빈 문자열 절대 금지. ★ 주자 상황(만루/주자 수)·출루 과정(연속 안타/볼넷/진루타)은 박스스코어에 없으니 절대 지어내지 마라. 득점 타임라인의 이닝·팀 득점만 서술하고 선수 이름은 넣지 마라 (예: '8회말 LG가 3점을 더해 4-2로 역전했다' OK / '8회말 문보경의 홈런' 또는 '2사 만루에서 3점 홈런' NG).",
   "mvpBatter": {
     "name": "선수 이름",
     "stats": "구체적 기록 (예: 4타수 3안타 1홈런 3타점)",
-    "reason": "경기 흐름에서의 의미. 결정적 장면. 2~3문장."
+    "reason": "경기 전체 기록의 의미만 1~2문장. 특정 회/초/말/첫 이닝 언급 금지. 결정적 장면이나 시점 추측 금지."
   },
   "mvpPitcher": null 또는 { "name": "...", "stats": "...", "reason": "..." },
   "insight": "경기 총평. 양 팀 입장에서 이 경기의 의미. 팬이 기억해야 할 포인트. 시리즈/순위 맥락이 있으면 자연스럽게 포함. 3~4문장.",
   "seriesContext": "${regular ? "" : "정규시즌 외 경기는 null. 아래 예시는 적용하지 않음. "}시리즈 맥락을 1문장으로 요약. 상태(in_progress/completed/completed_with_cancellation)에 맞는 문구만 사용. 스냅샷의 승수·취소 날짜와 일치해야 함. 시리즈 맥락이 없으면 null. 시리즈 데이터가 1경기 끼리면 null.",
   "standingsImpact": "${regular ? "" : "정규시즌 외 경기는 반드시 null. 아래 예시는 적용하지 않음. "}현재 순위 맥락에서 이 경기의 의미를 한 줄로 (예: '4위 경쟁이 치열한 상황에서 중요한 1승'). 순위 데이터가 없거나 의미 있는 해석이 어려우면 null. 주의: 순위 변동을 단정짓지 마라 — '올라갔다/떨어졌다' 확정은 금지, '~에 유리해졌다/중요한 경기였다' 수준으로."
-}`;
+}
+
+최종 제출 전 필수 확인:
+- gameFlow.early/mid/late와 turningPoint에는 선수 이름을 한 명도 쓰지 않는다. 팀 이름과 확인된 점수 변화만 쓴다.
+- headline/insight/MVP에서 선수 이름을 쓰면 같은 필드 전체에 특정 회/초/말 표현을 섞지 않는다. 투구량 '7이닝'은 가능하지만 '7회까지/7회부터/7회 교체'는 불가하다.
+- 투수 실점(r)과 자책(er)은 다르다. 1실점 0자책은 무실점이 아니다. 제공된 실점과 자책을 그대로 쓰고 등판 시점은 추정하지 않는다.
+- 조건을 만족하는 짧은 문장이 조건을 어기는 긴 문장보다 낫다.
+`;
 }
 
 // ===== Sanitizer =====
@@ -494,7 +501,10 @@ async function getCached(gameId: string): Promise<{ summary: Record<string, unkn
       .eq("game_id", cacheKey(gameId))
       .maybeSingle(); // cache/optional lookup: no-rowuB294 uC815uC0C1 u2014 406 uBC29uC9C0
     if (!data?.summary || !hasVerifiedInningClaims(data.summary as Record<string, unknown>) || !hasVerifiedPitcherClaims(data.summary as Record<string, unknown>)) return null;
-    const outdated = (data.prompt_version ?? 0) < PROMPT_VERSION;
+    const summary = data.summary as Record<string, unknown>;
+    const retryAt = Number(summary._recordRetryAfter ?? 0);
+    const outdated = (data.prompt_version ?? 0) < PROMPT_VERSION ||
+      (summary.summaryKind === "record" && (!Number.isFinite(retryAt) || Date.now() >= retryAt));
     return { summary: data.summary as Record<string, unknown>, outdated };
   } catch {
     return null;
@@ -563,6 +573,7 @@ function normalizeSummary(s: Record<string, unknown>): Record<string, unknown> {
 
 function publicSummary(s: Record<string, unknown>): Record<string, unknown> {
   const copy = structuredClone(s);
+  delete copy._recordRetryAfter;
   delete copy._verifiedPlayerNames;
   delete copy._verifiedPitcherFacts;
   delete copy._cacheFingerprint;
@@ -718,7 +729,13 @@ export async function POST(req: NextRequest) {
         source,
       });
   };
-  const fallback = () => finalize(buildRecordSummary(body), "record-template");
+  const fallback = () => {
+    const record = buildRecordSummary(playerNames.length ? body : { ...body, linescore: undefined });
+    // Durable retry budget survives serverless instances and reloads. GET keeps the
+    // safe record available; after five minutes its outdated flag triggers regeneration.
+    record._recordRetryAfter = Date.now() + 5 * 60_000;
+    return finalize(record, "record-template");
+  };
   if (!GEMINI_API_KEY) return fallback();
 
   // 맥락 데이터 병렬 조회 (실패해도 진행)

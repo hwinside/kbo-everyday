@@ -17,18 +17,22 @@ const compiled = ts.transpileModule(source, { compilerOptions: { module: ts.Modu
 const wc = { gameId: "20261014OBLG0", srId: "4", gameLabel: "WC1", status: "final", awayTeamId: 2, homeTeamId: 1, awayName: "두산", homeName: "LG", awayScore: 1, homeScore: 4 } as KboGame;
 const seeds = [{ rank: 4, teamId: 1, name: "LG" }, { rank: 5, teamId: 2, name: "두산" }];
 
-async function callRoute(game: KboGame, games: KboGame[], missing = false, narrative?: string, fields: Record<string, unknown> = {}, failure?: "model" | "roster-score" | "save") {
+async function callRoute(game: KboGame, games: KboGame[], missing = false, narrative?: string, fields: Record<string, unknown> = {}, failure?: "model" | "roster-score" | "save", retryRecord = false) {
   const calls = { standings: 0, series: 0, facts: 0, generated: 0 };
   const prompts: string[] = [];
   const facts = summaryPostseasonFacts(game, games, seeds);
   const box = { awayBatters: [], homeBatters: [], awayPitchers: [], homePitchers: [] };
   const lines = { status: "final", away: { R: game.awayScore, innings: [game.awayScore,0,0,0,0,0,0,0,0] }, home: { R: game.homeScore, innings: [game.homeScore,0,0,0,0,0,0,0,null] } };
   const st = [{ teamId: 2, teamName: "두산", ranking: 5 }, { teamId: 1, teamName: "LG", ranking: 4 }].map(x => ({ ...x, wins: 70, losses: 60, winRate: 0.54, gamesBehind: 10 }));
-  const dbQuery = { select: () => dbQuery, eq: () => dbQuery, maybeSingle: async () => ({ data: null }) };
+  let cachedSummary: Record<string, unknown> | null = null;
+  const dbQuery = { select: () => dbQuery, eq: () => dbQuery, maybeSingle: async () => ({ data: cachedSummary ? { summary:cachedSummary, prompt_version:16 } : null }) };
   const mocks: Record<string, unknown> = {
     "@/lib/config/runtime-switches": { isFeatureDisabled: async () => false },
     "next/server": { NextResponse: { json: (value: unknown, init?: ResponseInit) => Response.json(value, init) }, after: () => {} },
-    "@/lib/supabase/admin": { supabaseAdmin: { from: () => dbQuery, rpc: async (name: string) => ({ data: name.startsWith("claim") ? 1 : failure === "save" ? false : true }) } },
+    "@/lib/supabase/admin": { supabaseAdmin: { from: () => dbQuery, rpc: async (name: string, args: Record<string, unknown>) => {
+      if (name.startsWith("save") && failure !== "save") cachedSummary = structuredClone(args.p_summary) as Record<string, unknown>;
+      return { data: name.startsWith("claim") ? 1 : failure === "save" ? false : true };
+    } } },
     "@/lib/constants/teams": { TEAMS: [{ id: 1, shortName: "LG" }, { id: 2, shortName: "두산" }], isAllStarGameId: () => false },
     "@/lib/crawler/kbo-api": {
       fetchGames: async () => [game], fetchBoxScore: async () => box, fetchGameLinescore: async () => lines,
@@ -62,6 +66,15 @@ async function callRoute(game: KboGame, games: KboGame[], missing = false, narra
     },
   });
   const response = await routeModule.exports.POST({ json: async () => ({ gameId: game.gameId }) });
+  if (retryRecord) {
+    const before = calls.generated;
+    await routeModule.exports.POST({ json: async () => ({ gameId: game.gameId }) });
+    assert.equal(calls.generated, before, 'record cooldown prevents model retry storms');
+    assert.ok(cachedSummary);
+    (cachedSummary as Record<string, unknown>)._recordRetryAfter = Date.now() - 1;
+    await routeModule.exports.POST({ json: async () => ({ gameId: game.gameId }) });
+    assert.ok(calls.generated > before, 'expired record cache permits a new generation');
+  }
   return { calls, prompts, status: response.status, body: await response.json() };
 }
 
@@ -169,4 +182,10 @@ test("POST model outage uses records, but wrong-game scores and failed save neve
   const notSaved = await callRoute(wc, [wc], false, "LG투수 무실점", {}, "save");
   assert.equal(notSaved.status, 409);
   assert.equal(notSaved.body.summary, undefined);
+});
+
+
+test('POST record fallback cache permits regeneration after durable cooldown',async()=>{
+ const result=await callRoute(wc,[wc],false,undefined,{},'model',true);
+ assert.equal(result.status,200);
 });

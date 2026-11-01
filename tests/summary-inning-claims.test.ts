@@ -43,3 +43,19 @@ test('empty roster cannot verify inning prose but inning-free summary remains av
   assert.equal(hasVerifiedInningClaims({ headline: '문보경의 1회 투런', _verifiedPlayerNames: [] }), false);
   assert.equal(hasVerifiedInningClaims({ headline: 'LG 승리', _verifiedPlayerNames: [] }), true);
 });
+
+
+test('record cache remains visible during cooldown, then GET requests regeneration', async () => {
+  const { GET } = await import('../src/app/api/game-summary/route');
+  const original = globalThis.fetch;
+  try {
+    for (const expired of [false, true]) {
+      const summary = {headline:'LG 4:1 승리', summaryKind:'record', _verifiedPlayerNames:[], _verifiedPitcherFacts:[], _recordRetryAfter:Date.now()+(expired?-1000:300000)};
+      globalThis.fetch = (async () => Response.json({summary,prompt_version:16})) as typeof fetch;
+      const body=await (await GET(new NextRequest('https://summary.test/api/game-summary?gameId=20261014OBLG0'))).json();
+      assert.equal(body.summary.summaryKind,'record');
+      assert.equal(body.outdated,expired);
+      assert.equal(body.summary._recordRetryAfter,undefined);
+    }
+  } finally {globalThis.fetch=original;}
+});
