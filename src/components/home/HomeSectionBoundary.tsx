@@ -22,6 +22,7 @@ export default class HomeSectionBoundary extends Component<
       message: error.message,
       stack: error.stack,
       source: "error-boundary",
+      digest: "home-section-isolated-v1",
     });
   }
 

@@ -51,6 +51,7 @@ test('optional lazy rejection is reported but preserves the home shell; success 
     assert.doesNotMatch(settled, /pending/);
     assert.equal(reports.length, 1);
     assert.equal(reports[0].source, 'error-boundary');
+    assert.equal(reports[0].digest, 'home-section-isolated-v1');
     assert.match(reports[0].message, /Failed to load chunk/);
   } finally { dom.window.close(); }
 });
