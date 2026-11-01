@@ -24,10 +24,10 @@ export function oauthFailure(error: unknown): OAuthDiagnostic["failure"] {
   try {
     const x = error as { name?: unknown; code?: unknown; status?: unknown } | null;
     if (!x) return "other";
-    if (x.name === "AuthPKCEGrantCodeExchangeError") return "pkce";
+    if (x.name === "AuthPKCEGrantCodeExchangeError" || x.name === "AuthPKCECodeVerifierMissingError") return "pkce";
     if (x.name === "NavigatorLockAcquireTimeoutError") return "lock";
     if (x.name === "TypeError" || x.name === "AuthRetryableFetchError") return "network";
-    if (["bad_code_verifier", "flow_state_not_found", "validation_failed"].includes(String(x.code))) return "pkce";
+    if (["bad_code_verifier", "pkce_code_verifier_not_found", "flow_state_not_found", "validation_failed"].includes(String(x.code))) return "pkce";
     if (x.code === "flow_state_expired" || x.code === "otp_expired") return "expired";
     if (x.status === 429 || x.code === "over_request_rate_limit") return "rate-limit";
   } catch { /* an observer must not break authentication */ }
