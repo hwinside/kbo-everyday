@@ -1,3 +1,4 @@
+import { serveDeliverySnapshot } from "@/lib/game/delivery-snapshot";
 import { loadKboLiveText, KBO_SNAPSHOT_FRESH_MS } from '@/lib/crawler/kbo-live-text';
 import { NextRequest, NextResponse, after } from "next/server";
 import {
@@ -1064,6 +1065,9 @@ export async function GET(req: NextRequest) {
       { status: 400, headers: NO_STORE_HEADERS },
     );
   }
+
+  const stored = await serveDeliverySnapshot(req, "relay", gameId);
+  if (stored) return stored;
 
   // 클라이언트에서 현재 이닝을 힌트로 전달 (네이버 API의 inn이 부정확할 때 대비)
   const inningHint = parseInt(req.nextUrl.searchParams.get("inning") || "0") || 0;
