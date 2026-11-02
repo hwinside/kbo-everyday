@@ -1,3 +1,4 @@
+import type { ScenarioContext } from "./scenario-context";
 import { isPostseason, postseasonGameLabel } from "@/lib/crawler/game-series";
 import type { PostseasonSnapshot } from "@/lib/postseason/snapshot";
 import { renderAppLineup } from "./app-lineup";
@@ -40,7 +41,7 @@ export const APP_REQUEST_SCHEMA = { type: "OBJECT", properties: {
 /** Source projection, not generated facts. Unknown date/entity/provenance never
  * becomes today's schedule or a claim that a game/team does not exist. */
 export function renderAppFacts(value: Record<string, unknown>, input: GameConversationInput, entities?: ConversationEntityResolver):
-  { answer: string; source: "kbo_structured" | "context_missing" | "history_hold" } | null {
+  { scenarioContext?: ScenarioContext; answer: string; source: "kbo_structured" | "context_missing" | "history_hold" } | null {
   const req = value.appRequest as Record<string, unknown> | undefined;
   const target = value.target as Record<string, unknown> | undefined;
   if (!req || !target || typeof req.quote !== "string" || !req.quote.trim() || !input.question.includes(req.quote)) return null;
@@ -60,7 +61,7 @@ export function renderAppFacts(value: Record<string, unknown>, input: GameConver
     const reference = renderAppFacts({ ...value, appRequest: { ...req,
       informationNeed: "team_standing", kind: "standings", period: "current",
     } }, input, entities);
-    return { source: "history_hold", answer: explanation + (reference?.source === "kbo_structured"
+    return { source: "history_hold", scenarioContext: { version: 1, question: intentText }, answer: explanation + (reference?.source === "kbo_structured"
       ? "\n\n참고 — 실제 현재 순위 (가정의 결과가 아닙니다)\n" + reference.answer
       : "\n참고할 현재 순위도 확인하지 못했습니다.") };
   }

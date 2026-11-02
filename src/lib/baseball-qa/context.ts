@@ -1,3 +1,4 @@
+import { readScenarioContext, type ScenarioContext } from "./scenario-context";
 import { readRankRequestContext, type RankRequestContext } from "./stats/rank-request-context";
 import { readTransferPeriodContext, type TransferPeriodContext } from "./stats/request-scope";
 // 야잘알봇 멀티턴 맥락 선정 (spec: specs/baseball-genius-v2-hybrid-rag.md §4.1 B1~B5)
@@ -95,6 +96,7 @@ export function isFollowupPhrase(question: string): boolean {
 
 /** RPC baseball_genius_previous_turn 이 돌려주는 직전 user turn 1행 (B2). */
 export interface PreviousTurnRow {
+  scenarioContext?: unknown;
   transferPeriodContext?: unknown;
   rosterRemovalContext?: unknown;
   rankRequestContext?: unknown;
@@ -114,6 +116,7 @@ export interface PreviousTurnRow {
 
 /** LLM 컨텍스트로 주입할 소스 turn 1개 */
 export interface ContextTurn {
+  scenarioContext?: ScenarioContext;
   transferPeriodContext?: TransferPeriodContext;
   rosterRemovalContext?: RosterRemovalContext;
   rankRequestContext?: RankRequestContext;
@@ -154,6 +157,21 @@ export function selectOriginContextTurn(row: PreviousTurnRow | null | undefined)
 
 export function selectContextTurn(row: PreviousTurnRow | null | undefined): ContextTurn | null {
   return qualifyContextTurn(row, CONTEXT_SOURCE_ALLOWLIST);
+}
+
+/** Only the app-fact interpreter may inherit a validated scenario topic.
+ * Generic/draft/origin consumers keep their existing history_hold barrier.
+ * Delivery, exact predecessor, TTL and ordering remain mandatory.
+ */
+export function selectAppFactContextTurn(row: PreviousTurnRow | null | undefined): ContextTurn | null {
+  const ordinary = selectContextTurn(row);
+  if (ordinary) return ordinary;
+  const scenario = row?.jobSource === "history_hold" ? readScenarioContext(row.scenarioContext) : undefined;
+  if (!scenario) return null;
+  const qualified = qualifyContextTurn(row, ["history_hold"]);
+  return qualified ? { question: scenario.question,
+    answer: "(선수 구성 변경 가정의 결과는 확인하지 못했음. 실제 순위는 가정 결과의 근거가 아님)",
+    scenarioContext: scenario } : null;
 }
 
 /** 입단 후속 전용 — B1·B2·B5 barrier/TTL 은 동일, B3 allowlist 만 위 전용 집합이다. */

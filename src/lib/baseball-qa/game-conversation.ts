@@ -1,3 +1,4 @@
+import type { ScenarioContext } from "./scenario-context";
 import { resolveStadiumByName, resolveStadiumsInText } from "../venue-stories/stadiums";
 import { TEAM_CANDIDATE_PROMPT, TEAM_MENTIONS_SCHEMA, type ConversationTeamCandidate } from "./conversation-team-candidates";
 import { APP_FACT_PROMPT, APP_REQUEST_SCHEMA, renderAppFacts, type AppFactSnapshot } from "./app-fact-conversation";
@@ -104,7 +105,7 @@ const STATUS: Record<string, string> = {
 
 /** Model can select existing facts, but cannot generate an opponent/time/status. */
 export function renderGameConversation(text: string, input: GameConversationInput, entities?: ConversationEntityResolver):
-  { answer: string; source: "kbo_structured" | "context_missing" | "history_hold" | "ack" } | null {
+  { scenarioContext?: ScenarioContext; answer: string; source: "kbo_structured" | "context_missing" | "history_hold" | "ack" } | null {
   let value: Record<string, unknown>;
   try { value = JSON.parse(text); } catch { return null; }
   if (!value || typeof value !== "object" || Array.isArray(value)) return null;
