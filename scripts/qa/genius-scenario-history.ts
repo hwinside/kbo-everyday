@@ -43,10 +43,19 @@ function sqlRow(question: string, answer: string, source: string, stored: LlmRes
   return { question, answer, job_source: source, definition_llm_text: stored?.text,
     answered_at: new Date(now - 1000).toISOString(), current_created_at: new Date(now).toISOString() };
 }
+interface Turn {
+  question: string;
+  result: { answer: string; source: string };
+  stored: LlmResult | null;
+  input?: GameConversationInput;
+  value?: Record<string, unknown>;
+  trace: Record<string, unknown>[];
+}
+const appRequestOf = (turn: Turn) => turn.value?.appRequest as Record<string, unknown> | undefined;
 async function sequence(api: { answerQuestion: typeof answerQuestion; previousTurnFromSql: typeof previousTurnFromSql }, next: string,
   provider?: (i: GameConversationInput) => Promise<LlmResult>) {
   let previous: PreviousTurnRow | null = null;
-  const turns: Record<string, unknown>[] = [];
+  const turns: Turn[] = [];
   for (const question of [firstQuestion, next]) {
     let stored: LlmResult | null = null, started = false;
     const trace: Record<string, unknown>[] = []; const startedAt = Date.now();
@@ -85,24 +94,24 @@ async function sequence(api: { answerQuestion: typeof answerQuestion; previousTu
   }
   return turns;
 }
-function assess(turns: Record<string, unknown>[], kind: string) {
-  const second = turns[1] as any;
+function assess(turns: Turn[], kind: string) {
+  const second = turns[1];
   assert.ok(second.input, "second turn must reach app-fact interpreter");
   assert.equal(second.input.context?.question, firstQuestion, "real stored first turn must supply scenario topic");
-  assert.doesNotMatch(second.input.context.answer, /10위|50승|앱 순위표/, "reference facts are not inherited");
-  const need = second.value?.appRequest?.informationNeed;
+  assert.doesNotMatch(String(second.input.context?.answer), /10위|50승|앱 순위표/, "reference facts are not inherited");
+  const need = appRequestOf(second)?.informationNeed;
   if (kind === "scenario") { assert.equal(need, "scenario_outcome"); assert.match(second.result.answer, /선수 구성 변화/); }
   if (kind === "actual") { assert.equal(need, "team_standing"); assert.match(second.result.answer, /키움/); assert.doesNotMatch(second.result.answer, /삼성|선수 구성 변화/); }
   if (kind === "samsung") { assert.equal(need, "team_standing"); assert.match(second.result.answer, /삼성/); assert.doesNotMatch(second.result.answer, /키움|선수 구성 변화/); }
   if (kind === "all") { assert.equal(need, "team_standing"); assert.match(second.result.answer, /키움/); assert.match(second.result.answer, /삼성/); assert.doesNotMatch(second.result.answer, /선수 구성 변화/); }
-  if (kind === "rule") assert.notEqual(second.value.action, "app_facts", "rule must not inherit scenario classification");
+  if (kind === "rule") assert.notEqual(second.value?.action, "app_facts", "rule must not inherit scenario classification");
 }
 async function main() {
   const api = { answerQuestion, previousTurnFromSql };
   const turns = await sequence(api, cases[0].next); assess(turns, "scenario");
   assess(await sequence(api, cases[1].next), "actual");
   // Model drops target on an actual transition: relation must bind resolver teams.
-  const secondInput = (turns[1] as any).input as GameConversationInput;
+  const secondInput = turns[1].input!;
   const actualInput = { ...secondInput, question: cases[1].next };
   const actual = selected(actualInput, false);
   actual.target = { ...actual.target, source: "none", quote: "", teams: [], mentions: [] };
@@ -133,8 +142,8 @@ async function main() {
     if (i.context) throw new Error("synthetic provider failure");
     return { text: JSON.stringify(selected(i, true)), inputTokens: 1, outputTokens: 1 };
   });
-  assert.equal((rejected[1] as any).result.source, "error", "provider failure is not NOT_BASEBALL");
-  const first = turns[0] as any;
+  assert.equal(rejected[1].result.source, "error", "provider failure is not NOT_BASEBALL");
+  const first = turns[0];
   const row = sqlRow(firstQuestion, first.result.answer, first.result.source, first.stored);
   const parsed = previousTurnFromSql(row)!;
   assert.ok(selectAppFactContextTurn(parsed));
@@ -147,8 +156,9 @@ async function main() {
   assert.ok(selectAppFactContextTurn({ ...parsed, answeredAt: new Date(now - 600000).toISOString() }));
   assert.equal(selectAppFactContextTurn(previousTurnFromSql({ ...row, answer: "different delivered answer" })), null);
   assert.equal(selectAppFactContextTurn(previousTurnFromSql({ ...row, job_source: "error" })), null);
-  const final = unpackStoredQaFinal(first.stored.text)!;
-  assert.deepEqual(unpackStoredQaFinal(packStoredQaFinal(final, first.stored).text), final);
+  const stored = first.stored!;
+  const final = unpackStoredQaFinal(stored.text)!;
+  assert.deepEqual(unpackStoredQaFinal(packStoredQaFinal(final, stored).text), final);
   console.log(JSON.stringify({ mode: "offline", twoTurn: "PASS", boundaries: "PASS", genericHistoryHold: "CLOSED" }));
   if (!process.argv.includes("--live")) return;
   const arg = (n: string) => process.argv.find(a => a.startsWith(`--${n}=`))?.slice(n.length + 3);
@@ -159,10 +169,10 @@ async function main() {
     const adapter = await import(pathToFileURL(path.join(root, "src/lib/baseball-qa/previous-turn-row.ts")).href);
     const server = await import(pathToFileURL(path.join(root, "src/lib/baseball-qa/server.ts")).href);
     for (const c of cases) for (let repeat = 0; repeat < 3; repeat++) {
-      let turns: Record<string, unknown>[] = [];
-      const record: any = { variant, id: c.id, repeat };
+      let turns: Turn[] = [];
+      const record: Record<string, unknown> = { variant, id: c.id, repeat };
       try { turns = await sequence({ ...pipeline, ...adapter }, c.next, server.callGameConversation); assess(turns, c.kind); record.pass = true; }
-      catch (error) { record.pass = false; record.error = String(error); const second = turns[1] as any;
+      catch (error) { record.pass = false; record.error = String(error); const second = turns[1] as Turn | undefined;
         const known = c.id === "explicit-other-team" && !second?.input && second?.result?.source === "history_hold"
           && second.result.answer.startsWith("팀 단위 기록(");
         record.knownFail = known ? "pre-existing team_record terminal hold (not app interpreter)" : null;

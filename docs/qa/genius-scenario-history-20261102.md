@@ -168,6 +168,8 @@ Author self-check at this exact (not a QA verdict): offline gate exit 0
 exit 0, qa:genius-game-conversation exit 0, QA typecheck and product tsc PASS,
 product ESLint 0 errors / 5 pre-existing warnings, git diff --check clean.
 Product diff is unchanged from R2; this round touches the QA harness and docs.
+The harness is now typed (Turn interface) so project-wide `eslint` is clean on
+this file as well; it previously carried `any` errors from R0.
 The reviewer still owns the 36-sequence live judgement, including re-running it
 once the app provider stops returning timeouts and 502s.
 
