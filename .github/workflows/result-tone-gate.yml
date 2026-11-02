@@ -113,7 +113,7 @@ on:
 
 jobs:
   result-tone:
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
     services:
       postgres17:
         image: postgres:17
