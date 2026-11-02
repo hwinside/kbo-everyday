@@ -1,3 +1,4 @@
+import { readScenarioContext, type ScenarioContext } from "./scenario-context";
 import { prepareOfficialEvidence } from "./rag/official-sibling-evidence";
 import { collectConversationTeamCandidates } from "./conversation-team-candidates";
 import { renderRagHold } from "./rag/hold-answer";
@@ -27,6 +28,7 @@ import type { ServedBatterSnapshot } from "./stats/served-record";
 import {
   isFollowupPhrase,
   selectContextTurn,
+  selectAppFactContextTurn,
   selectDraftContextTurn,
   type ContextTurn,
   type PreviousTurnRow,
@@ -3933,6 +3935,7 @@ export interface ValidatedLlmAnswer {
  */
 const STORED_QA_FINAL_MARKER = "__qa_final_v1";
 export interface StoredQaFinal {
+  scenarioContext?: ScenarioContext;
   transferPeriodContext?: TransferPeriodContext;
   rosterRemovalContext?: RosterRemovalContext;
   answer: string;
@@ -4020,6 +4023,7 @@ export function unpackStoredQaFinal(text: string): StoredQaFinal | null {
     source: final.source as MatchPath,
     ...(final.source === "scope_guide" && readTransferPeriodContext(final.transferPeriodContext) ? { transferPeriodContext: readTransferPeriodContext(final.transferPeriodContext) } : {}),
     ...(readRosterRemovalContext(final.rosterRemovalContext) ? { rosterRemovalContext: readRosterRemovalContext(final.rosterRemovalContext) } : {}),
+    ...(final.source === "history_hold" && readScenarioContext(final.scenarioContext) ? { scenarioContext: readScenarioContext(final.scenarioContext) } : {}),
     ...(readStatDefinitionContext(final.definitionContext) ? { definitionContext: readStatDefinitionContext(final.definitionContext) } : {}),
     ...(readRankRequestContext(final.rankRequestContext) ? { rankRequestContext: readRankRequestContext(final.rankRequestContext) } : {}),
     ...(typeof final.sourceUrl === "string" ? { sourceUrl: final.sourceUrl } : {}),
@@ -6193,6 +6197,7 @@ async function answerQuestionObserved(userId: string, rawQuestion: string, deps:
   // 누수 경로는 종전과 동일(selectContextTurn 이 allowlist·TTL·본인 turn 만 통과).
   // 조회 실패는 맥락 없음으로 fail-closed 한다.
   let context: ContextTurn | null = null;
+  let appFactContext: ContextTurn | null = null;
   let originContext: ContextTurn | null = null;
   let draftContext: ContextTurn | null = null;
   // 입단 후속 재결속(#1140)은 상시 로드된 같은 row 를 쓰되 **전용 selector 로만** 자격을
@@ -6207,6 +6212,8 @@ async function answerQuestionObserved(userId: string, rawQuestion: string, deps:
       const row = await deps.loadPreviousTurn();
       // 글로벌: LLM 프롬프트 맥락 주입용 (답변이 실린 모든 source + unsure).
       context = selectContextTurn(row);
+      appFactContext = selectAppFactContextTurn(row);
+      if (appFactContext && routeQuestion(appFactContext.question, glossary, players, false) === "blocked") appFactContext = null;
       originContext = isTermOriginFollowup(question) ? selectOriginContextTurn(row) : null;
       if (originContext && routeQuestion(originContext.question, glossary, players, false) === "blocked") originContext = null;
       // 인젝션 문장은 맥락으로도 싣지 않는다 (삼순 2026-08-10 — unsure 확장의 반례 축).
@@ -6218,6 +6225,7 @@ async function answerQuestionObserved(userId: string, rawQuestion: string, deps:
       // draft 전용: 공식 필드 확정 렌더용 (더 좁은 allowlist, #1140 계약 유지).
       draftContext = draftFollowup ? selectDraftContextTurn(row) : null;
     } catch {
+      appFactContext = null;
       context = null;
       draftContext = null;
     }
@@ -6908,17 +6916,19 @@ async function answerQuestionObserved(userId: string, rawQuestion: string, deps:
     const date = new Date((deps.now?.() ?? Date.now()) + 9 * 3_600_000).toISOString().slice(0, 10);
     const conversationDeadline = Math.min(deadline, Date.now() + 4500);
     let timer: ReturnType<typeof setTimeout> | undefined;
+    let interpretationUnavailable = false;
     try {
       const result = await Promise.race([
         (async () => {
           const snapshot = await deps.loadGameConversation!(date);
-          const input: GameConversationInput = { question, context: context ?? undefined, date, nowMs: deps.now?.() ?? Date.now(),
+          const input: GameConversationInput = { question, context: appFactContext ?? undefined, date, nowMs: deps.now?.() ?? Date.now(),
             games: snapshot.games, favoriteTeam: snapshot.favoriteTeam, appFacts: snapshot.appFacts,
-            teamCandidates: conversationTeamCandidates(question, context?.question),
+            teamCandidates: conversationTeamCandidates(question, appFactContext?.question),
             teamNames: { question: mentionedTeamCanonicals(question),
-              context_question: mentionedTeamCanonicals(context?.question ?? ""),
+              context_question: mentionedTeamCanonicals(appFactContext?.question ?? ""),
               profile: mentionedTeamCanonicals(snapshot.favoriteTeam ?? "") },
           };
+          setContextSelected(appFactContext !== null);
           const model = await deps.callGameConversation!(input);
           let postseasonRequested = false;
           const lineupRequests: import("./app-lineup").AppLineupRequest[] = [];
@@ -6930,6 +6940,7 @@ async function answerQuestionObserved(userId: string, rawQuestion: string, deps:
         })(),
         new Promise<null>((resolve) => { timer = setTimeout(() => resolve(null), Math.max(0, conversationDeadline - Date.now())); }),
       ]);
+      interpretationUnavailable = result === null;
       if (result) {
         const { model, input, lineupRequests } = result;
         let served = result.served;
@@ -6974,9 +6985,15 @@ async function answerQuestionObserved(userId: string, rawQuestion: string, deps:
         }) };
       }
     } catch {
-      // Infrastructure/schema errors do not replace an existing answer with a hold.
+      interpretationUnavailable = true;
     } finally {
       if (timer) clearTimeout(timer);
+    }
+    // App-only context is intentionally absent from the generic scope provider.
+    // A failed interpretation must not turn that loss into NOT_BASEBALL.
+    if (interpretationUnavailable && appFactContext?.scenarioContext) {
+      return settleThroughDurableBoundary({ answer: SYSTEM_ERROR_ANSWER, source: "error" }, SYSTEM_ERROR_ANSWER,
+        { userId, question, questionNorm, remaining, deps });
     }
   }
 

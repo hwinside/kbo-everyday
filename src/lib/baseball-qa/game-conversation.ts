@@ -1,3 +1,4 @@
+import type { ScenarioContext } from "./scenario-context";
 import { resolveStadiumByName, resolveStadiumsInText } from "../venue-stories/stadiums";
 import { TEAM_CANDIDATE_PROMPT, TEAM_MENTIONS_SCHEMA, type ConversationTeamCandidate } from "./conversation-team-candidates";
 import { APP_FACT_PROMPT, APP_REQUEST_SCHEMA, renderAppFacts, type AppFactSnapshot } from "./app-fact-conversation";
@@ -62,7 +63,8 @@ ${TEAM_CANDIDATE_PROMPT}
 JSON만 출력합니다. action은 match/clarify/unavailable/other/app_facts/ack 중 하나입니다. 일정의 존재 여부와 조회 성공 여부는 코드가 판단하므로, 대상 조건을 확인했으면 games가 비어 있거나 null이어도 match로 반환합니다.` }] },
     contents: [{ role: "user", parts: [{ text: JSON.stringify({
       question: input.question,
-      context: input.context ? { question: input.context.question } : undefined,
+      context: input.context ? { question: input.context.question,
+        ...(input.context.scenarioContext ? { scenarioContext: { version: 1 } } : {}) } : undefined,
       date: input.date, favoriteTeam: input.favoriteTeam,
       teamNames: input.teamNames, teamCandidates: input.teamCandidates,
     }) }] }],
@@ -104,7 +106,7 @@ const STATUS: Record<string, string> = {
 
 /** Model can select existing facts, but cannot generate an opponent/time/status. */
 export function renderGameConversation(text: string, input: GameConversationInput, entities?: ConversationEntityResolver):
-  { answer: string; source: "kbo_structured" | "context_missing" | "history_hold" | "ack" } | null {
+  { scenarioContext?: ScenarioContext; answer: string; source: "kbo_structured" | "context_missing" | "history_hold" | "ack" } | null {
   let value: Record<string, unknown>;
   try { value = JSON.parse(text); } catch { return null; }
   if (!value || typeof value !== "object" || Array.isArray(value)) return null;
