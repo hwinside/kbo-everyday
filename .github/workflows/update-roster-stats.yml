@@ -13,7 +13,7 @@ permissions:
 
 jobs:
   update:
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
     # P0(삼순 #1282): gates-green ci 티어 전체 실행이 추가되어 예산 상향(30→60) —
     # 실측 pre-PR ~15분 + unsharded full 11분+ → 30분은 스탬프 전 timeout 위험.
     timeout-minutes: 60
