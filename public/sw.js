@@ -1,4 +1,4 @@
-const CACHE_NAME = "kbo-everyday-v19";
+const CACHE_NAME = "kbo-everyday-v20";
 
 // NOTE: /offline 라우트는 존재하지 않는다(404). 이를 precache하면 cache.addAll이
 // reject → SW install 자체가 실패해 업데이트가 막힌다. 오프라인 전용 페이지를
@@ -32,6 +32,11 @@ self.addEventListener("fetch", (event) => {
   if (request.method !== "GET") return;
 
   const url = new URL(request.url);
+
+  // Next build assets have content hashes and immutable HTTP caching. Let the
+  // browser fetch them directly: do not clone/cache responses or synthesize an
+  // Offline 503 for JS/CSS/font chunks inside the service worker.
+  if (url.pathname.startsWith("/_next/static/")) return;
 
   // API/auth는 캐시하지 않음
   if (url.pathname.startsWith("/api/") || url.pathname.startsWith("/auth/")) return;
