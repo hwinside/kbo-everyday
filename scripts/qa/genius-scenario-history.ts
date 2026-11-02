@@ -52,6 +52,7 @@ async function sequence(api: { answerQuestion: typeof answerQuestion; previousTu
     const trace: Record<string, unknown>[] = []; const startedAt = Date.now();
     const event = (stage: string) => trace.push({ stage, elapsedMs: Date.now() - startedAt });
     let seen: GameConversationInput | undefined; let value: Record<string, unknown> | undefined;
+    let lastText: string | undefined;
     const deps: QaDeps = {
       loadGlossary: async () => [], loadPlayers: async () => [], getCache: async () => null,
       setCache: async () => { throw new Error("shared-cache write forbidden"); },
@@ -65,10 +66,14 @@ async function sequence(api: { answerQuestion: typeof answerQuestion; previousTu
         try { result = provider ? await provider(i).then(r => { event("app_provider_resolved"); return r; }, e => { event("app_provider_rejected"); throw e; }) : { text: JSON.stringify(selected(i, question === firstQuestion || Boolean(i.context) && next === cases[0].next)), inputTokens: 1, outputTokens: 1 };
         trace.push({ stage: "app-provider-result", elapsedMs: Date.now() - start, text: result.text });
         } catch (error) { trace.push({ stage: "app-provider-error", elapsedMs: Date.now() - start, error: String(error) }); throw error; }
-        value = JSON.parse(result.text); return result;
+        lastText = result.text; value = JSON.parse(result.text); return result;
       },
       callLlm: async () => {
-        trace.push({ stage: "synthetic-generic-fallback", elapsedMs: Date.now() - startedAt, note: "NOT_BASEBALL fixture, not production classifier evidence" });
+        // Renderer-null vs provider failure are different causes: keep the last
+        // model payload so a fallback can be attributed without rerunning.
+        trace.push({ stage: "synthetic-generic-fallback", elapsedMs: Date.now() - startedAt,
+          appProviderAnswered: seen !== undefined && value !== undefined,
+          lastModelText: lastText, note: "NOT_BASEBALL fixture, not production classifier evidence" });
         return { text: JSON.stringify({ status: "NOT_BASEBALL" }), inputTokens: 0, outputTokens: 0 };
       },
     };
@@ -110,10 +115,14 @@ async function main() {
   const misAll = { ...all, appRequest: { ...all.appRequest, scenarioRelation: "actual_same_team" } };
   assert.match(renderAppFacts(misAll, allInput)!.answer, /삼성/, "relation misclassification cannot shrink league-wide scope");
   assert.match(renderAppFacts(misAll, allInput)!.answer, /키움/);
-  // A model-bound target is never replaced by the inherited scenario team.
+  // An ungrounded model target keeps the existing clarify contract: the
+  // inheritance guard must not serve it, and must not swap it for the
+  // scenario team either. A grounded current team is covered by `other` below.
   const boundOther = { ...actual, target: { ...actual.target, teams: ["삼성"] } };
-  assert.match(renderAppFacts(boundOther, actualInput)!.answer, /삼성/);
-  assert.doesNotMatch(renderAppFacts(boundOther, actualInput)!.answer, /키움/);
+  const boundServed = renderAppFacts(boundOther, actualInput)!;
+  assert.equal(boundServed.source, "context_missing");
+  assert.match(boundServed.answer, /어느 구단이나 경기의 정보를 원하시나요/);
+  assert.doesNotMatch(boundServed.answer, /키움|삼성/);
   const otherInput = { ...actualInput, question: cases[3].next,
     teamNames: { ...actualInput.teamNames, question: ["삼성"] }, teamCandidates: [] };
   const other = selected(otherInput, false);

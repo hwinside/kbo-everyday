@@ -143,3 +143,31 @@ Known limitations recorded, not fixed here:
 - Environment: R1 live runs hit consecutive 3s app-provider TimeoutError on the
   first turn of qa-3242998 (2 of 3 runs), so those sequences never produced a
   scenario topic. Recorded as an environment observation, not a PR PASS.
+
+## R3 — R2 NO-GO retained (3/3 cap reached, owner allowed one more round)
+
+R2 exact f9b28742b4d8e2fa75717cda1b5b85f2dc5cc33c. The reviewer found the
+PR's own offline gate RED at scripts/qa/genius-scenario-history.ts:115. The
+cause was the fixture, not the product: it supplied target.teams=["삼성"] with
+empty source/quote/mentions while the current question names no team, and the
+renderer correctly refuses an ungrounded target with the existing clarify
+reply. Reproduced locally at the same exact before changing anything.
+
+R3 corrections:
+- The assertion now states the real contract: an ungrounded model target stays
+  on the existing clarify path (source=context_missing) and is neither served
+  nor swapped for the inherited scenario team. A grounded current team is
+  already covered by the explicit-other-team case.
+- Renderer-fallback attribution for qa-3242998: the harness now records, on the
+  synthetic generic fallback, whether the app provider actually answered and the
+  last model payload. A provider error and a renderer-null yield the same final
+  text, so the previous trace could not separate them.
+
+Author self-check at this exact (not a QA verdict): offline gate exit 0
+(twoTurn PASS, boundaries PASS, genericHistoryHold CLOSED), qa:genius-scenario-outcome
+exit 0, qa:genius-game-conversation exit 0, QA typecheck and product tsc PASS,
+product ESLint 0 errors / 5 pre-existing warnings, git diff --check clean.
+Product diff is unchanged from R2; this round touches the QA harness and docs.
+The reviewer still owns the 36-sequence live judgement, including re-running it
+once the app provider stops returning timeouts and 502s.
+
