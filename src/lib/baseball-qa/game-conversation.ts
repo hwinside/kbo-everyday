@@ -63,7 +63,8 @@ ${TEAM_CANDIDATE_PROMPT}
 JSON만 출력합니다. action은 match/clarify/unavailable/other/app_facts/ack 중 하나입니다. 일정의 존재 여부와 조회 성공 여부는 코드가 판단하므로, 대상 조건을 확인했으면 games가 비어 있거나 null이어도 match로 반환합니다.` }] },
     contents: [{ role: "user", parts: [{ text: JSON.stringify({
       question: input.question,
-      context: input.context ? { question: input.context.question } : undefined,
+      context: input.context ? { question: input.context.question,
+        ...(input.context.scenarioContext ? { scenarioContext: { version: 1 } } : {}) } : undefined,
       date: input.date, favoriteTeam: input.favoriteTeam,
       teamNames: input.teamNames, teamCandidates: input.teamCandidates,
     }) }] }],

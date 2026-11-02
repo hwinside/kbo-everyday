@@ -84,3 +84,32 @@ Standing user approval 1793526075.463129 permits merge only after exact Samsik G
 and required checks, then deployment verification and independent production QA.
 No direct main/workflow/force push. Graphify rebuild attempted: module unavailable
 (if still unavailable, see local graphify.log); no graph success claim.
+
+## R1 — R0 NO-GO retained (1/3)
+
+R0 exact `e82a7e2d747c4477be0b0740e646afb357ad4cac`; independent artifact
+`art1607/live.json`: head 7/15 failures. No live R1 PASS claimed by author.
+
+- Actual transition 3/3: app input present, model team_standing with target.source=none,
+  empty teams => renderer selected both fixture rows. The old prompt restricted
+  inherited targets to same-game discussion. R1 adds a scenario relation contract
+  (continue_scenario / actual_same_team / new_topic / none), passes the validated
+  scenario marker to the interpreter, and binds the first two relations to prior
+  resolver entities in code. Current explicit teams win; new-topic/all does not inherit.
+- Hypothetical followup repeat=1: app input present but value absent, then blocked.
+  Thus NOT a pre-interpreter router block. R0's 4.5s Promise.race or provider/JSON
+  failure can yield into the generic NOT_BASEBALL mock, which intentionally has
+  no app-only context. Old artifact cannot distinguish timeout from rejection.
+  R1 traces provider start/resolution/rejection, generic fallback, final source
+  with elapsed ms; unavailable app interpretation with valid scenario context
+  now returns durable error, not a false out-of-scope claim. Timeout remains a
+  live gate failure, not a successful scenario answer. No blanket context opening.
+- explicit-other-team: pre-existing team_record terminal history_hold on BOTH refs.
+  Deferred, not fixed. Known-fail applies ONLY to this case with no app input,
+  history_hold and the exact existing team-record hold prefix. Every other failure
+  still counts; if this route begins reaching the interpreter it must pass normal
+  Samsung-only assertions. The renderer-level current-team override is separately
+  tested offline. This known-fail is NOT End-User PASS.
+- Added offline binding/explicit-override/new-topic and provider-rejection checks.
+  Original 5×3×base/head live set plus explicit-all-teams (6×3×2=36 sequences) and both regression scripts remain reviewer-owned.
+  Author does not execute these QA scripts. Trace is collected during that run.

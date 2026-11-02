@@ -6916,6 +6916,7 @@ async function answerQuestionObserved(userId: string, rawQuestion: string, deps:
     const date = new Date((deps.now?.() ?? Date.now()) + 9 * 3_600_000).toISOString().slice(0, 10);
     const conversationDeadline = Math.min(deadline, Date.now() + 4500);
     let timer: ReturnType<typeof setTimeout> | undefined;
+    let interpretationUnavailable = false;
     try {
       const result = await Promise.race([
         (async () => {
@@ -6939,6 +6940,7 @@ async function answerQuestionObserved(userId: string, rawQuestion: string, deps:
         })(),
         new Promise<null>((resolve) => { timer = setTimeout(() => resolve(null), Math.max(0, conversationDeadline - Date.now())); }),
       ]);
+      interpretationUnavailable = result === null;
       if (result) {
         const { model, input, lineupRequests } = result;
         let served = result.served;
@@ -6983,9 +6985,15 @@ async function answerQuestionObserved(userId: string, rawQuestion: string, deps:
         }) };
       }
     } catch {
-      // Infrastructure/schema errors do not replace an existing answer with a hold.
+      interpretationUnavailable = true;
     } finally {
       if (timer) clearTimeout(timer);
+    }
+    // App-only context is intentionally absent from the generic scope provider.
+    // A failed interpretation must not turn that loss into NOT_BASEBALL.
+    if (interpretationUnavailable && appFactContext?.scenarioContext) {
+      return settleThroughDurableBoundary({ answer: SYSTEM_ERROR_ANSWER, source: "error" }, SYSTEM_ERROR_ANSWER,
+        { userId, question, questionNorm, remaining, deps });
     }
   }
 
