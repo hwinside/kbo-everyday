@@ -106,6 +106,14 @@ async function main() {
   const allInput = { ...actualInput, question: "가정 말고 전체 구단 실제 순위는?" };
   const all = { ...actual, appRequest: { ...actual.appRequest, quote: allInput.question, intentQuote: allInput.question, scenarioRelation: "new_topic" } };
   assert.match(renderAppFacts(all, allInput)!.answer, /삼성/, "explicit all/new-topic does not inherit team");
+  // R1 blocker: a misclassified relation must not shrink an explicit all-team request.
+  const misAll = { ...all, appRequest: { ...all.appRequest, scenarioRelation: "actual_same_team" } };
+  assert.match(renderAppFacts(misAll, allInput)!.answer, /삼성/, "relation misclassification cannot shrink league-wide scope");
+  assert.match(renderAppFacts(misAll, allInput)!.answer, /키움/);
+  // A model-bound target is never replaced by the inherited scenario team.
+  const boundOther = { ...actual, target: { ...actual.target, teams: ["삼성"] } };
+  assert.match(renderAppFacts(boundOther, actualInput)!.answer, /삼성/);
+  assert.doesNotMatch(renderAppFacts(boundOther, actualInput)!.answer, /키움/);
   const otherInput = { ...actualInput, question: cases[3].next,
     teamNames: { ...actualInput.teamNames, question: ["삼성"] }, teamCandidates: [] };
   const other = selected(otherInput, false);

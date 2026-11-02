@@ -113,3 +113,33 @@ R0 exact `e82a7e2d747c4477be0b0740e646afb357ad4cac`; independent artifact
 - Added offline binding/explicit-override/new-topic and provider-rejection checks.
   Original 5×3×base/head live set plus explicit-all-teams (6×3×2=36 sequences) and both regression scripts remain reviewer-owned.
   Author does not execute these QA scripts. Trace is collected during that run.
+
+## R2 — R1 NO-GO retained (2/3)
+
+R1 exact 428c2d7f62ef26f6a4c431da8df3c90d25212c52. Reviewer-confirmed on R1:
+qa-3243004 3/3 PASS (Kiwoom row only, R0 blocker resolved), paraphrase 3/3,
+new-rule 3/3; explicit-other-team remains the pre-existing team-record known-fail.
+
+Blocker fixed here: the R1 override treated an empty teamNames.question as
+"target omitted", so an explicit league-wide request was narrowed to the
+inherited team even though the model had correctly returned source=none and
+teams=[]. Relation and scope are now independent axes. The inheritance is
+skipped when the current utterance carries closed-set league-wide wording, and
+when the model already bound teams/excluded/background/stadium. A misclassified
+actual_same_team can no longer change scope; the prompt lists all-team/league
+requests as new_topic examples. The closed set only suppresses an inheritance:
+it never selects a team, a row or an answer, and no routing path is added.
+
+Added offline counterexamples: misclassified relation + explicit all-team must
+return every fixture row, and a model-bound other team must not be replaced.
+
+Known limitations recorded, not fixed here:
+- P1 (reviewer-raised): the interpretationUnavailable branch returns
+  SYSTEM_ERROR_ANSWER for the one turn after a stored scenario hold whenever the
+  app interpreter times out or throws, regardless of the new question topic. A
+  slow provider can answer an unrelated new question with the error notice
+  instead of the general path. Scope is that single immediate turn; silently
+  falling through reintroduces the false out-of-scope reply. Next-axis candidate.
+- Environment: R1 live runs hit consecutive 3s app-provider TimeoutError on the
+  first turn of qa-3242998 (2 of 3 runs), so those sequences never produced a
+  scenario topic. Recorded as an environment observation, not a PR PASS.
