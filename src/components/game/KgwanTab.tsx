@@ -529,6 +529,7 @@ function FinalView({ gameId, homeTeamId, awayTeamId, boxScore, linescore, refres
 
   // LLM 요약 상태
   const [llmSummary, setLlmSummary] = useState<{
+    summaryKind?: "record";
     headline: string;
     gameFlow?: { early: string; mid: string; late: string };
     turningPoint: string;
@@ -835,8 +836,8 @@ function FinalView({ gameId, homeTeamId, awayTeamId, boxScore, linescore, refres
           <div className="glass-card p-5 space-y-4">
             {/* AI 라벨 */}
             <div className="flex items-center gap-1.5">
-              <span className="text-xs">🤖</span>
-              <span className="text-[11px] font-semibold text-accent">AI 경기 요약</span>
+              <span className="text-xs">{llmSummary?.summaryKind === "record" ? "📋" : "🤖"}</span>
+              <span className="text-[11px] font-semibold text-accent">{llmSummary?.summaryKind === "record" ? "경기 기록 요약" : "AI 경기 요약"}</span>
             </div>
 
             {/* 헤드라인 */}
