@@ -16,6 +16,8 @@ const clean = (s: string) => s.replace(/<[^>]*>/g, ' ').replace(/&nbsp;|&#160;/g
 const cells = (s: string) => [...s.matchAll(/<t[dh]\b[^>]*>([\s\S]*?)<\/t[dh]>/gi)].map(m => clean(m[1]));
 const rows = (s: string) => [...(s.match(/<tbody\b[^>]*>([\s\S]*?)<\/tbody>/i)?.[1] ?? '').matchAll(/<tr\b[^>]*>([\s\S]*?)<\/tr>/gi)].map(m => cells(m[1]));
 const number = (s: string) => { if (!/^\d+$/.test(s)) throw new Error('KBO live numeric schema'); return Number(s); };
+// Before a team/player records a stat, KBO emits dash or empty count cells.
+const count = (s: string) => s === '-' || s === '' ? 0 : number(s);
 const table = (s: string, id: string) => s.match(new RegExp(`<table\\b[^>]*id="${id}"[^>]*>([\\s\\S]*?)<\\/table>`, 'i'))?.[1] ?? '';
 
 /** KBO lists each inning newest-first. Preserve source rows, never synthesize plays from score differences. */
@@ -63,7 +65,7 @@ export function parseKboLiveText(gameId: string, scoreHtml: string, textHtml: st
   const innings = rows(table(scoreHtml, 'tblScoreBoard2'));
   const totals = rows(table(scoreHtml, 'tblScoreBoard3'));
   if (innings.length !== 2 || totals.length !== 2 || innings.some(r => r.length < 9) || totals.some(r => r.length !== 4)) throw new Error('KBO linescore schema');
-  const side = (i: number) => ({ innings: innings[i].map(v => v === '-' || v === '' || v === 'X' ? null : number(v)), R: number(totals[i][0]), H: number(totals[i][1]), E: number(totals[i][2]) });
+  const side = (i: number) => ({ innings: innings[i].map(v => v === '-' || v === '' || v === 'X' ? null : number(v)), R: count(totals[i][0]), H: count(totals[i][1]), E: count(totals[i][2]) });
   const allTables = [...textHtml.matchAll(/<table\b[^>]*>([\s\S]*?)<\/table>/gi)].map(m => m[1]);
   const batterTables = allTables.filter(t => /<th[^>]*>\s*병살\s*<\/th>/.test(t));
   const pitcherTables = allTables.filter(t => /<th[^>]*>\s*투구\s*<\/th>/.test(t));
@@ -76,12 +78,12 @@ export function parseKboLiveText(gameId: string, scoreHtml: string, textHtml: st
       if (c.length !== 12 || !c[0]) throw new Error('KBO batter schema');
       const slot = lineup.find(l => l[2] === c[0]);
       const pos = positions[slot?.[1] ?? ''] ?? '';
-      return { name: c[0], order: Number(slot?.[0]) || 0, position: pos, positionFull: pos, atBats: number(c[1]), runs: number(c[2]), hits: number(c[3]), hr: number(c[4]), rbi: number(c[5]), sb: number(c[6]), bb: number(c[8]), so: number(c[9]), h2b: chronological.filter(r => r.textOptions?.some(o => o.type === 13 && o.text.startsWith(`${c[0]} : `) && o.text.includes('2루타') && !o.text.includes('아웃'))).length, h3b: chronological.filter(r => r.textOptions?.some(o => o.type === 13 && o.text.startsWith(`${c[0]} : `) && o.text.includes('3루타') && !o.text.includes('아웃'))).length, avg: '', isSubstitute: !slot?.[0] };
+      return { name: c[0], order: Number(slot?.[0]) || 0, position: pos, positionFull: pos, atBats: count(c[1]), runs: count(c[2]), hits: count(c[3]), hr: count(c[4]), rbi: count(c[5]), sb: count(c[6]), bb: count(c[8]), so: count(c[9]), h2b: chronological.filter(r => r.textOptions?.some(o => o.type === 13 && o.text.startsWith(`${c[0]} : `) && o.text.includes('2루타') && !o.text.includes('아웃'))).length, h3b: chronological.filter(r => r.textOptions?.some(o => o.type === 13 && o.text.startsWith(`${c[0]} : `) && o.text.includes('3루타') && !o.text.includes('아웃'))).length, avg: '', isSubstitute: !slot?.[0] };
     });
   };
   const pitchers = (i: number): PitcherRecord[] => rows(pitcherTables[i]).map(c => {
     if (c.length !== 12 || !c[0]) throw new Error('KBO pitcher schema');
-    return { name: c[0], inningsPitched: c[1], decision: '', battersFaced: number(c[2]), pitchCount: number(c[3]), atBats: number(c[4]), hits: number(c[5]), hr: number(c[6]), walks: number(c[8]), strikeouts: number(c[9]), runs: number(c[10]), earnedRuns: number(c[11]), era: '' };
+    return { name: c[0], inningsPitched: c[1], decision: '', battersFaced: count(c[2]), pitchCount: count(c[3]), atBats: count(c[4]), hits: count(c[5]), hr: count(c[6]), walks: count(c[8]), strikeouts: count(c[9]), runs: count(c[10]), earnedRuns: count(c[11]), era: '' };
   });
   return { gameId, updatedAt: new Date().toISOString(), rows: chronological.reverse(), linescore: { away: side(0), home: side(1) }, boxScore: { awayBatters: batters(0), homeBatters: batters(1), awayPitchers: pitchers(0), homePitchers: pitchers(1) } };
 }
