@@ -1,3 +1,4 @@
+import { markCollectorRequest } from "./collector-request";
 import { createHash } from "node:crypto";
 import { NextRequest } from "next/server";
 import { RELAY_DEGRADED_HEADER } from "./relay-degraded-header";
@@ -236,7 +237,7 @@ export async function saveStatesAndSelectPersistable(params: {
 }
 
 /** 오늘 라이브 상태인 경기 gameId 목록. 실패는 그대로 throw (cron 이 5xx 로 노출). */
-export async function listLiveGameIds(date: string): Promise<string[]> {
+export async function listLiveGameIds(date: string, includeSnapshots = false): Promise<string[]> {
   // Publisher has a minute-long invocation; do not use the latency budget of a
   // user-facing poll. Leave time for Naver and postseason eligibility as well.
   const result = await fetchKboLiveGames(date, Date.now() + 10_000, undefined, undefined, undefined, undefined, {
@@ -244,7 +245,7 @@ export async function listLiveGameIds(date: string): Promise<string[]> {
     observe: (event) => console.info("[relay-publisher-discovery]", JSON.stringify(event)),
   });
   if (!result.ok) throw new Error("publisher game discovery failed");
-  return result.games.filter(g => g.GAME_STATE_SC === "2" && !isKboGameCancelled(g.CANCEL_SC_ID)).map(g => g.G_ID);
+  return result.games.filter(g => (g.GAME_STATE_SC === "2" || (includeSnapshots && (g.GAME_STATE_SC === "3" || g.GAME_STATE_SC === "1"))) && !isKboGameCancelled(g.CANCEL_SC_ID)).map(g => g.G_ID);
 }
 
 /** route handler 를 내부 호출하기 위한 NextRequest (공용 self-fetch 없음). */
@@ -257,7 +258,7 @@ export function internalGetRequest(
   for (const [k, v] of Object.entries(params)) url.searchParams.set(k, v);
   // 삼순 4차 ③: signal 을 handler 요청에 전달 — timeout abort 시 진행 중인 upstream fetch 가
   // 이 신호를 상속해 끊릴 수 있다(handler 가 req.signal 을 존중하는 경우).
-  return signal ? new NextRequest(url, { signal }) : new NextRequest(url);
+  return markCollectorRequest(signal ? new NextRequest(url, { signal }) : new NextRequest(url));
 }
 
 /**
@@ -328,6 +329,7 @@ export interface TickDeps {
   /** 이 인보케이션이 선예약한 단조 epoch(reserve_relay_epoch). 모든 프레임이 공유. */
   epoch: number;
   date: string;
+  publishSnapshot?: (gameId: string, channel: LivePollEnvelope["channel"], data: unknown, observedAt: string, ordinal: number, signal?: AbortSignal) => Promise<boolean>;
 }
 
 /**
@@ -403,6 +405,7 @@ export async function publishGameTick(
   };
   const channels = channelsForTick(tickIndex);
 
+  const collectionStartedAt = new Date().toISOString();
   const tasks = channels.map((channel) => ({
     channel,
     promise: envelopeFrom(channel, deps.handlers[channel](internalGetRequest(
@@ -430,6 +433,17 @@ export async function publishGameTick(
     }
     const { envelope, degraded } = fetched;
 
+    // Persist the complete validated envelope before delta conversion or content dedup.
+    // A source outage must never refresh the durable last-good observation time.
+    const data = envelope.data as Record<string, unknown>;
+    if (deps.publishSnapshot && !degraded && data?.degraded !== true && data?.partial !== true) {
+      const observedAt = channel === "relay" && typeof data.updatedAt === "string"
+        ? data.updatedAt : collectionStartedAt;
+      try {
+        const stored = await deps.publishSnapshot(gameId, channel, data, observedAt, ++state.seq, signal);
+        if (!stored) result.errors.push(`${gameId}:${channel}:snapshot-not-written`);
+      } catch { result.errors.push(`${gameId}:${channel}:snapshot-write-failed`); }
+    }
     const hash = frameHash(envelope.data);
     if (state.lastHash[channel] === hash) {
       result.skippedUnchanged += 1;
