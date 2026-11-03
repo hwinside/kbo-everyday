@@ -229,3 +229,29 @@ test('new successful collection replaces stale snapshot and retains it beyond fr
   assert.ok(Date.parse(recovered.updatedAt) > Date.parse(old.updatedAt));
   assert.deepEqual(JSON.parse(stored), recovered);
 });
+
+
+test('first-inning unplayed totals and boxscore counts accept placeholders but reject malformed numbers', () => {
+  const tr = (values: string[]) => `<tr>${values.map(v => `<td>${v}</td>`).join('')}</tr>`;
+  const score = (value: string) => `<table id="tblScoreBoard2"><tbody>${tr(['0', ...Array(8).fill('-')])}${tr(Array(9).fill('-'))}</tbody></table>
+    <table id="tblScoreBoard3"><tbody>${tr(['1', '2', '0', '0'])}${tr([value, '', '-', '0'])}</tbody></table>`;
+  const player = (header: string, name: string, values: string[]) => `<table><thead><tr><th>${header}</th></tr></thead><tbody>${tr([name, ...values])}</tbody></table>`;
+  const text = (value: string) => `<p class="ground">2026-10-27</p><span id="rptLiveText1_spanLiveText_0">1회초 KIA 공격</span>` +
+    [0, 1].map(i => `<table><caption>팀 타자</caption><tbody>${tr(['1', '8', `타자${i}`])}</tbody></table>` +
+      player('병살', `타자${i}`, [value, '', '-', '', '-', '', '-', '', '-', '', '-']) +
+      player('투구', `투수${i}`, ['0', value, '', '-', '', '-', '', '-', '', '-', ''])).join('');
+  const snapshot = parseKboLiveText(gameId, score('-'), text('-'));
+  assert.deepEqual(snapshot.linescore.home, { innings: Array(9).fill(null), R: 0, H: 0, E: 0 });
+  assert.equal(snapshot.linescore.away.R, 1);
+  assert.equal(snapshot.linescore.away.H, 2);
+  for (const batter of [...snapshot.boxScore.awayBatters, ...snapshot.boxScore.homeBatters]) {
+    for (const key of ['atBats', 'runs', 'hits', 'hr', 'rbi', 'sb', 'bb', 'so'] as const) assert.equal(batter[key], 0);
+  }
+  for (const pitcher of [...snapshot.boxScore.awayPitchers, ...snapshot.boxScore.homePitchers]) {
+    for (const key of ['battersFaced', 'pitchCount', 'atBats', 'hits', 'hr', 'walks', 'strikeouts', 'runs', 'earnedRuns'] as const) assert.equal(pitcher[key], 0);
+  }
+  for (const invalid of ['X', 'oops', '-1', '1.5']) {
+    assert.throws(() => parseKboLiveText(gameId, score(invalid), text('-')), /numeric schema/);
+    assert.throws(() => parseKboLiveText(gameId, score('-'), text(invalid)), /numeric schema/);
+  }
+});
