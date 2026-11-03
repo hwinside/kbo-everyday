@@ -66,7 +66,7 @@ export function buildEventText(event: GameEvent): string {
 
     case "pitching_change":
       return detail.playerOut && detail.playerIn
-        ? `🔄 투수 교체: ${detail.playerOut} → ${detail.playerIn}`
+        ? `🔄 ${detail.team ? `${detail.team} ` : ""}투수 교체: ${detail.playerOut} → ${detail.playerIn}${detail.timing === "observed" ? " (확인 시점 기준 · 교체 이닝 미확인)" : ""}`
         : `🔄 투수 교체: ${detail.playerIn || "새 투수"}`;
 
     case "info":
