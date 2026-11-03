@@ -380,31 +380,26 @@ export function generateEvents(
       }
     }
 
-    // Also check pitching side for pitcher changes via BoxScore
-    const prevPitchers = currentLive.isTop
-      ? prev.boxScore.homePitchers
-      : prev.boxScore.awayPitchers;
-    const currPitchers = currentLive.isTop
-      ? currentBoxScore.homePitchers
-      : currentBoxScore.awayPitchers;
-    const prevPNames = aggregatePitcherNames(prevPitchers);
-    const currPNames = aggregatePitcherNames(currPitchers);
-
-    if (prevPNames.length > 0 &&
-        currPNames.length === prevPNames.length + 1 &&
-        prevPNames.every((name, i) => name === currPNames[i])) {
-      // New pitcher appeared in BoxScore
-      const newPitcher = currPNames[currPNames.length - 1];
-      const oldPitcher = prevPNames[prevPNames.length - 1];
-      // Only emit if we didn't already detect it from live data
-      const alreadyEmitted = events.some(
-        e => e.type === "pitching_change" && e.detail.playerIn === newPitcher,
-      );
-      if (!alreadyEmitted && oldPitcher && newPitcher !== oldPitcher) {
+    // Check both teams: an inning transition can deliver the previous fielding
+    // team's roster late. Comparing only the current fielding side loses it.
+    for (const side of ["home", "away"] as const) {
+      const rosterKey = side === "home" ? "homePitchers" : "awayPitchers";
+      const before = aggregatePitcherNames(prev.boxScore[rosterKey]);
+      const after = aggregatePitcherNames(currentBoxScore[rosterKey]);
+      if (!before.length || after.length <= before.length ||
+          !before.every((name, i) => name === after[i]) ||
+          after.some(name => !name.trim()) || new Set(after).size !== after.length) continue;
+      // Emit each adjacent extension, never A->C when polling missed B.
+      // BoxScore establishes sequence, not the actual change inning/time.
+      for (let i = before.length; i < after.length; i++) {
+        const oldPitcher = after[i - 1];
+        const newPitcher = after[i];
         events.push(makeEvent(gameId, { ...currentLive, currentPitcher: newPitcher }, "pitching_change", {
           playerOut: oldPitcher,
           playerIn: newPitcher,
-        }, `${oldPitcher}->${newPitcher}-${currInningKey}`));
+          team: side === "home" ? currentLive.homeName : currentLive.awayName,
+          timing: "observed",
+        }, `${side}-${i}-${oldPitcher}->${newPitcher}`));
       }
     }
   }
