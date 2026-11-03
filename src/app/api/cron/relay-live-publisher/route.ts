@@ -8,6 +8,7 @@ import { GET as getDetail } from "@/app/api/game-detail/route";
 import { resolveGameLiveDate } from "@/lib/game-live-date";
 import {
   deserializeState,
+  createPublisherObservations,
   listLiveGameIds,
   publishGameTick,
   serializeState,
@@ -152,6 +153,7 @@ export async function GET(req: NextRequest) {
     return NextResponse.json({ error: "Redis 미설정 — 단일 writer 보장 불가(fail-close)" }, { status: 503 });
   }
 
+  const observations = createPublisherObservations();
   const token = randomUUID();
   const locked = await acquireLock(token);
   if (!locked) {
@@ -242,6 +244,7 @@ export async function GET(req: NextRequest) {
     };
 
     const deps = {
+      observe: observations.observe,
       handlers: { relay: getRelay, events: getEvents, live: getLive, detail: getDetail },
       insertFrame,
       epoch,
@@ -391,6 +394,11 @@ export async function GET(req: NextRequest) {
     // 모든 경로에서 타이머가 새지 않도록 보장한다(이전엔 loop 내 finally 만 있어
     // 조기 return 시 renewTimer 가 간혹 남아 불필요한 renewLock 을 계속 호출했다).
     clearInterval(renewTimer);
+    // One bounded summary per invocation, including partial failure/timeout exits.
+    console.info("[relay-publisher-channels]", JSON.stringify({
+      counts: observations.counts,
+      maxBytes: observations.maxBytes,
+    }));
     await releaseLock(token);
   }
 }
