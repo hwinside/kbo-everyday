@@ -40,7 +40,7 @@ async function main() {
     if (!embedded.ok) throw new Error(`supplement embedding failed: ${embedded.reason}`);
     additions.push({vector: embedded.vector, evidence: {
       content: row.text, pageTitle: row.title, sectionPath: `${row.title}#${row.section}`,
-      canonicalUrl: `https://6ptotvmi5753.edge.naverncp.com/KBO_FILE/ebook/pdf/${encodeURIComponent(row.file)}`,
+      canonicalUrl: `https://6ptotvmi5753.edge.naverncp.com/KBO_FILE/ebook/pdf/${row.file}`,
       revision: audit.revision, asOf: row.fetchedAt.slice(0, 10),
       sourceGrade: "tier1", sourceKind: "kbo_ebook",
     }});

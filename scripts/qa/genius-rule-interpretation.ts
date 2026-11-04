@@ -21,9 +21,18 @@ for (const note of notes) {
   for (const rule of note.scopedRules ?? []) {
     for (const quote of rule.quotes) assert.ok(fullText.includes(quote), "scope-linked quote must remain verbatim");
   }
-  const row: RagEvidence = {content: source.text, revision: audit.revision, canonicalUrl: note.canonicalUrl,
+  const row: RagEvidence = {content: source.text, revision: audit.revision, canonicalUrl: `https://6ptotvmi5753.edge.naverncp.com/KBO_FILE/ebook/pdf/${source.file}`,
     pageTitle: source.title, sectionPath: `${source.title}#${source.section}`, asOf: source.fetchedAt.slice(0, 10),
     sourceGrade: "tier1", sourceKind: "kbo_ebook"};
+  // Production loader/DB URL is Unicode, not a URL synthesized from the notes.
+  assert.equal(row.canonicalUrl, decodeURI(note.canonicalUrl));
+  assert.ok(officialRuleInterpretation(row), "production Unicode URL must bind");
+  for (const canonicalUrl of [note.canonicalUrl, note.canonicalUrl.replace(/%[0-9A-F]{2}/g, x => x.toLowerCase())]) {
+    const encoded = {...row, canonicalUrl};
+    assert.equal(officialRuleInterpretation(encoded), officialRuleInterpretation(row));
+    assert.equal(officialRuleScopePreamble(encoded), officialRuleScopePreamble(row));
+    assert.equal(officialInterpretationSummary([encoded]), officialInterpretationSummary([row]));
+  }
   const original = structuredClone(row);
   const rendered = officialModelEvidenceContent(row);
   const preamble = officialRuleScopePreamble(row);
@@ -39,6 +48,13 @@ for (const note of notes) {
   assert.deepEqual(row, original, "rendering must not alter grounding/provenance input");
   assert.ok(officialRuleInterpretation({...row, content: sanitizeEvidenceContent(row.content, row)}), "actual serving sanitizer must preserve binding");
   const mutations: Partial<RagEvidence>[] = [
+    {canonicalUrl: row.canonicalUrl + "%"},
+    {canonicalUrl: row.canonicalUrl + "%E0%A4"},
+    {canonicalUrl: row.canonicalUrl.replace("/pdf/", "/pdf%2F")},
+    {canonicalUrl: row.canonicalUrl.replace("https://", "http://")},
+    {canonicalUrl: row.canonicalUrl.replace("edge.naverncp.com", "example.com")},
+    {canonicalUrl: note.canonicalUrl.replaceAll("%", "%25")},
+    {canonicalUrl: row.canonicalUrl + "#spoof"},
     {revision: "local-substitution-preview"}, {revision: undefined},
     {canonicalUrl: row.canonicalUrl + "?spoof=1"}, {sourceGrade: "tier2"}, {sourceKind: "namu_document"},
     {content: row.content.slice(0, -1)}, {content: row.content + " 임의 해석"},
