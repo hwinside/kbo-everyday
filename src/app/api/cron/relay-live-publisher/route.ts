@@ -242,6 +242,9 @@ export async function GET(req: NextRequest) {
     };
 
     const deps = {
+      // Preserve the real origin for game-live's nested /api/games witness.
+      // No auth headers are forwarded; the live handler still runs in-process.
+      liveRequestOrigin: req.nextUrl.origin,
       observe: observations.observe,
       handlers: { relay: getRelay, events: getEvents, live: getLive, detail: getDetail },
       insertFrame,
