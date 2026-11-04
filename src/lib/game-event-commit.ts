@@ -28,7 +28,7 @@ export async function commitGameEventObservation(
     const row = await store.read();
     const prev = row?.prev_state ?? null;
     if (prev?.observedAt !== undefined && prev.observedAt >= observedAt) return row!;
-    const { events, nextState } = generateEvents(gameId, prev, live, boxScore ?? prev?.boxScore ?? null);
+    const { events, nextState } = generateEvents(gameId, prev, live, boxScore);
     if (nextState === prev) return row!;
     const history = [...(row?.event_history ?? [])];
     const ids = new Set(history.map(event => event.id));
