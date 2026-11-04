@@ -5,7 +5,13 @@ import type { RagEvidence } from "./retrieve";
 // Editorial interpretations, NOT official quotations or additional grounding.
 // Reviewed alongside their exact PDF/revision. No question routing or fallback
 // matching: changed, truncated or unrelated evidence gets no interpretation.
-const key = (url: string, revision: string, digest: string) => JSON.stringify([url, revision, digest]);
+// Decode once on BOTH sides: the loader stores Unicode PDF URLs, while
+// reviewed notes use percent encoding. decodeURI preserves reserved separators
+// (%2F, %3F, %23); malformed encodings fail closed, never fall back to raw text.
+const key = (url: string, revision: string, digest: string) => {
+  try { return JSON.stringify([decodeURI(url), revision, digest]); }
+  catch { return undefined; }
+};
 const index = new Map(notes.map(note => [key(note.canonicalUrl, note.sourceRevision, note.contentSha256), note]));
 
 function boundInterpretation(row: RagEvidence) {
