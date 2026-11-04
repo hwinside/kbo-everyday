@@ -1,4 +1,4 @@
-# Daily quality: restore substitution evidence, not a question-specific guard
+# Daily quality: source-bound substitution interpretation (R1)
 
 ## Observation and source
 
@@ -14,9 +14,9 @@
 
 The existing producer/selector restores the **whole section**, including exceptions, Futures-only minimum-batter scope, and mound visits. The selector now supports a numbered-rule bundle. The loader validates that the bundle suffix matches every included section, preserving existing document/PDF/ordinal/count checks. This is reusable source isolation, not a keyword answer override.
 
-New source: `kbo:ebook:2026-공식야구규칙-필수-조항-510`, revision `sha256:2342ad7c446a3fee`, 9 chunks. Existing sources, 2-chunk infield supplement and revision-bound sidecars remain untouched. No serving prompt, threshold, route, schema, cache, DM, workflow or main-branch change.
+New source: `kbo:ebook:2026-공식야구규칙-필수-조항-510`, revision `sha256:2342ad7c446a3fee`, 9 chunks. Existing sources, 2-chunk infield supplement and revision-bound sidecars remain untouched. R0 had no serving change. R1 adds exact-source editorial interpretation to model evidence rendering only; no question routing, system-prompt, threshold, response schema, grounding, cache, DM, workflow or main-branch change.
 
-Before: missing rule (a)/(d) evidence and observed wrong/off-topic answers. Candidate after: source-bound complete evidence is available to ordinary similarity ranking. **Answer improvement is not yet measured**; adding evidence alone is not a semantic PASS. No corpus application or embedding has been performed by the author.
+Before: missing rule (a)/(d) evidence and observed wrong/off-topic answers. Candidate after: source-bound complete evidence is available to ordinary similarity ranking. **R0 measured NO-GO**: adding evidence alone created confident errors. R1 effects remain unmeasured; no semantic PASS is claimed. No corpus application or embedding has been performed by the author.
 
 ## Reviewer execution
 
@@ -43,3 +43,22 @@ Dry-run: one source, 9 chunks, no skipped records, one embedding batch planned; 
 `gh pr list` + `git ls-remote --heads` checked before branching from origin/main. #1608 is merged/QA complete. No other active substitution-source fix. #1541 remains NO-GO11 (not reset); its failed term-referent approach is not resumed. #1523 Draft sibling R3 and #1537 Draft scope experiments retain counterexamples, excluded from this patch. #1536 Draft is redundant with the #1538 merged design; preserve before any separate closure decision. No PR/branch deleted or force-pushed.
 
 This PR's Flow owns exact SHA, review rounds, next actor and review continuation. Daily SSOT: `state/followups/genius-daily-quality.md` in the agent workspace. Next daily sample must distinguish QA IDs, natural-use evidence, semantic regression and delivery failures; analysis-only is not improvement completion.
+
+## R0 NO-GO → R1 redesign
+
+Reviewer Slack `1793760413.526079`, exact `99d79b3fec30c473cc529b89aea3a6049ceb5084`: 90/90 observations, errors 0; NO-GO (1/3). Evidence: `$OPENCLAW_REVIEW_ROOT/art1611/live.json` and `grade.txt`. Same-inning return became confidently wrong 3/3, observed repeated question still wrong 2/3; next-inning answer imported Futures-only minimum 3/3, KBO first-team minimum regressed to unsure 3/3. Removal and second outward move improved, unrelated 7 cases unchanged. Keep these results, not merely the passing corpus validation.
+
+R1 keeps all nine official chunks, hashes, source revision and rollback unchanged. The redesign is **reviewed editorial interpretation, not more official source text and not a syntactic parser**:
+
+- `official-rule-interpretations.json` binds five complete chunks to exact canonical URL + revision + whitespace-normalized content digest + tier1/kbo_ebook. It carries verbatim related clauses from the same PDF and explicitly labels the explanation as editorial, separate from the original. Review its semantics against the source; a matching hash alone does not prove an interpretation correct.
+- For (a)/(d), represent game participation separately from fielding position: out of game → no re-entry; pitcher → fielder → pitcher permitted; another outward move within the inning forbidden. A bare “left the mound” does not specify which state changed. The false previous DM is not rule evidence. No DH or special-case adjudication is inferred.
+- For (g), its continuation and (i), preserve the Futures-only scope across the chunk boundary and distinguish minimum-batter duty from next-inning eligibility. No extension of the Futures obligation to KBO first-team baseball.
+- Rendering appends only this source-bound note. Original evidence, ranking, numeric/calendar guards and citation/provenance inputs are unchanged. Related quotes/interpretation do **not** license new numbers. Missing/stale/mutated bindings get no note, not a fabricated answer. These bindings cover the newly added source only; old-source weaknesses are not silently claimed fixed.
+- This is intentionally a source-specific **data interpretation**, not a rule-specific question matcher or an automatic semantic verifier. It still relies on model reading and independent live assessment. A new confident error remains NO-GO; no threshold weakening or hiding failing cases.
+
+### R1 review commands and acceptance
+
+1. `npx --no-install tsx scripts/qa/genius-rule-interpretation.ts`: real corpus quotation/binding checks, original/grounding preservation, sanitizer compatibility and stale/revision/URL/grade/kind/truncation/content mutation rejection. Also run existing `qa:official-parenthetical-serving` and `qa:genius-required-rule-corpus`. Author does not execute QA scripts.
+2. Re-run the existing paired live command to a **new output path**, preserving R0 artifacts. The preview now uses the actual loader revision (not the old fake `local-substitution-preview`), so exact-source notes activate just as in production. Baseline has no new source; note matching therefore cannot change its model input. Record note-file SHA alongside corpus/fixture SHA. Same 15 cases × 3 × baseline/candidate = 90, frozen read results, no writes. This is still pre-application retrieval, not production QA.
+3. Grade *every* sample. P0 return must be correctly allowed 3/3, removal and second outward move forbidden, the two complete observed questions must explicitly distinguish the states rather than merely quote the once-per-inning sentence. Incomplete correction may ask for clarification; `unsure` remains unresolved, never PASS. No KBO first-team Futures leakage or loss of the existing correct minimum answer. Same 7 unrelated regressions required. Test independent paraphrases and competing scopes (explicit Futures, DH effect) as counterexamples; do not accept blanket permission outside the source's scope.
+4. No application/merge before current exact GO and required checks. R0 NO-GO count retained; R1 is the first diff-changing rework. If this source-bound interpretation does not eliminate confident errors, keep NO-GO and use the remaining round budget/stop rule rather than shipping the corpus alone.

@@ -1,7 +1,7 @@
 /** Reviewer-owned read-only paired corpus diagnostic. No writes/accounts/DM.
  * --live --out=/new/absolute.json [--reps=3]
- * Same current-main code, frozen per-query RPC results, baseline vs local-ranked
- * supplemental evidence. This is NOT post-application retrieval or UI QA.
+ * Frozen per-query RPC results, baseline without new source vs local-ranked
+ * supplemental evidence with exact-source notes. NOT deployed retrieval/UI QA.
  * Manually grade all answers and errors; a nonempty answer is not a PASS.
  */
 import fs from "node:fs";
@@ -12,6 +12,7 @@ import { answerQuestion, type QaDeps } from "../../src/lib/baseball-qa/pipeline"
 import type { PreviousTurnRow } from "../../src/lib/baseball-qa/context";
 import { embedText } from "../../src/lib/baseball-qa/rag/embed";
 import { RAG_DOCUMENT_MAX_DISTANCE, RAG_DOCUMENT_CANDIDATE_LIMIT, type RagEvidence } from "../../src/lib/baseball-qa/rag/retrieve";
+import { officialRuleInterpretation } from "../../src/lib/baseball-qa/rag/official-rule-interpretation";
 
 const option = (name: string) => process.argv.find(a => a.startsWith(`--${name}=`))?.slice(name.length + 3);
 const digest = (s: string) => createHash("sha256").update(s).digest("hex");
@@ -27,6 +28,8 @@ async function main() {
   const root = path.resolve(import.meta.dirname, "../..");
   const fixture = fs.readFileSync(path.join(root, "scripts/qa/fixtures/genius-substitution-20261104.json"), "utf8");
   const corpus = fs.readFileSync(path.join(root, "data/baseball-qa/kbo-substitution-2026.jsonl"), "utf8");
+  const audit = JSON.parse(fs.readFileSync(path.join(root, "data/baseball-qa/kbo-substitution-2026.audit.json"), "utf8"));
+  const interpretations = fs.readFileSync(path.join(root, "src/lib/baseball-qa/rag/official-rule-interpretations.json"), "utf8");
   const cases: Array<{id: string; question: string; expected: string; previousTurn: PreviousTurnRow | null}> = JSON.parse(fixture);
   const server = await import("../../src/lib/baseball-qa/server");
   const production = server.makeDeps(0);
@@ -38,7 +41,7 @@ async function main() {
     additions.push({vector: embedded.vector, evidence: {
       content: row.text, pageTitle: row.title, sectionPath: `${row.title}#${row.section}`,
       canonicalUrl: `https://6ptotvmi5753.edge.naverncp.com/KBO_FILE/ebook/pdf/${encodeURIComponent(row.file)}`,
-      revision: "local-substitution-preview", asOf: row.fetchedAt.slice(0, 10),
+      revision: audit.revision, asOf: row.fetchedAt.slice(0, 10),
       sourceGrade: "tier1", sourceKind: "kbo_ebook",
     }});
   }
@@ -47,8 +50,8 @@ async function main() {
   const referenceTimeMs = Date.now();
   const sha = execFileSync("git", ["rev-parse", "HEAD"], {cwd: root, encoding: "utf8"}).trim();
   const save = () => fs.writeFileSync(out, JSON.stringify({sha, referenceTimeMs,
-    scope: "paired current-main pipeline; actual observed prior DM; local-ranked supplement preview, NOT deployed/UI PASS",
-    fixtureSha256: digest(fixture), corpusSha256: digest(corpus), cases, reps,
+    scope: "baseline without new source vs local-ranked supplement + exact-source editorial interpretation; NOT deployed/UI PASS",
+    fixtureSha256: digest(fixture), corpusSha256: digest(corpus), interpretationsSha256: digest(interpretations), cases, reps,
     planned: cases.length * reps * 2, completed: traces.length, snapshots: Object.fromEntries(snapshots), traces,
   }, null, 2), {mode: 0o600});
   for (let rep = 0; rep < reps; rep++) for (const sample of cases) {
@@ -68,6 +71,7 @@ async function main() {
         searchOfficialRag: async query => {
           if (!snapshots.has(query)) {
             const baseline = await server.searchOfficialRag(query);
+            if (baseline.some(row => officialRuleInterpretation(row))) throw new Error("baseline already contains annotated candidate source");
             const embedded = await embedText(query, "query");
             if (!embedded.ok || baseline.some(e => !Number.isFinite(e.distance))) throw new Error("retrieval snapshot incomplete");
             const candidate = [...baseline, ...additions.map(a => ({...a.evidence, distance: distance(embedded.vector, a.vector)}))]
@@ -81,7 +85,8 @@ async function main() {
         },
         callOfficialRagLlm: async (q, evidence, extras) => {
           const raw = await server.callOfficialRagLlm(q, evidence, extras);
-          trace.push({stage: "official-generation", question: q, evidence, extras, raw}); return raw;
+          trace.push({stage: "official-generation", question: q, evidence, extras, raw,
+            interpretations: evidence.map(row => officialRuleInterpretation(row))}); return raw;
         },
         callLlm: async (...args) => {
           const raw = await server.callLlm(...args); trace.push({stage: "generic-generation", raw}); return raw;
