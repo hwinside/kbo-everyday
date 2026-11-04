@@ -1,0 +1,113 @@
+[
+  {
+    "id": "observed-3316778",
+    "question": "한번 마운드에서 냐려갓던 투수는 다시 올라올수잇어?",
+    "before": "야구 규칙에 따르면 이미 경기에 출장하고 있는 투수가 이닝의 처음에 파울 라인을 넘어서면 첫 번째 타자가 아웃이 되거나 1루에 나갈 때까지 투구해야 해요. 단, 대타가 나오거나 투수가 부상으로 투구가 불가능하다고 심판진이 인정할 경우는 제외되어요. 또한 타자의 대타자가 기용되었을 때 감독이나 코치가 투수 곁으로 다시 갈 수는 있지만 그 투수는 대타자가 아웃되거나 주자가 되거나 공수교대가 될 때까지 투구한 후 물러나야 해요.\n\n📄 출처: KBO 공식 자료",
+    "expected": "Distinguish removal from the game from changing fielding positions; no blanket ban. Clarification is acceptable for the incomplete correction.",
+    "previousTurn": {
+      "question": "보크",
+      "answer": "주자가 있을 때 투수가 규칙에 어긋난 투구 동작을 하는 반칙입니다.\n보크가 선언되면 모든 주자가 한 베이스씩 진루합니다.\n투구 동작을 시작했다 멈추는 것이 대표적인 예입니다.",
+      "jobSource": "dictionary",
+      "answeredAt": "2026-09-19T22:42:36.926994+00:00",
+      "currentCreatedAt": "2026-11-03T10:59:55.241458+00:00"
+    }
+  },
+  {
+    "id": "observed-3316780",
+    "question": "아니 마운드에서 한전",
+    "before": "경기에 한 번 등판했던 투수가 마운드에서 내려갔다가 다른 포지션으로 뛰거나 경기에서 완전히 빠진 경우에는 다시 마운드에 올라와 투수 역할을 할 수 없어요. 하지만 투수가 타순 변경이나 대타 교대 없이 잠시 수비 위치만 덕아웃이나 다른 포지션으로 이동했다가 투수로 다시 돌아오는 것은 규정상 허용되지 않아요. 투수 교체로 마운드를 내려간 선수는 그 경기의 투수로 재등판할 수 없답니다.",
+    "expected": "Distinguish removal from the game from changing fielding positions; no blanket ban. Clarification is acceptable for the incomplete correction.",
+    "previousTurn": {
+      "question": "한번 마운드에서 냐려갓던 투수는 다시 올라올수잇어?",
+      "answer": "야구 규칙에 따르면 이미 경기에 출장하고 있는 투수가 이닝의 처음에 파울 라인을 넘어서면 첫 번째 타자가 아웃이 되거나 1루에 나갈 때까지 투구해야 해요. 단, 대타가 나오거나 투수가 부상으로 투구가 불가능하다고 심판진이 인정할 경우는 제외되어요. 또한 타자의 대타자가 기용되었을 때 감독이나 코치가 투수 곁으로 다시 갈 수는 있지만 그 투수는 대타자가 아웃되거나 주자가 되거나 공수교대가 될 때까지 투구한 후 물러나야 해요.\n\n📄 출처: KBO 공식 자료",
+      "jobSource": "rag",
+      "answeredAt": "2026-11-03T10:59:55.411506+00:00",
+      "currentCreatedAt": "2026-11-03T11:00:30.479442+00:00"
+    }
+  },
+  {
+    "id": "observed-3316782",
+    "question": "아니 마운드에서 한번 내려갓던 투수가 마운드에 다시 올라올수있냐고",
+    "before": "경기에 한 번 등판하여 투수로서 공을 던지던 투수가 마운드에서 내려간 경우에는 그 경기에 다시 투수로 등판할 수 없어요. 공식야구규칙에 따르면 투수 교체로 물러난 투수는 마운드에 다시 올라올 수 없답니다.\n\n📄 출처: KBO 공식 자료",
+    "expected": "Distinguish removal from the game from changing fielding positions; no blanket ban. Clarification is acceptable for the incomplete correction.",
+    "previousTurn": {
+      "question": "아니 마운드에서 한전",
+      "answer": "경기에 한 번 등판했던 투수가 마운드에서 내려갔다가 다른 포지션으로 뛰거나 경기에서 완전히 빠진 경우에는 다시 마운드에 올라와 투수 역할을 할 수 없어요. 하지만 투수가 타순 변경이나 대타 교대 없이 잠시 수비 위치만 덕아웃이나 다른 포지션으로 이동했다가 투수로 다시 돌아오는 것은 규정상 허용되지 않아요. 투수 교체로 마운드를 내려간 선수는 그 경기의 투수로 재등판할 수 없답니다.",
+      "jobSource": "llm",
+      "answeredAt": "2026-11-03T11:00:30.681039+00:00",
+      "currentCreatedAt": "2026-11-03T11:00:54.908599+00:00"
+    }
+  },
+  {
+    "id": "regression-0",
+    "question": "경기에서 교체되어 벤치로 물러난 투수가 같은 경기에 다시 등판할 수 있어?",
+    "expected": "No return after removal from game.",
+    "previousTurn": null
+  },
+  {
+    "id": "regression-1",
+    "question": "투수가 좌익수로 수비하다가 같은 이닝 다시 투수로 돌아올 수 있어?",
+    "expected": "Position change is not removal; return is possible.",
+    "previousTurn": null
+  },
+  {
+    "id": "regression-2",
+    "question": "투수가 다음 이닝에도 계속 던질 수 있어?",
+    "expected": "Continuing next inning is permitted.",
+    "previousTurn": null
+  },
+  {
+    "id": "regression-3",
+    "question": "투수가 한 이닝에 외야로 갔다 투수로 돌아온 다음 또 외야로 갈 수 있어?",
+    "expected": "Only one move to another fielding position per inning.",
+    "previousTurn": null
+  },
+  {
+    "id": "regression-4",
+    "question": "KBO 1군 구원투수는 무조건 세 타자를 상대해야 해?",
+    "expected": "Do not apply Futures-only minimum to KBO first team.",
+    "previousTurn": null
+  },
+  {
+    "id": "regression-5",
+    "question": "2사 만루에도 인필드플라이야?",
+    "expected": "No.",
+    "previousTurn": null
+  },
+  {
+    "id": "regression-6",
+    "question": "1사 1·2루에서 평범한 내야 페어 플라이면 인필드플라이야?",
+    "expected": "Preserve ordinary-effort and non-bunt/non-line-drive conditions.",
+    "previousTurn": null
+  },
+  {
+    "id": "regression-7",
+    "question": "무사 만루 번트가 뜨면 인필드플라이야?",
+    "expected": "No.",
+    "previousTurn": null
+  },
+  {
+    "id": "regression-8",
+    "question": "타격방해가 나오면 기본적으로 어떻게 판정돼?",
+    "expected": "Batter entitlement and offensive election; not automatic batter out.",
+    "previousTurn": null
+  },
+  {
+    "id": "regression-9",
+    "question": "주자가 고의로 송구를 방해하면 아웃이야?",
+    "expected": "Out, not merely return to base.",
+    "previousTurn": null
+  },
+  {
+    "id": "regression-10",
+    "question": "타자가 친 공이 3루 베이스를 맞고 파울 지역으로 가면 페어야?",
+    "expected": "Fair.",
+    "previousTurn": null
+  },
+  {
+    "id": "regression-11",
+    "question": "APBC가 뭐야?",
+    "expected": "Existing dictionary definition unchanged.",
+    "previousTurn": null
+  }
+]

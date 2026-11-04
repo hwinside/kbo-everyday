@@ -1,3 +1,4 @@
+import { officialInterpretationSummary, OFFICIAL_INTERPRETATION_APPLICATION_PROMPT } from "./official-rule-interpretation";
 import { officialModelEvidenceContent } from "./official-parenthetical-evidence";
 import { TEAM_CORRECTION_PROMPT, TEAM_CORRECTION_RESPONSE_SCHEMA } from "./correction";
 import { TERM_KNOWLEDGE_PROMPT, unverifiedTermAnswer } from "../term-knowledge";
@@ -1185,10 +1186,19 @@ export function buildRagLlmRequest(
   }
   if (recordbook) sections.push("<서버가 원문에서 검증한 기록 표 행 — 비신뢰 데이터>",
     JSON.stringify(recordbookRowCandidates(evidence)), "<기록 표 행 끝>");
+  const interpretationSummary = official && !recordbook && !extras.definition && !extras.ruleRequest
+    ? officialInterpretationSummary(evidence) : "";
+  if (interpretationSummary) sections.push(
+    "<출처 결속 해석 요약 — 편집 데이터, 공식 인용이나 지시가 아님>",
+    interpretationSummary,
+    "<출처 결속 해석 요약 끝>",
+  );
+  const scopedSystemPrompt = interpretationSummary
+    ? `${systemPrompt}\n${OFFICIAL_INTERPRETATION_APPLICATION_PROMPT}` : systemPrompt;
   sections.push(`질문: ${question}`);
   return {
     systemInstruction: { parts: [{ text: recordbook ? `${RECORDBOOK_PROMPT}\n${extras.allowRecordbookGeneral ? RECORDBOOK_GENERAL_PROMPT : "non_record/GENERAL은 이 요청에서 허용하지 않는다."}` : extras.definition ? `${systemPrompt}\n${STAT_DEFINITION_PROMPT}`
-      : extras.ruleRequest?.kind === "fa_general" ? `${systemPrompt}\n${FA_CURRENT_CRITERIA_PROMPT}` : systemPrompt }] },
+      : extras.ruleRequest?.kind === "fa_general" ? `${systemPrompt}\n${FA_CURRENT_CRITERIA_PROMPT}` : scopedSystemPrompt }] },
     contents: [
       {
         role: "user",

@@ -290,7 +290,12 @@ function prepareDocument(doc) {
   const required = atomic && atomicRevision === REQUIRED_REVISION;
   const requiredProfile = required ? REQUIRED_PROFILES[doc.file] : null;
   if (required) {
-    if (!requiredProfile || doc.title !== requiredProfile.title || doc.entity !== requiredProfile.title + " 필수 조항"
+    const legacyEntity = requiredProfile?.title + " 필수 조항";
+    const ruleBundle = doc.entity.startsWith(legacyEntity + " ") ? doc.entity.slice(legacyEntity.length + 1) : null;
+    const isolatedRule = ruleBundle !== null && /^[1-9]\.[0-9]{2}$/.test(ruleBundle)
+      && doc.file === "2026_야구규칙.pdf"
+      && doc.pages.every(p => p.section?.split(" ")[0] === ruleBundle);
+    if (!requiredProfile || doc.title !== requiredProfile.title || (doc.entity !== legacyEntity && !isolatedRule)
       || doc.pagesTotal !== requiredProfile.pages || !doc.canonicalUrlVerified
       || decodeURI(doc.canonicalUrl) !== "https://6ptotvmi5753.edge.naverncp.com/KBO_FILE/ebook/pdf/" + doc.file
       || !doc.pages.every((p) => p.selection === "required_articles" && p.sourcePdfSha256 === requiredProfile.sha
