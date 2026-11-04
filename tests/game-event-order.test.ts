@@ -240,3 +240,16 @@ test('opposing team live-confirmed pitcher cannot be mistaken for own replacemen
   const b=generateEvents(id,a.nextState,live({currentPitcher:'양현종',balls:1}),emptyBox());
   assert.equal(changes(b).length,0);
 });
+
+test('present fielding roster disables live-only detection even for a stable new name with progress', () => {
+  for (const isTop of [true, false]) {
+    const previous = state({isTop});
+    previous.boxScore!.awayPitchers = box(['올러']).homePitchers;
+    const currentPitcher = isTop ? '이승민' : '양현종';
+    const first = generateEvents(id, previous, live({isTop, currentPitcher}), previous.boxScore);
+    const second = generateEvents(id, first.nextState, live({isTop, currentPitcher, balls: 1}), previous.boxScore);
+    assert.equal(changes(first).length, 0);
+    assert.equal(changes(second).length, 0, `${isTop ? 'home' : 'away'} roster must remain authoritative`);
+    assert.equal(second.nextState.pitcherCandidate, undefined);
+  }
+});
