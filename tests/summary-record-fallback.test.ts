@@ -25,3 +25,26 @@ test('pitching innings and unnamed team pitching-change inning are not guessed',
   assert.equal(hasFalsePitcherInnings({ mvpPitcher: { name: '후라도', stats: '7이닝 1실점' } }, facts), false);
   assert.equal(hasUnsupportedPlayerInning({ gameFlow: { late: '삼성은 7회부터 마운드를 교체했다.' } }, ['후라도']), true);
 });
+
+
+test('extra-inning record preserves all runs and ignores unplayed trailing cells', () => {
+  const summary = buildRecordSummary({ awayTeam: '삼성', homeTeam: 'KT', awayScore: 3, homeScore: 2,
+    linescore: { away: { innings: [1,0,0,0,0,0,0,0,0,1,0,1,null] },
+      home: { innings: [0,1,0,0,0,0,0,0,0,1,0,0,null] } } });
+  const flow = summary.gameFlow as Record<string, string>;
+  assert.equal(flow.extra, '10~12회 득점은 삼성 2점, KT 1점입니다.');
+  assert.match(flow.early, /삼성 1점, KT 1점/);
+  assert.equal(hasUnsupportedPlayerInning(summary, ['원태인']), false);
+  assert.equal(hasUnsupportedPlayerInning({ headline: '연장 12회 삼성 승리' }, ['원태인']), false);
+  assert.equal(hasUnsupportedPlayerInning({ headline: '연장 12회 원태인 결승타' }, ['원태인']), true);
+});
+
+test('regulation game has no extra phase; walkoff and scoreless extra innings remain visible', () => {
+  const build = (away: (number|null)[], home: (number|null)[]) => buildRecordSummary({
+    awayTeam: '삼성', homeTeam: 'KT', awayScore: 0, homeScore: 0,
+    linescore: { away: { innings: away }, home: { innings: home } },
+  }).gameFlow as Record<string,string>;
+  assert.equal(build(Array(9).fill(0), [...Array(8).fill(0), null]).extra, undefined);
+  assert.equal(build(Array(11).fill(0), Array(11).fill(0)).extra, '10~11회 득점은 삼성 0점, KT 0점입니다.');
+  assert.equal(build(Array(10).fill(0), [...Array(9).fill(0), 1]).extra, '10~10회 득점은 삼성 0점, KT 1점입니다.');
+});

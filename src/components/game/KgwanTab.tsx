@@ -531,7 +531,7 @@ function FinalView({ gameId, homeTeamId, awayTeamId, boxScore, linescore, refres
   const [llmSummary, setLlmSummary] = useState<{
     summaryKind?: "record";
     headline: string;
-    gameFlow?: { early: string; mid: string; late: string };
+    gameFlow?: { early: string; mid: string; late: string; extra?: string };
     turningPoint: string;
     mvpBatter: string | { name: string; stats: string; reason: string } | null;
     mvpPitcher: string | { name: string; stats: string; reason: string } | null;
@@ -853,7 +853,8 @@ function FinalView({ gameId, homeTeamId, awayTeamId, boxScore, linescore, refres
                 {[
                   { label: "초반 (1~3회)", text: summary.gameFlow.early },
                   { label: "중반 (4~6회)", text: summary.gameFlow.mid },
-                  { label: "후반 (7~9회)", text: summary.gameFlow.late },
+                  { label: summary.gameFlow.extra ? "후반 (7~9회)" : "후반 (7회 이후)", text: summary.gameFlow.late },
+                  ...(summary.gameFlow.extra ? [{ label: "연장 (10회 이후)", text: summary.gameFlow.extra }] : []),
                 ].map((phase) => (
                   <div key={phase.label}>
                     <span className="text-[10px] font-bold text-accent/70">{phase.label}</span>
