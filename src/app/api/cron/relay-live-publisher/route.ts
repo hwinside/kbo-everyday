@@ -74,6 +74,10 @@ async function redisCommand(args: Array<string | number>): Promise<unknown | nul
   return result.ok ? result.value : null;
 }
 
+function acquireLock(token: string) {
+  return acquirePublisherLock(token, LOCK_KEY, LOCK_TTL_MS, redisConfig());
+}
+
 /**
  * 내 토큰일 때만 TTL 연장. 연장 성공 시 true. 토큰 불일치(다른 writer 가 잡음)·
  * 키 소멸·Redis 오류는 false — 호출자는 즉시 중단해야 한다(삼순 2차 P1 lease).
@@ -136,7 +140,7 @@ export async function GET(req: NextRequest) {
 
   const observations = createPublisherObservations();
   const token = randomUUID();
-  const locked = await acquirePublisherLock(token, LOCK_KEY, LOCK_TTL_MS, redisConfig());
+  const locked = await acquireLock(token);
   if (locked === "unavailable") {
     return NextResponse.json({ error: "redis-unavailable" }, { status: 503 });
   }
