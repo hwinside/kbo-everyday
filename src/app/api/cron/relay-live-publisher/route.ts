@@ -1,3 +1,4 @@
+import { publisherRedisCommand, acquirePublisherLock } from "@/lib/game/publisher-redis";
 import { snapshotWritesEnabled } from "@/lib/game/collector-request";
 import { NextRequest, NextResponse } from "next/server";
 import { randomUUID } from "node:crypto";
@@ -69,29 +70,8 @@ function redisConfig(): { url: string; token: string } | null {
 }
 
 async function redisCommand(args: Array<string | number>): Promise<unknown | null> {
-  const cfg = redisConfig();
-  if (!cfg) return null;
-  try {
-    const response = await fetch(cfg.url, {
-      method: "POST",
-      headers: { Authorization: `Bearer ${cfg.token}`, "Content-Type": "application/json" },
-      body: JSON.stringify(args),
-      cache: "no-store",
-      signal: AbortSignal.timeout(3_000),
-    });
-    if (!response.ok) return null;
-    const payload = (await response.json()) as { result?: unknown; error?: unknown };
-    if (payload.error !== undefined || !("result" in payload)) return null;
-    return payload.result;
-  } catch {
-    return null;
-  }
-}
-
-/** 토큰 락 획득. 성공 시 토큰 문자열, 실패 시 null. */
-async function acquireLock(token: string): Promise<boolean> {
-  const result = await redisCommand(["SET", LOCK_KEY, token, "NX", "PX", LOCK_TTL_MS]);
-  return result === "OK";
+  const result = await publisherRedisCommand(args, redisConfig());
+  return result.ok ? result.value : null;
 }
 
 /**
@@ -156,9 +136,12 @@ export async function GET(req: NextRequest) {
 
   const observations = createPublisherObservations();
   const token = randomUUID();
-  const locked = await acquireLock(token);
-  if (!locked) {
-    console.warn("[relay-publisher] lock-unavailable", { region: process.env.VERCEL_REGION ?? "unknown" });
+  const locked = await acquirePublisherLock(token, LOCK_KEY, LOCK_TTL_MS, redisConfig());
+  if (locked === "unavailable") {
+    return NextResponse.json({ error: "redis-unavailable" }, { status: 503 });
+  }
+  if (locked === "held") {
+    console.warn("[relay-publisher] lock-held", { region: process.env.VERCEL_REGION ?? "unknown" });
     return NextResponse.json({ skipped: true, reason: "lock-held" });
   }
 
