@@ -2,10 +2,10 @@
 import assert from "node:assert/strict";
 import fs from "node:fs";
 import notes from "../../src/lib/baseball-qa/rag/official-rule-interpretations.json";
-import { officialRuleInterpretation } from "../../src/lib/baseball-qa/rag/official-rule-interpretation";
+import { officialRuleInterpretation, officialInterpretationSummary, OFFICIAL_INTERPRETATION_APPLICATION_PROMPT } from "../../src/lib/baseball-qa/rag/official-rule-interpretation";
 import { officialModelEvidenceContent } from "../../src/lib/baseball-qa/rag/official-parenthetical-evidence";
 import { annotationContentDigest } from "../../src/lib/baseball-qa/rag/official-parenthetical-structure.mjs";
-import { sanitizeEvidenceContent, type RagEvidence } from "../../src/lib/baseball-qa/rag/retrieve";
+import { buildRagLlmRequest, RAG_OFFICIAL_SYSTEM_PROMPT, RAG_SYSTEM_PROMPT, sanitizeEvidenceContent, type RagEvidence } from "../../src/lib/baseball-qa/rag/retrieve";
 
 const corpus = fs.readFileSync("data/baseball-qa/kbo-substitution-2026.jsonl", "utf8")
   .trim().split("\n").map(line => JSON.parse(line));
@@ -33,7 +33,22 @@ for (const note of notes) {
     {content: row.content.slice(0, -1)}, {content: row.content + " 임의 해석"},
     {content: row.content.replace("투수", "포수")},
   ];
-  for (const mutation of mutations) assert.equal(officialRuleInterpretation({...row, ...mutation}), "");
+  const context = {question: "앞선 질문", answer: "검증되지 않은 과거 주장"};
+  const request = buildRagLlmRequest("다시 설명해 줘", [row], RAG_OFFICIAL_SYSTEM_PROMPT, {context});
+  const body = request.contents[0].parts[0].text;
+  assert.ok(request.systemInstruction.parts[0].text.endsWith(OFFICIAL_INTERPRETATION_APPLICATION_PROMPT));
+  assert.ok(body.indexOf("<출처 결속 해석 요약 —") > body.indexOf("<직전 대화 끝>"));
+  assert.ok(body.indexOf("<출처 결속 해석 요약 끝>") < body.indexOf("질문: 다시 설명해 줘"));
+  const summary = JSON.parse(officialInterpretationSummary([row, row]));
+  assert.deepEqual(summary.evidence, [1, 2]);
+  assert.equal(summary.interpretation, note.interpretation);
+  assert.equal(buildRagLlmRequest("질문", [row], RAG_SYSTEM_PROMPT).systemInstruction.parts[0].text, RAG_SYSTEM_PROMPT);
+  for (const mutation of mutations) {
+    const changed = {...row, ...mutation};
+    assert.equal(officialRuleInterpretation(changed), "");
+    assert.equal(officialInterpretationSummary([changed]), "");
+    assert.equal(buildRagLlmRequest("질문", [changed], RAG_OFFICIAL_SYSTEM_PROMPT).systemInstruction.parts[0].text, RAG_OFFICIAL_SYSTEM_PROMPT);
+  }
 }
 // Old infield source must be byte-for-byte unchanged by the new interpretation.
 for (const line of fs.readFileSync("data/baseball-qa/kbo-rulebook-supplement-2026.jsonl", "utf8").trim().split("\n")) {
