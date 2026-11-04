@@ -41,9 +41,13 @@ export function buildRecordSummary(input: RecordInput): Record<string, unknown> 
       .reduce<number>((sum, runs) => sum + (runs ?? 0), 0);
     return `${start}~${end}회 득점은 ${awayTeam} ${total('away')}점, ${homeTeam} ${total('home')}점입니다.`;
   };
+  const lastInning = Math.max(
+    input.linescore?.away.innings.findLastIndex(runs => runs !== null) ?? -1,
+    input.linescore?.home.innings.findLastIndex(runs => runs !== null) ?? -1,
+  ) + 1;
   return {
     headline: result, insight: `최종 스코어는 ${awayTeam} ${awayScore}점, ${homeTeam} ${homeScore}점입니다.`,
-    gameFlow: { early: flow(1, 3), mid: flow(4, 6), late: flow(7, 9) },
+    gameFlow: { early: flow(1, 3), mid: flow(4, 6), late: flow(7, 9), ...(lastInning > 9 ? { extra: flow(10, lastInning) } : {}) },
     turningPoint: '', summaryKind: 'record',
   };
 }
