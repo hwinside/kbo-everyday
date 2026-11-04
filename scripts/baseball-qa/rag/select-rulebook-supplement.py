@@ -7,6 +7,7 @@ Run prepare-rulebook-corpus.py first; its audit binds the full PDF and output.
 import argparse
 import hashlib
 import json
+import re
 from pathlib import Path
 
 
@@ -15,7 +16,11 @@ def main():
     for name in ("input", "audit", "output"):
         p.add_argument("--" + name, required=True, type=Path)
     p.add_argument("--section", required=True, action="append")
+    p.add_argument("--bundle-rule", help="Isolate one numbered rule in its own source; existing supplements stay unchanged")
     args = p.parse_args()
+    if args.bundle_rule and (not re.fullmatch(r"[1-9]\.[0-9]{2}", args.bundle_rule)
+                            or any(s.split(" ")[0] != args.bundle_rule for s in args.section)):
+        raise ValueError("bundle-rule must match every selected section's rule number")
     if args.output.resolve() in (args.input.resolve(), args.audit.resolve()):
         raise ValueError("output must not overwrite source")
     raw = args.input.read_bytes()
@@ -32,7 +37,7 @@ def main():
     result = []
     for i, original in enumerate(selected):
         r = dict(original)
-        r.update(entity=r["title"] + " 필수 조항",
+        r.update(entity=r["title"] + " 필수 조항" + (" " + args.bundle_rule if args.bundle_rule else ""),
                  extractorRevision="kbo-required-regulations-v1",
                  sourcePdfSha256=audit["sourcePdfSha256"],
                  selection="required_articles", documentOrdinal=i,

@@ -1,0 +1,14 @@
+{
+  "sourcePdfSha256": "deb2c0d58ef41c6631f47a3dcfbe37d853a97275b9891ad50f0a8525b302a16a",
+  "pdfPagesVerified": 205,
+  "lostChars": 0,
+  "extractor": "kbo-rulebook-boundaries-v3.1",
+  "outputSha256": "f14f983c3849b68d802a9c7d42e5be59277a9c7f975f3607a9e82a1289cfd38e",
+  "selectedSection": "5.10 선수교체 및 마운드 방문",
+  "selectedChunks": 9,
+  "bundleRule": "5.10",
+  "selectedSha256": "a884b59b0d99360ac2dbde02a0fd73062f4d1e2beb0007c52c550d96a5665bcc",
+  "sourceKey": "kbo:ebook:2026-공식야구규칙-필수-조항-510",
+  "revision": "sha256:2342ad7c446a3fee",
+  "existingInfieldSourceUnchanged": true
+}

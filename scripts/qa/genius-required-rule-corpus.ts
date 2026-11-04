@@ -322,6 +322,36 @@ async function verifyWinParaphrases() {
   assert.ok(JSON.stringify(stored).includes(result.answer),"durable final mismatch");
 }
 
+function verifyIsolatedRuleSupplement() {
+  const file = path.resolve("data/baseball-qa/kbo-substitution-2026.jsonl");
+  const manifest = path.resolve("data/baseball-qa/kbo-rulebook-supplement-2026.manifest.json");
+  const rows = fs.readFileSync(file, "utf8").trim().split("\n").map(s => JSON.parse(s));
+  assert.equal(rows.length, 9);
+  assert.ok(rows.every(r => r.entity === "2026 공식야구규칙 필수 조항 5.10"
+    && r.section === "5.10 선수교체 및 마운드 방문" && r.page === 93 && r.page_end === 99));
+  const text = normalized(rows.map(r => r.text).join("\n"));
+  for (const clause of ["한번경기에서물러난선수", "한이닝에서투수는한번만다른수비위치로갈수있다", "퓨처스리그에만적용"])
+    assert.ok(text.includes(clause), clause);
+  const loaded = execFileSync(process.execPath, [loader, "--corpus=" + file, "--manifest=" + manifest], {encoding: "utf8"});
+  assert.match(loaded, /총 chunk\s+: 9/);
+  assert.match(loaded, /공식야구규칙-필수-조항-510/);
+  const temp = fs.mkdtempSync(path.join(os.tmpdir(), "isolated-rule-"));
+  try {
+    for (const [name, mutate] of [
+      ["wrong-rule", (r: typeof rows) => {r[0].section = "5.09 아웃";}],
+      ["wrong-bundle", (r: typeof rows) => {r.forEach(x => {x.entity = x.title + " 필수 조항 5.11";});}],
+      ["partial", (r: typeof rows) => {r.pop();}],
+      ["duplicate", (r: typeof rows) => {r[1] = r[0];}],
+      ["wrong-pdf", (r: typeof rows) => {r[0].sourcePdfSha256 = "0".repeat(64);}],
+    ] as const) {
+      const changed = structuredClone(rows); mutate(changed);
+      const bad = path.join(temp, name + ".jsonl");
+      fs.writeFileSync(bad, changed.map(r => JSON.stringify(r)).join("\n") + "\n");
+      assert.notEqual(spawnSync(process.execPath, [loader, "--corpus=" + bad, "--manifest=" + manifest], {encoding: "utf8"}).status, 0, name);
+    }
+  } finally {fs.rmSync(temp, {recursive: true, force: true});}
+}
+
 function verifyRulebookSupplement() {
   const file = path.resolve("data/baseball-qa/kbo-rulebook-supplement-2026.jsonl");
   const manifestFile = path.resolve("data/baseball-qa/kbo-rulebook-supplement-2026.manifest.json");
@@ -353,5 +383,5 @@ function verifyRulebookSupplement() {
   } finally { fs.rmSync(temp, { recursive: true, force: true }); }
 }
 
-async function main() { verifyRulebookSupplement(); await verifyWinParaphrases(); await verifyQuantityGrounding(); verifyArtifact(); verifyLoader(); await verifyRuntime(); console.log("Required-rule corpus artifact/loader/runtime contracts PASS; live semantic/UI QA remains reviewer-owned."); }
+async function main() { verifyIsolatedRuleSupplement(); verifyRulebookSupplement(); await verifyWinParaphrases(); await verifyQuantityGrounding(); verifyArtifact(); verifyLoader(); await verifyRuntime(); console.log("Required-rule corpus artifact/loader/runtime contracts PASS; live semantic/UI QA remains reviewer-owned."); }
 main().catch((error) => { console.error(error); process.exitCode = 1; });
