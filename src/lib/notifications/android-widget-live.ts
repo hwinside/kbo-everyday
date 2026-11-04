@@ -48,8 +48,6 @@ const START_WINDOW_MS = 90 * 60 * 1000;
 // (그 후 앱 오픈/캐시 기기는 네이티브 readEff의 익일 06:00 롤오버로 다음 경기 전환,
 //  push-only 기기는 다음 pregame push로 복구). 지연 후 늦은 취소도 커버.
 const CANCEL_WINDOW_MS = 6 * 60 * 60 * 1000;
-// 최근 플레이는 선택 정보다. 느린 중계 조회가 팬/수신설정 조회와 FCM 예산을 소진하지 않게 한다.
-const RELAY_LINE_TIMEOUT_MS = 1_000;
 
 // fast-refresh(warmup 함수 내부 루프)용 변화 감지 — 라이브 위젯을 sub-minute로
 // 갱신할 때 상태가 안 바뀌 경기는 추가 푸시를 건너뛰어 배터리/쿼터 부담을 막는다.
@@ -142,16 +140,14 @@ export async function pushAndroidWidgetLiveUpdates(
     .map((g) => g.G_ID as string);
   // deadline(요청 진입 기준 절대값)이 지나면 relay를 시작하지 않고, 진행 시에도 남은
   // 시간만큼 abort timeout을 걸어 완료까지 deadline 안에 묶는다(삼순 blocker①).
-  const relayStartedAtMs = Date.now();
-  const relayBudgetMs = Math.min(RELAY_LINE_TIMEOUT_MS, deadlineAtMs != null ? deadlineAtMs - relayStartedAtMs : RELAY_LINE_TIMEOUT_MS);
-  let relayLines = 0;
-  if (liveIds.length > 0 && relayBudgetMs > 0) {
+  const relayBudgetMs = deadlineAtMs != null ? deadlineAtMs - Date.now() : null;
+  if (liveIds.length > 0 && (relayBudgetMs == null || relayBudgetMs > 0)) {
     const relays = await Promise.allSettled(
       liveIds.map(async (gameId) => {
         const r = await fetchFn(`${baseUrl}/api/game-relay?gameId=${gameId}`, {
           cache: "no-store",
           headers: { "User-Agent": "kbo-everyday-widget/1.0" },
-          signal: AbortSignal.timeout(relayBudgetMs),
+          ...(relayBudgetMs != null ? { signal: AbortSignal.timeout(relayBudgetMs) } : {}),
         });
         if (!r.ok) return null;
         const j = await r.json().catch(() => null);
@@ -162,11 +158,9 @@ export async function pushAndroidWidgetLiveUpdates(
     for (const res of relays) {
       if (res.status === "fulfilled" && res.value) {
         lastPlayByGame.set(res.value.gameId, res.value.line);
-        relayLines += 1;
       }
     }
   }
-  const relayElapsedMs = Date.now() - relayStartedAtMs;
 
   for (const g of games) {
     if (!g.G_ID) continue;
@@ -208,9 +202,7 @@ export async function pushAndroidWidgetLiveUpdates(
     const home = g.HOME_NM ?? "";
     const teamIds = [teamIdByShortName(away), teamIdByShortName(home)]
       .filter((v): v is number => v !== null);
-    const fansStartedAtMs = Date.now();
     const fans = await fansOf(teamIds, { deadlineAtMs });
-    const fansElapsedMs = Date.now() - fansStartedAtMs;
     if (!fans.ok) {
       failed += 1;
       continue;
@@ -337,8 +329,6 @@ export async function pushAndroidWidgetLiveUpdates(
     }
     // 안드 위젯/워치 브릿지 전용 data 푸시라 platform="android"로 iOS 토큰 조회를 제외한다
     // (삼순 blocker④ — iOS는 별도 pushIosWidgetLiveUpdates가 담당, 무관 토큰 발송 제거).
-    const fcmStartedAtMs = Date.now();
-    const fcmStartRemainingMs = deadlineAtMs == null ? null : Math.max(0, deadlineAtMs - fcmStartedAtMs);
     const res = await sendFcm(
       fans.ids,
       payload,
@@ -372,11 +362,6 @@ export async function pushAndroidWidgetLiveUpdates(
       failed: res.failed,
       retryableFailed: transientFailed,
       ok: res.ok,
-      relayElapsedMs,
-      relayLines,
-      fansElapsedMs,
-      fcmElapsedMs: Date.now() - fcmStartedAtMs,
-      fcmStartRemainingMs,
     }));
   }
 

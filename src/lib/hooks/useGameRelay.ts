@@ -240,6 +240,9 @@ export function useGameRelay(
           isLive,
           isFinal,
           forceEmbed,
+          // Baseline 이후 허용된 poll은 9초 watchdog fallback이다. 매 3회로
+          // live를 샘플링하면 이닝/점수는 다시 27초 간격이 되므로 항상 동봉한다.
+          watchdogFallback: isLive && !isFinal && relayBaselineRef.current,
         });
         wantEvents = include.includes("events");
 

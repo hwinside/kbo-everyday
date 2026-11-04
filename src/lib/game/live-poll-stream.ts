@@ -40,12 +40,14 @@ export function buildIncludeChannels(opts: {
   isLive: boolean;
   isFinal: boolean;
   forceEmbed?: boolean;
+  /** Watchdog polls are sparse: do not multiply live cadence by the poll count. */
+  watchdogFallback?: boolean;
 }): Array<"events" | "live" | "detail"> {
-  const { pollIndex, isLive, isFinal, forceEmbed = false } = opts;
+  const { pollIndex, isLive, isFinal, forceEmbed = false, watchdogFallback = false } = opts;
   const include: Array<"events" | "live" | "detail"> = [];
 
   if (shouldCombineGameEvents(pollIndex, isFinal)) include.push("events");
-  if (isLive && (forceEmbed || shouldEmbedLive(pollIndex, 3000))) include.push("live");
+  if (isLive && (forceEmbed || watchdogFallback || shouldEmbedLive(pollIndex, 3000))) include.push("live");
   if (isLive && (forceEmbed || shouldEmbedDetail(pollIndex, 3000))) include.push("detail");
 
   return include;

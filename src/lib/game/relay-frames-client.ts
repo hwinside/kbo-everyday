@@ -64,9 +64,10 @@ export function parseFrameRow(raw: unknown, expectedGameId: string): RelayFrameR
  * 데이터가 이 창 안에 있으면 3초 tick 을 억제하고, 창을 넘기면 poll 한 번을 허용해
  * self-heal 한다. 무변경 구간엔 publisher 가 프레임을 안 보내므로 watchdog 주기마다
  * poll 1회가 신선도를 갱신 → idle edge 비용이 (라이브분/watchdog분)으로 상한 고정된다.
- * 30~60초 범위(삼순 3차 권고).
+ * 발행기 분 경계 공백(약 15초)보다 짧게 재개한다. 3초 tick에서 9~12초 후
+ * 첫 fallback을 허용한다. 정상 무변경 구간에도 시청자당 최대 약 7회/분 요청된다.
  */
-export const RELAY_WATCHDOG_MS = 45_000;
+export const RELAY_WATCHDOG_MS = 9_000;
 
 /**
  * 폴링 억제 판정 (B2 watchdog).
