@@ -3,6 +3,7 @@
   "version": "0.1.0",
   "private": true,
   "scripts": {
+    "qa:game-event-order": "node --import tsx --test tests/game-event-order.test.ts",
     "qa:postseason-preview-context": "tsx scripts/qa/postseason-preview-context.ts",
     "qa:oauth-recovery": "node --test tests/oauth-recovery.test.cjs",
     "qa:block-management": "node --test tests/block-management.test.cjs",
