@@ -242,9 +242,11 @@ export async function GET(req: NextRequest) {
     };
 
     const deps = {
-      // Preserve the real origin for game-live's nested /api/games witness.
+      // Production deployment URLs require Vercel SSO: use the public origin
+      // for the independent witness. Preview must never query production.
       // No auth headers are forwarded; the live handler still runs in-process.
-      liveRequestOrigin: req.nextUrl.origin,
+      liveRequestOrigin: process.env.VERCEL_ENV === "production"
+        ? "https://keubo.fan" : req.nextUrl.origin,
       observe: observations.observe,
       handlers: { relay: getRelay, events: getEvents, live: getLive, detail: getDetail },
       insertFrame,
