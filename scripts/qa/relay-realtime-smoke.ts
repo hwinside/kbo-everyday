@@ -430,20 +430,17 @@ test("§1 비용 dual gate (b-판정) shadow 실측 있을 때만 초과요금�
   assert.ok(usd <= RELAY_SAVINGS_TARGET_USD,
     `실측 초과요금 $${usd.toFixed(2)} 가 절감목표 $${RELAY_SAVINGS_TARGET_USD} 내여야 cutover 우위`);
 });
-test("§1 비용 dual gate (c) watchdog Edge 상한 — 3초 폴링 대비 절감률 80% 이상", () => {
+test("§1 watchdog latency/cost trade-off — 공백 복구 9~12초, 3초 폴링 대비 절감 2/3", () => {
   const base = { liveMinutesPerDayPerGame: 180, avgConcurrentViewers: 100, gamesPerDay: 5 };
-  // 삼순 4차 P1: 하드코딩 45_000 대신 런타임 상수 RELAY_WATCHDOG_MS 를 직접 사용해
-  // 상수 회귀(예: 주기를 3초로 낮추면 절감 소멸)를 게이트가 잡게 한다.
   const watchdog = watchdogEdgeMonthly({ ...base, watchdogMs: RELAY_WATCHDOG_MS });
   const polling = pollingEdgeMonthly({ ...base, pollMs: 3_000 });
   const reduction = 1 - watchdog / polling;
-  assert.ok(reduction >= 0.8, `watchdog(${RELAY_WATCHDOG_MS}ms) 이 3초 폴링 대비 ${(reduction * 100).toFixed(1)}% 절감(≥80% 요구)`);
-  // 삼순 6차: 상수 범위를 양방향으로 결속 — 30초 미만이면 절감 소멸, 60초 초과면 사용자가
-  // 느낌 두절을 너무 늦게 감지. 상한 없이 >=30_000 만 걸면 120초여도 PASS 하므로 반드시
-  // <=60_000 까지 묶는다(삼순 6차 지적).
-  assert.ok(RELAY_WATCHDOG_MS >= 30_000, `watchdog 상수 하한: 30초 이상이어야 한다(현 ${RELAY_WATCHDOG_MS}ms)`);
-  assert.ok(RELAY_WATCHDOG_MS <= 60_000, `watchdog 상수 상한: 60초 이하여야 한다(현 ${RELAY_WATCHDOG_MS}ms)`);
+  // KS2 API→화면 8~28초 지연 대응: 종전 >=80% 비용 목표를 의도적으로
+  // 약 66.7%로 변경한다. 실제 비용 우위는 여전히 운영 측정/리뷰 전 미입증.
+  assert.ok(reduction >= 2 / 3 - 1e-9, `watchdog 절감 ${(reduction * 100).toFixed(1)}% (>=66.7%)`);
+  assert.equal(RELAY_WATCHDOG_MS, 9_000, "9초 watchdog + 최대 3초 tick 대기; 3초 상시 폴링 회귀 금지");
 });
+
 test("§1 비용 dual gate 검출력 — heartbeat 부하(34/분)면 초과요금이 목표 초과로 RED", () => {
   const relay = estimateMonthlyRealtimeMessages({ framesPerMinutePerGame: 34, avgConcurrentViewers: 100, liveMinutesPerDayPerGame: 180, gamesPerDay: 5 });
   const usd = realtimeOverageUsd(EXISTING_CHAT_MONTHLY, relay);
