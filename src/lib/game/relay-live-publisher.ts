@@ -253,8 +253,9 @@ export function internalGetRequest(
   pathname: string,
   params: Record<string, string>,
   signal?: AbortSignal,
+  origin = "https://internal.local",
 ): NextRequest {
-  const url = new URL(`https://internal.local${pathname}`);
+  const url = new URL(pathname, origin);
   for (const [k, v] of Object.entries(params)) url.searchParams.set(k, v);
   // 삼순 4차 ③: signal 을 handler 요청에 전달 — timeout abort 시 진행 중인 upstream fetch 가
   // 이 신호를 상속해 끊릴 수 있다(handler 가 req.signal 을 존중하는 경우).
@@ -340,6 +341,8 @@ export function createPublisherObservations() {
 }
 
 export interface TickDeps {
+  /** Authenticated cron origin for live's independent /api/games witness fetch. */
+  liveRequestOrigin?: string;
   observe?: (event: PublisherObservation) => void;
   /** route handlers — 테스트에서 스텁 가능하도록 주입 */
   handlers: {
@@ -444,6 +447,7 @@ export async function publishGameTick(
       CHANNEL_PATH[channel],
       channel === "live" ? { gameId, date: deps.date } : { gameId },
       signal,
+      channel === "live" ? deps.liveRequestOrigin : undefined,
     ))), deps.observe),
   }));
 
