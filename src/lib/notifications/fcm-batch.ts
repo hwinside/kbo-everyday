@@ -42,16 +42,12 @@ export async function deliverTokenChunks(
   tokens: string[],
   sendChunk: (chunk: string[]) => Promise<FcmChunkResponse>,
   chunkSize = 500,
-  opts?: { deadlineAtMs?: number; now?: () => number; concurrency?: number },
+  opts?: { deadlineAtMs?: number; now?: () => number },
 ): Promise<TokenBatchResult> {
   if (!Number.isInteger(chunkSize) || chunkSize < 1) {
     throw new Error("chunkSize must be a positive integer");
   }
 
-  const concurrency = opts?.concurrency ?? 1;
-  if (!Number.isInteger(concurrency) || concurrency < 1 || concurrency > 5) {
-    throw new Error("concurrency must be an integer between 1 and 5");
-  }
   let sent = 0;
   let failed = 0;
   let ok = true;
@@ -61,53 +57,44 @@ export async function deliverTokenChunks(
   const outcomes: TokenDeliveryOutcome[] = [];
   const now = opts?.now ?? Date.now;
 
-  // Bounded waves: preserve input order when aggregating, regardless of completion order.
-  for (let start = 0; start < tokens.length; start += chunkSize * concurrency) {
-    const chunks: string[][] = [];
-    for (let i = start; i < Math.min(tokens.length, start + chunkSize * concurrency); i += chunkSize) {
-      chunks.push(tokens.slice(i, i + chunkSize));
+  for (let i = 0; i < tokens.length; i += chunkSize) {
+    if (opts?.deadlineAtMs != null && now() >= opts.deadlineAtMs) {
+      const unattempted = tokens.length - i;
+      failed += unattempted;
+      retryableFailed += unattempted;
+      ok = false;
+      lastError = "deadline_exceeded";
+      for (const token of tokens.slice(i)) {
+        outcomes.push({ token, status: "transient", errorCode: lastError });
+      }
+      break;
     }
-    const results = await Promise.all(chunks.map(async (chunk) => {
-      // Check immediately before EACH launch, including within a wave.
-      if (opts?.deadlineAtMs != null && now() >= opts.deadlineAtMs) {
-        return { error: new Error("deadline_exceeded") };
-      }
-      try {
-        return { response: await sendChunk(chunk) };
-      } catch (error) {
-        return { error };
-      }
-    }));
-    for (let index = 0; index < chunks.length; index += 1) {
-      const chunk = chunks[index];
-      const result = results[index];
-      try {
-        if ("error" in result) throw result.error;
-        const response = result.response;
-        sent += response.successCount;
-        failed += response.failureCount;
-        response.responses.forEach((item, index) => {
-          const code = item.error?.code ?? "";
-          if (!code) {
-            outcomes.push({ token: chunk[index], status: "accepted", errorCode: null });
-          } else if (INVALID_TOKEN_CODES.has(code)) {
-            invalid.push(chunk[index]);
-            outcomes.push({ token: chunk[index], status: "invalid", errorCode: code });
-          } else if (TRANSIENT_TOKEN_CODES.has(code)) {
-            retryableFailed += 1;
-            outcomes.push({ token: chunk[index], status: "transient", errorCode: code });
-          } else {
-            outcomes.push({ token: chunk[index], status: "permanent_failed", errorCode: code });
-          }
-        });
-      } catch (error) {
-        ok = false;
-        failed += chunk.length;
-        retryableFailed += chunk.length;
-        lastError = error instanceof Error ? error.message : "fcm_chunk_exception";
-        for (const token of chunk) {
-          outcomes.push({ token, status: "transient", errorCode: lastError });
+    const chunk = tokens.slice(i, i + chunkSize);
+    try {
+      const response = await sendChunk(chunk);
+      sent += response.successCount;
+      failed += response.failureCount;
+      response.responses.forEach((item, index) => {
+        const code = item.error?.code ?? "";
+        if (!code) {
+          outcomes.push({ token: chunk[index], status: "accepted", errorCode: null });
+        } else if (INVALID_TOKEN_CODES.has(code)) {
+          invalid.push(chunk[index]);
+          outcomes.push({ token: chunk[index], status: "invalid", errorCode: code });
+        } else if (TRANSIENT_TOKEN_CODES.has(code)) {
+          retryableFailed += 1;
+          outcomes.push({ token: chunk[index], status: "transient", errorCode: code });
+        } else {
+          outcomes.push({ token: chunk[index], status: "permanent_failed", errorCode: code });
         }
+      });
+    } catch (error) {
+      ok = false;
+      failed += chunk.length;
+      retryableFailed += chunk.length;
+      lastError = error instanceof Error ? error.message : "fcm_chunk_exception";
+      for (const token of chunk) {
+        outcomes.push({ token, status: "transient", errorCode: lastError });
       }
     }
   }

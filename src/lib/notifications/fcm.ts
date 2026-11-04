@@ -367,11 +367,7 @@ export async function sendFcmToTokens(
           }
         : {}),
     });
-  }, 500, {
-    deadlineAtMs: opts?.deadlineAtMs,
-    // Only deadline-bound live widget updates fan out concurrently; other notifications stay serial.
-    concurrency: opts?.deadlineAtMs != null && payload.collapseKey === WIDGET_STREAM.live.collapseKey ? 5 : 1,
-  });
+  }, 500, { deadlineAtMs: opts?.deadlineAtMs });
 
   // 4. 무효 토큰 정리
   const CLEANUP_CHUNK = 200;
