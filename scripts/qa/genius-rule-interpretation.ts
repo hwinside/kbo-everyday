@@ -2,7 +2,7 @@
 import assert from "node:assert/strict";
 import fs from "node:fs";
 import notes from "../../src/lib/baseball-qa/rag/official-rule-interpretations.json";
-import { officialRuleInterpretation, officialInterpretationSummary, OFFICIAL_INTERPRETATION_APPLICATION_PROMPT } from "../../src/lib/baseball-qa/rag/official-rule-interpretation";
+import { officialRuleInterpretation, officialRuleScopePreamble, officialInterpretationSummary, OFFICIAL_INTERPRETATION_APPLICATION_PROMPT } from "../../src/lib/baseball-qa/rag/official-rule-interpretation";
 import { officialModelEvidenceContent } from "../../src/lib/baseball-qa/rag/official-parenthetical-evidence";
 import { annotationContentDigest } from "../../src/lib/baseball-qa/rag/official-parenthetical-structure.mjs";
 import { buildRagLlmRequest, RAG_OFFICIAL_SYSTEM_PROMPT, RAG_SYSTEM_PROMPT, sanitizeEvidenceContent, type RagEvidence } from "../../src/lib/baseball-qa/rag/retrieve";
@@ -18,12 +18,23 @@ for (const note of notes) {
   assert.ok(source, "binding must point to a complete real chunk");
   assert.equal(note.canonicalUrl, `https://6ptotvmi5753.edge.naverncp.com/KBO_FILE/ebook/pdf/${encodeURIComponent(source.file)}`);
   for (const quote of note.sourceQuotes) assert.ok(fullText.includes(quote), "related quotation must be verbatim");
+  for (const rule of note.scopedRules ?? []) {
+    for (const quote of rule.quotes) assert.ok(fullText.includes(quote), "scope-linked quote must remain verbatim");
+  }
   const row: RagEvidence = {content: source.text, revision: audit.revision, canonicalUrl: note.canonicalUrl,
     pageTitle: source.title, sectionPath: `${source.title}#${source.section}`, asOf: source.fetchedAt.slice(0, 10),
     sourceGrade: "tier1", sourceKind: "kbo_ebook"};
   const original = structuredClone(row);
   const rendered = officialModelEvidenceContent(row);
-  assert.ok(rendered.startsWith(row.content), "original evidence must remain intact");
+  const preamble = officialRuleScopePreamble(row);
+  assert.ok(rendered.startsWith(preamble + row.content), "original evidence must remain intact after editorial scope preamble");
+  if (note.scopedRules) {
+    assert.ok(preamble.includes("KBO 퓨처스리그에만 적용 — KBO 1군에는 적용하지 않음"));
+    assert.ok(preamble.includes("5.10(i)"));
+    assert.ok(preamble.includes("일반 규칙 (KBO 1군 포함)"));
+    const renderedRules = officialRuleInterpretation(row).split("\n").filter(line => line.startsWith('{')).map(line => JSON.parse(line));
+    assert.deepEqual(renderedRules, note.scopedRules, "quotes must travel with their own scope, not orphaned");
+  } else assert.equal(preamble, "", "position-change notes are untouched");
   assert.ok(rendered.includes(note.interpretation));
   assert.deepEqual(row, original, "rendering must not alter grounding/provenance input");
   assert.ok(officialRuleInterpretation({...row, content: sanitizeEvidenceContent(row.content, row)}), "actual serving sanitizer must preserve binding");
@@ -42,10 +53,13 @@ for (const note of notes) {
   const summary = JSON.parse(officialInterpretationSummary([row, row]));
   assert.deepEqual(summary.evidence, [1, 2]);
   assert.equal(summary.interpretation, note.interpretation);
+  assert.deepEqual(summary.scopedRules, note.scopedRules?.map(({clause, scope, meaning}) => ({clause, scope, meaning})));
+  if (preamble) assert.ok(body.includes(preamble + row.content), "real request keeps scope before the unmodified raw chunk");
   assert.equal(buildRagLlmRequest("질문", [row], RAG_SYSTEM_PROMPT).systemInstruction.parts[0].text, RAG_SYSTEM_PROMPT);
   for (const mutation of mutations) {
     const changed = {...row, ...mutation};
     assert.equal(officialRuleInterpretation(changed), "");
+    assert.equal(officialRuleScopePreamble(changed), "");
     assert.equal(officialInterpretationSummary([changed]), "");
     assert.equal(buildRagLlmRequest("질문", [changed], RAG_OFFICIAL_SYSTEM_PROMPT).systemInstruction.parts[0].text, RAG_OFFICIAL_SYSTEM_PROMPT);
   }

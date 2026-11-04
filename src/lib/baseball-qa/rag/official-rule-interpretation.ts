@@ -19,7 +19,19 @@ export function officialRuleInterpretation(row: RagEvidence): string {
   const note = boundInterpretation(row);
   if (!note) return "";
   return `[편집 해석 — 공식 원문과 구분되는 파생 참고자료]\n${note.interpretation}\n`
-    + `[동일 revision의 관련 조항 인용 — 새 수치 검증 근거로 사용하지 않음]\n${note.sourceQuotes.join("\n")}`;
+    + `[동일 revision의 관련 조항 인용 — 새 수치 검증 근거로 사용하지 않음]\n${note.scopedRules
+      ? note.scopedRules.map(rule => JSON.stringify(rule)).join("\n")
+      : note.sourceQuotes.join("\n")}`;
+}
+
+// Put inherited scope before an orphaned continuation is read. The quotation
+// remains contiguous and unchanged; these labels are explicitly editorial.
+export function officialRuleScopePreamble(row: RagEvidence): string {
+  const rules = boundInterpretation(row)?.scopedRules;
+  if (!rules) return "";
+  return "[적용 범위 안내 — 편집 데이터, 공식 원문 아님]\n"
+    + rules.map(({ clause, scope, meaning }) => JSON.stringify({ clause, scope, meaning })).join("\n")
+    + "\n[공식 원문 — 아래 본문은 변경하지 않음]\n";
 }
 
 // Reconcile semantics after conversation context without repeating isolated
@@ -29,10 +41,12 @@ export function officialInterpretationSummary(rows: RagEvidence[]): string {
   rows.forEach((row, index) => {
     const note = boundInterpretation(row);
     if (!note) return;
-    summaries.set(note.interpretation, [...(summaries.get(note.interpretation) ?? []), index + 1]);
+    const summary = JSON.stringify({ interpretation: note.interpretation,
+      scopedRules: note.scopedRules?.map(({ clause, scope, meaning }) => ({ clause, scope, meaning })) });
+    summaries.set(summary, [...(summaries.get(summary) ?? []), index + 1]);
   });
-  return [...summaries].map(([interpretation, evidence]) =>
-    JSON.stringify({ evidence, interpretation })).join("\n");
+  return [...summaries].map(([summary, evidence]) =>
+    JSON.stringify({ evidence, ...JSON.parse(summary) })).join("\n");
 }
 
 export const OFFICIAL_INTERPRETATION_APPLICATION_PROMPT = [

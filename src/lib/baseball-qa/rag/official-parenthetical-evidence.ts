@@ -1,7 +1,7 @@
 import sidecar from "./official-parenthetical-sidecar.json";
 import { annotationContentDigest, renderOfficialParentheticals } from "./official-parenthetical-structure.mjs";
 import type { RagEvidence } from "./retrieve";
-import { officialRuleInterpretation } from "./official-rule-interpretation";
+import { officialRuleInterpretation, officialRuleScopePreamble } from "./official-rule-interpretation";
 
 // Generated offline from the serving snapshot, never a question/rule allowlist.
 // Original retrieved evidence remains the only input to guards and provenance.
@@ -27,5 +27,5 @@ export function officialModelEvidenceContent(row: RagEvidence): string {
   const note = officialParentheticalNote(row);
   const original = note ? `${row.content}\n[원문 구조화 주석 — 파생 데이터]\n${note}` : row.content;
   const interpretation = officialRuleInterpretation(row);
-  return interpretation ? `${original}\n${interpretation}` : original;
+  return interpretation ? `${officialRuleScopePreamble(row)}${original}\n${interpretation}` : original;
 }

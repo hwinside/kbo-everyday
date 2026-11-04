@@ -64,7 +64,7 @@ R1 keeps all nine official chunks, hashes, source revision and rollback unchange
 4. No application/merge before current exact GO and required checks. R0 NO-GO count retained; R1 is the first diff-changing rework. If this source-bound interpretation does not eliminate confident errors, keep NO-GO and use the remaining round budget/stop rule rather than shipping the corpus alone.
 
 
-## R1 NO-GO → R2 (final available review round)
+## R1 NO-GO → R2 (historical round-limit interpretation; corrected below)
 
 Reviewer Slack `1793761075.561809`, exact `41c5bba89d2a5e4860ed1f2ce4a71fffa54c0bc6`: all contract/type gates PASS and paired90 completed without errors, but NO-GO **2/3**. `art1611r1/live.json` / `grade.txt` remain the evidence. Same-inning return and first observed question improved to 3/3, but third-turn observed question only 1/3 acceptable; next-inning answers omitted the Futures qualifier 3/3. First-team minimum unsure is not a regression against a baseline whose stated exception was wrong. Preserve this reviewer correction to R0 assessment.
 
@@ -73,3 +73,18 @@ R2 keeps source bytes, editorial interpretation text, ranking, context, numeric 
 Reviewer: rerun binding/request assembly mutations plus existing serving/corpus gates and the **same paired90**, with all original cases and prior DM intact. Added assertions cover actual request placement, conditional system instruction, no-binding/mutation and generic RAG isolation, and deduplicated evidence indices. These establish request wiring, not correctness.
 
 Acceptance: observed-3316782 must distinguish removal versus position change and directly permit return in all 3 repetitions; regression-2 must retain next-inning permission without a general three-batter obligation. If mentioning a Futures obligation its qualifier must appear explicitly. Preserve R1 successes and unrelated seven cases. Independently probe a false previous answer, explicit Futures/first-team wording, and DH/special-case limitations; do not turn limited evidence into blanket permission. If R2 remains NO-GO, stop this approach at 3/3 and escalate; do not merge or ingest. Semantic effect remains unmeasured by the author.
+
+
+## R2 NO-GO → R3: scope travels with the source
+
+R2 exact `9712675581a5a467343438438bb2c5a175880db3` remains NO-GO. Reviewer completed paired90 plus 24 independent cases, no execution errors. Observed first/third turns and regression-0/1/3 passed 3/3. `regression-2` still had one unqualified three-batter obligation, one explicit Futures qualifier, and one vague “depending on league” answer; baseline was correct 3/3. These sample counts are not estimated production failure probabilities. Preserve `art1611r2/live.json`, `extra.json`, `grade.txt` and the nonblocking false-context/DH findings.
+
+**Authority correction:** the earlier stop-at-3/3 text above was mistaken. Owner `U0AKA391YLR` instructed “왕복 상한 관계 없이 계속 끊김 없이 진행해줘” in this thread (Slack `1790836841.298079`; verified via anchored session history). Reviewer correction/request `1793777048.892289` resumes R3 with the same 114 evaluations. Preserve all three NO-GO decisions and the rework count; no counter reset, merge, ingestion or GO implied.
+
+R3 changes only the presentation of the three exact-bound pitching-duty notes:
+- Attach structured clause/scope/meaning/quote groups: general 5.10(f)/(g), general next-inning 5.10(i), and **Futures-only** 5.10(g) proviso plus its continuation. Quotes remain verbatim and are no longer rendered as unscoped isolated snippets.
+- Prepend explicitly editorial scope metadata immediately before each bound raw chunk, including continuation-first chunks. Raw content stays contiguous and byte-identical, and remains the only grounding/numeric/provenance input. The model rendering may now start with the editorial label, not the raw content.
+- Carry the same clause/scope/meaning groups into the existing post-conversation summary. Position-change notes, conditional prompt, question routing, response schema, retrieval ranking, corpus bytes/revision and validation thresholds are unchanged. No fixed answer or model retry.
+- Exact URL/revision/content digest/grade/kind binding is unchanged. A missing or mutated binding receives no scope preamble. Related quoted numbers still cannot bypass grounding.
+
+Reviewer: run `genius-rule-interpretation.ts` (extended for verbatim scoped quotes, scope-before-original real request assembly, summary propagation and mutation fail-closed) plus existing corpus/parenthetical gates. Author runs type/lint only, not reviewer QA scripts. Repeat the **same paired90 + independent24 = 114**, including all original inputs, previous answers and repetitions; do not drop or soften regression-2. Require explicit Futures qualification whenever the three-batter obligation is stated, and preserve the correct general next-inning answer and R2 successes. Scope serialization is a contract check, not a semantic PASS; independent live grading remains required. No merge/ingestion before exact GO and applicable approval.
