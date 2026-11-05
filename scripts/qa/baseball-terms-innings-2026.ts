@@ -5,7 +5,7 @@ import { answerQuestion, type QaDeps } from '../../src/lib/baseball-qa/pipeline'
 
 type Row = { term: string; aliases: string[]; answer: string; category: string; source_kind: string; source_url: string; rule_version: string; reviewed_at: string };
 const fixture = JSON.parse(fs.readFileSync('scripts/qa/fixtures/baseball-terms-innings-2026.json', 'utf8')) as { changes: {before: Row; after: Row}[] };
-const migration = fs.readFileSync('supabase/migrations/20260911030000_baseball_terms_innings_2026.sql', 'utf8');
+const migration = fs.readFileSync('supabase/migrations/20261105023000_baseball_terms_innings_2026.sql', 'utf8');
 const rollback = fs.readFileSync('data/baseball-qa/baseball-terms-innings-2026.rollback.sql', 'utf8');
 const unrelated = { ...fixture.changes[0].before, term: '무관한 항목', aliases: ['untouched'], answer: '이 행은 변경하지 않습니다.' };
 async function setup(rows: Row[]) {
@@ -35,7 +35,7 @@ async function main() {
     callLlm: async () => { generated++; throw new Error('dictionary must not generate'); },
     reserveDaily: async () => ({allowed: true, remaining: 9}), log: async () => {},
   };
-  for (const question of ['연장', '연장전', '무승부']) {
+  for (const question of ['연장', '연장전', '무승부', '승부치기', 'KBO도 승부치기 해?']) {
     const baseline = await answerQuestion('qa-innings-before', question, { ...deps, loadGlossary: async () => initial });
     assert.equal(baseline.source, 'dictionary');
     assert.match(baseline.answer, /12회/, 'current-main before reproduction');
@@ -44,6 +44,10 @@ async function main() {
     assert.match(result.answer, /정규시즌 11회/);
     assert.match(result.answer, /포스트시즌 15회/);
     assert.doesNotMatch(result.answer, /12회/);
+    if (question.includes('승부치기')) {
+      assert.match(baseline.answer, /승부치기 없이/, 'existing alias meaning');
+      assert.match(result.answer, /승부치기 없이/, 'preserve alias question core');
+    }
     assert.equal(result.answer, after.find(r => r.term === (question === '무승부' ? question : '연장전'))?.answer);
   }
   for (const question of ['APBC', '병살타', '삼중살']) {
