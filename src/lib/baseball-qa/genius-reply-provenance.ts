@@ -15,6 +15,7 @@ export const PROVENANCE_LABELS = {
   namu: "나무위키",
   wikipedia: "위키피디아",
   official: "KBO 공식 자료",
+  olympics: "Olympics.com 공식 자료",
   /**
    * 최근 기사 근거(news_rag).
    *
@@ -38,6 +39,7 @@ const ALLOWED_HOSTS: Readonly<Record<string, ProvenanceLabel>> = {
   "ko.wikipedia.org": PROVENANCE_LABELS.wikipedia,
   "en.wikipedia.org": PROVENANCE_LABELS.wikipedia,
   "ja.wikipedia.org": PROVENANCE_LABELS.wikipedia,
+  "www.olympics.com": PROVENANCE_LABELS.olympics,
   "www.koreabaseball.com": PROVENANCE_LABELS.official,
   "koreabaseball.com": PROVENANCE_LABELS.official,
   // 기사 근거의 canonical 은 네이버 재송고 링크다(Production 적재 실측 2026-08-08:
@@ -95,7 +97,8 @@ export function displayProvenanceOf(evidence: {
   return resolveAllowedSource(evidence.canonicalUrl);
 }
 
-const LABEL_ALTERNATION = Object.values(PROVENANCE_LABELS).join("|");
+const LABEL_ALTERNATION = Object.values(PROVENANCE_LABELS)
+  .map(label => label.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")).join("|");
 
 /**
  * 구 표기 — 이미 발송돼 `dm_messages` 에 저장된 본문에 남아 있다.

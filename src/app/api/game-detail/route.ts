@@ -1,3 +1,4 @@
+import { serveDeliverySnapshot } from "@/lib/game/delivery-snapshot";
 import { NextRequest, NextResponse, after } from "next/server";
 import { jsonWithETag } from "@/lib/http/conditional";
 import { GAME_ID_FORMAT_HINT, isCanonicalKboGameId } from "@/lib/game/game-id";
@@ -44,6 +45,9 @@ export async function GET(req: NextRequest) {
       { status: 400 },
     );
   }
+
+  const stored = await serveDeliverySnapshot(req, "detail", gameId);
+  if (stored) return stored;
 
   const response = await getGameDetailRouteResult({
     gameId,

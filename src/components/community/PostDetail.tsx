@@ -16,7 +16,7 @@ import { parseAttribution } from "@/lib/gif-collector/attribution";
 import { useAuth } from "@/lib/supabase/AuthContext";
 import { getTeamById, getTeamBgColor } from "@/lib/constants/teams";
 import { getTeamBorderColorById } from "@/lib/utils/team-border-color";
-import GifPicker from "@/components/community/GifPicker";
+import dynamic from "next/dynamic";
 import EmojiSuggestions from "@/components/community/EmojiSuggestions";
 import CommentImageLightbox from "@/components/community/CommentImageLightbox";
 import { isImageComment, prepareCommentImageForUpload } from "@/lib/community/comment-media";
@@ -29,6 +29,8 @@ import { trackPostClick } from "@/lib/community/view-tracker";
 import { useBlockedIds, blockUserById } from "@/lib/supabase/useBlock";
 import { supabase } from "@/lib/supabase/client";
 import CommunityCommentRow from "@/components/community/CommunityCommentRow";
+
+const GifPicker = dynamic(() => import("@/components/community/GifPicker"), { ssr: false });
 
 interface PostDetailProps {
   postId: number;

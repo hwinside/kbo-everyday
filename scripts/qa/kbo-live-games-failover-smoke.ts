@@ -27,6 +27,7 @@ let fetchKboLiveGames: FetchKboLiveGames;
 
 const naverGames: KboGame[] = [{
   gameId: "20260730WOLG0",
+  srId: "0",
   date: "20260730",
   time: "18:30",
   stadium: "잠실",
@@ -104,6 +105,7 @@ async function main() {
   assert.equal(naverCalls, 1);
   assert.deepEqual(fallback.games[0], {
     G_ID: "20260730WOLG0",
+    SR_ID: "0",
     G_DT: "20260730",
     G_TM: "18:30",
     S_NM: "잠실",
@@ -133,6 +135,20 @@ async function main() {
     T_RANK_NO: 0,
     B_RANK_NO: 0,
   });
+
+  // A fallback must carry series identity through enrichment, not merely add
+  // an undefined property to satisfy deep equality. Cover regular + postseason.
+  for (const srId of ["0", "3", "4", "5", "7"]) {
+    let evidenceSeries: string | undefined;
+    const result = await fetchKboLiveGames(
+      "20260730", Date.now() + 2_000, failedKbo as typeof fetch,
+      async () => [{ ...naverGames[0], srId }],
+      async (_gameId, _signal, series) => { evidenceSeries = series; return zeroEvidence; },
+    );
+    assert.equal(result.ok, true);
+    assert.equal(result.games[0].SR_ID, srId, `fallback preserves series ${srId}`);
+    assert.equal(evidenceSeries, srId, `relay enrichment receives series ${srId}`);
+  }
 
   // 2) relay enrichment 실패 → per-game fail-soft: live 유지 + zero/empty 유지.
   const enrichFailed = await fetchKboLiveGames(

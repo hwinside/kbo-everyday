@@ -11,6 +11,7 @@ import { useAuth } from "@/lib/supabase/AuthContext";
 import { TEAMS } from "@/lib/constants/teams";
 import { PLAYER_PHOTO_MAP } from "@/lib/constants/player-photos";
 import LoginSheet from "@/components/auth/LoginSheet";
+import { seasonPredictionsOpen } from "@/lib/constants/season";
 import { usePredictions } from "@/lib/supabase/usePredictions";
 
 interface PlayerStat {
@@ -51,6 +52,7 @@ const ALL_PLAYERS = Object.entries(PLAYER_PHOTO_MAP).map(([name, id]) => {
 
 export default function PredictPage() {
   const router = useRouter();
+  const predictionsClosed = !seasonPredictionsOpen(2026);
   const { user } = useAuth();
   const [showLogin, setShowLogin] = useState(false);
   const [selectedCategory, setSelectedCategory] = useState<PredictionCategory | null>(null);
@@ -70,10 +72,12 @@ export default function PredictPage() {
   const submitted = new Set(Object.keys(myPredictions));
 
   function savePrediction(categoryId: string, value: string) {
+    if (predictionsClosed) return;
     setLocalPicks(prev => ({ ...prev, [categoryId]: value }));
   }
 
   async function submitPrediction(categoryId: string) {
+    if (predictionsClosed) return;
     if (!user) { setShowLogin(true); return; }
     const pick = localPicks[categoryId] || mergedPredictions[categoryId];
     if (!pick) return;
@@ -169,7 +173,7 @@ export default function PredictPage() {
         <div className="absolute inset-0 bg-gradient-to-br from-amber-500/10 via-transparent to-purple-500/10" />
         <div className="relative">
           <h1 className="text-2xl font-black text-text-primary">🔮 2026 시즌 예측</h1>
-          <p className="text-sm text-text-tertiary mt-1">당신의 예언을 기록하세요. 시즌 후 결과를 확인!</p>
+          <p className="text-sm text-text-tertiary mt-1">{predictionsClosed ? "2026 시즌 예측이 마감됐어요. 기존 선택과 투표 결과를 확인할 수 있어요." : "당신의 예언을 기록하세요. 시즌 후 결과를 확인!"}</p>
 
           {/* Progress */}
           <div className="mt-4 bg-bg-tertiary rounded-full h-3 overflow-hidden">
@@ -200,7 +204,7 @@ export default function PredictPage() {
             >
               <GlassCard
                 className={`p-4 cursor-pointer transition-all ${isSubmitted ? "border border-green-500/30" : "hover:bg-black/5 dark:hover:bg-white/5"}`}
-                onClick={() => !isSubmitted && setSelectedCategory(cat)}
+                onClick={() => !predictionsClosed && !isSubmitted && setSelectedCategory(cat)}
               >
                 <div className="flex items-center gap-3">
                   <div className={`w-10 h-10 rounded-xl flex items-center justify-center ${isSubmitted ? "bg-green-500/20 text-green-400" : "bg-black/8 dark:bg-white/10 text-text-secondary"}`}>

@@ -119,7 +119,7 @@ const OFFICIAL_EVIDENCE: RagEvidence = {
 const NEWS_EVIDENCE: RagEvidence = {
   content:
     "천성호→송찬의→문정빈 홈런 합작…FA 김현수 떠난 자리는\n" +
-    "지난해 LG 트윈스는 프로야구 통합 우승을 차지했다. 떠난 주전 외야수 자리를 젊은 타자들이 메우고 있다.",
+    "8월 15일 LG 트윈스의 젊은 타자들이 경기에서 승리했어요.",
   pageTitle: "천성호→송찬의→문정빈 홈런 합작…FA 김현수 떠난 자리는",
   canonicalUrl: "https://m.sports.naver.com/kbaseball/article/109/0005585034",
   revision: "article:2b1c9f",
@@ -189,7 +189,7 @@ function makeDeps(answers: {
     searchOfficialRag: async () => [OFFICIAL_EVIDENCE],
     callOfficialRagLlm: async () => ({
       text: JSON.stringify({
-        status: answers.officialStatus ?? RAG_GROUNDED_SENTINEL,
+        calendarClaims: [], status: answers.officialStatus ?? RAG_GROUNDED_SENTINEL,
         answer: answers.official ?? "인필드 플라이 상황에서 타구가 주자에게 닿으면 둘 다 아웃이에요.",
       }),
       inputTokens: 10,
@@ -199,7 +199,7 @@ function makeDeps(answers: {
     callNewsRagLlm: async () => ({
       text: JSON.stringify({
         status: RAG_GROUNDED_SENTINEL,
-        answer: answers.news ?? "젊은 타자들이 떠난 주전 외야수 자리를 메우고 있어요.",
+        answer: answers.news ?? "LG 트윈스의 젊은 타자들이 경기에서 승리했어요.",
       }),
       inputTokens: 10,
       outputTokens: 5,
@@ -264,7 +264,7 @@ const PATH_PROBES: {
     attemptPath: "news",
     question: "어제 LG 무슨 일 있었어?",
     numericAnswer: "어제 LG 는 3점을 뽑으며 분위기를 바꿨어요.",
-    cleanAnswer: "젊은 타자들이 떠난 주전 외야수 자리를 메우고 있어요.",
+    cleanAnswer: "LG 트윈스의 젊은 타자들이 경기에서 승리했어요.",
     discardMatchPath: "unsure",
     servedMatchPath: "news_rag",
     key: "news",
@@ -297,7 +297,8 @@ async function run(): Promise<void> {
       assert.ok(new RegExp(nullable, "i").test(sql), `CHECK 가 ${nullable} 을 허용하지 않는다`);
     }
 
-    const reasonClause = sql.match(/rag_discard_reason in \(([^)]*)\)/i)?.[1];
+    const reasonSql = readFileSync(path.join(process.cwd(), "supabase/migrations/20260929112000_genius_event_date_discard_reason.sql"), "utf8");
+    const reasonClause = reasonSql.match(/rag_discard_reason in \(([^)]*)\)/i)?.[1];
     assert.ok(reasonClause, "폐기 사유 CHECK 의 허용 목록을 파싱하지 못했다");
     assert.deepEqual(
       [...reasonClause.matchAll(/'([^']+)'/g)].map((m) => m[1]).sort(),
@@ -596,7 +597,7 @@ async function run(): Promise<void> {
     // 실제 재생: `getLlmState` 가 저장된 envelope 를 돌려주는 상태에서 재실행한다.
     const beforeReplay = logs.length;
     const replayDeps = {
-      ...(makeDeps().deps as Record<string, unknown>),
+      ...makeDeps().deps,
       getLlmState: async () => ({ started: true, result: stored.value, ownerActive: false }),
       // ⚠️ 하니스가 수집하지 않는 칸은 게이트가 **영원히 못 본다**. 재생 로그도
       //   production 이 넘기는 관측 4칸을 그대로 담는다(수집 누락 = 구조적 false-green).
@@ -618,6 +619,7 @@ async function run(): Promise<void> {
     } as unknown as QaDeps;
     await answerQuestion("u-crash-1", "LG 트윈스 역사 알려줘", replayDeps);
     const replayed = logs.at(-1);
+    assert.ok(replayed, "replay must emit a log entry");
     assert.ok(logs.length > beforeReplay, "재생이 로그를 쓰지 않았다");
     assert.equal(
       replayed.ragDiscardReason, "numeric_claim_ungrounded",
@@ -650,7 +652,7 @@ async function run(): Promise<void> {
     );
 
     const replayDeps = {
-      ...(makeDeps().deps as Record<string, unknown>),
+      ...makeDeps().deps,
       getLlmState: async () => ({ started: true, result: stored.value, ownerActive: false }),
       log: async (entry: {
         matchPath: string;

@@ -77,6 +77,8 @@ export interface ApnsResult {
   /** APNs 'Unregistered'/'BadDeviceToken' 등 → 토큰 정리 필요 */
   invalidToken: boolean;
   reason?: string;
+  /** Apple response correlation ID, not proof of device delivery. */
+  apnsId?: string;
   /** 이 결과를 낸 APNs 환경(호스트 기준) — p2s 성공 env 기록용. */
   env?: "production" | "sandbox";
 }
@@ -151,11 +153,12 @@ async function sendToHost(
   return new Promise<ApnsResult>((resolve) => {
     const client = http2.connect(`https://${host}`);
     let settled = false;
+    let apnsId: string | undefined;
     const done = (r: ApnsResult) => {
       if (settled) return;
       settled = true;
       client.close();
-      resolve({ ...r, env: hostEnv });
+      resolve({ ...r, env: hostEnv, apnsId });
     };
     client.on("error", (e) =>
       done({ ok: false, status: 0, invalidToken: false, reason: e.message }),
@@ -190,6 +193,8 @@ async function sendToHost(
     let data = "";
     req.on("response", (headers) => {
       status = Number(headers[":status"]) || 0;
+      const responseId = headers["apns-id"];
+      if (typeof responseId === "string") apnsId = responseId;
     });
     req.on("data", (chunk) => {
       data += chunk;

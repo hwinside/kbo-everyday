@@ -1,3 +1,4 @@
+import { readClassifierObservation } from "./classifier-observation";
 import type { QaDeps } from "@/lib/baseball-qa/pipeline";
 
 /**
@@ -15,7 +16,13 @@ export function buildQuestionLogRow(
   entry: Parameters<NonNullable<QaDeps["log"]>>[0],
   messageId: number,
 ): Record<string, unknown> {
+  const observation = readClassifierObservation(entry.classifierObservation);
   return {
+    // Nullable on historical/legacy replay rows; never backfill unknown as false.
+    stat_intent_mode: observation?.statIntentMode ?? null,
+    context_selected: observation?.contextSelected ?? null,
+    provider_outcome: observation?.providerOutcome ?? null,
+    classifier_observation: observation,
     user_id: entry.userId,
     question: entry.question,
     question_norm: entry.questionNorm,

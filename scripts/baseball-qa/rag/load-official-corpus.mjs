@@ -39,8 +39,10 @@ import fs from "node:fs";
 import path from "node:path";
 import crypto from "node:crypto";
 import { fileURLToPath } from "node:url";
+import { bindCalendarSeasons } from "./official-calendar-seasons.mjs";
 
 const HERE = path.dirname(fileURLToPath(import.meta.url));
+const calendarProfiles = JSON.parse(fs.readFileSync(path.join(HERE, "official-calendar-seasons.json"), "utf8"));
 
 // ── PR #1044 src/lib/baseball-qa/rag/ingest.ts 규칙 (동일 값) ────────────────
 const MAX_CHUNK_CHARS = 900;
@@ -77,13 +79,14 @@ const EBOOK_BOARD_URL = "https://www.koreabaseball.com/kbo/board/ebook/ebookpubl
 const MANIFEST_PATH = path.resolve(HERE, opt("manifest", "kbo-official-manifest.json"));
 const REQUIRED_REVISION = "kbo-required-regulations-v1";
 const REQUIRED_PROFILES = {
+  "2026_야구규칙.pdf": { title: "2026 공식야구규칙", pages: 220, sha: "deb2c0d58ef41c6631f47a3dcfbe37d853a97275b9891ad50f0a8525b302a16a" },
   "2026_리그규정.pdf": { title: "2026 KBO 리그 규정", pages: 106, sha: "9a0c2f21cad8c69b5bbfae3658f3057edbb317feb74c9f2a1dca1931a4d0d156" },
   "2026_야구규약.pdf": { title: "2026 KBO 야구규약", pages: 268, sha: "127a572cb35b6819f219eea3e5144695403239f4934d36141b40ad63006a9cff" },
 };
 const EMBED_MODEL = "gemini-embedding-2";
 const EMBED_DIM = 768;
 // 원문 해시와 별개인 파서/청킹 계약 버전. 같은 PDF라도 이 값이 바뀌면 1회 재적재한다.
-const OFFICIAL_LOADER_REVISION = "kbo-ebook-sections-v2";
+const OFFICIAL_LOADER_REVISION = "kbo-ebook-calendar-v1";
 const STALE_AFTER_DAYS = 365; // 공식 e북은 연 단위 개정이다. 30일 재수집은 무의미하다.
 
 const log = (...parts) => console.log(...parts);
@@ -271,7 +274,12 @@ function prepareDocument(doc) {
     extractorRevision: p.extractorRevision,
     ...(p.extractorRevision === REQUIRED_REVISION ? { sourcePdfSha256: p.sourcePdfSha256, documentOrdinal: p.documentOrdinal, documentChunkCount: p.documentChunkCount } : {}),
   }))) : fullClean);
-  const revision = `sha256:${documentContentHash.slice(0, 16)}`;
+  const calendarBindings = bindCalendarSeasons(doc, documentContentHash, calendarProfiles);
+  // Metadata changes need a new snapshot even when the original words do not.
+  const revisionHash = calendarBindings.size
+    ? sha256(JSON.stringify({ documentContentHash, calendarBindings: [...calendarBindings] }))
+    : documentContentHash;
+  const revision = `sha256:${revisionHash.slice(0, 16)}`;
   const asOf = doc.crawledAt.slice(0, 10);
 
   const chunks = [];
@@ -282,7 +290,12 @@ function prepareDocument(doc) {
   const required = atomic && atomicRevision === REQUIRED_REVISION;
   const requiredProfile = required ? REQUIRED_PROFILES[doc.file] : null;
   if (required) {
-    if (!requiredProfile || doc.title !== requiredProfile.title || doc.entity !== requiredProfile.title + " 필수 조항"
+    const legacyEntity = requiredProfile?.title + " 필수 조항";
+    const ruleBundle = doc.entity.startsWith(legacyEntity + " ") ? doc.entity.slice(legacyEntity.length + 1) : null;
+    const isolatedRule = ruleBundle !== null && /^[1-9]\.[0-9]{2}$/.test(ruleBundle)
+      && doc.file === "2026_야구규칙.pdf"
+      && doc.pages.every(p => p.section?.split(" ")[0] === ruleBundle);
+    if (!requiredProfile || doc.title !== requiredProfile.title || (doc.entity !== legacyEntity && !isolatedRule)
       || doc.pagesTotal !== requiredProfile.pages || !doc.canonicalUrlVerified
       || decodeURI(doc.canonicalUrl) !== "https://6ptotvmi5753.edge.naverncp.com/KBO_FILE/ebook/pdf/" + doc.file
       || !doc.pages.every((p) => p.selection === "required_articles" && p.sourcePdfSha256 === requiredProfile.sha
@@ -338,6 +351,7 @@ function prepareDocument(doc) {
         sectionPath,
         chunkIndex,
         page: page.page,
+        calendarSeason: calendarBindings.get(page.page) ?? null,
         ...(atomic ? { pageEnd: page.pageEnd, extractorRevision: page.extractorRevision } : {}),
         ...(required ? { sourcePdfSha256: page.sourcePdfSha256 } : {}),
         content,
@@ -615,6 +629,8 @@ async function main() {
   log("=".repeat(78));
   for (const p of prepared) {
     const chars = p.chunks.reduce((s, c) => s + c.content.length, 0);
+    const calendarBound = p.chunks.filter(chunk => chunk.calendarSeason !== null).length;
+    log(`${p.sourceKey} calendarSeason: verified=${calendarBound} unknown=${p.chunks.length - calendarBound}`);
     log(
       `${p.sourceKey.padEnd(42)} pages=${String(p.doc.pages.length).padStart(5)} ` +
         `clean=${String(p.cleanChars).padStart(9)} chunks=${String(p.chunks.length).padStart(6)} ` +
@@ -796,6 +812,7 @@ async function main() {
               kind: p.doc.kind,
               file: p.doc.file,
               page: chunk.page,
+              calendarSeason: chunk.calendarSeason,
               ...(chunk.extractorRevision ? {
                 pageEnd: chunk.pageEnd, extractorRevision: chunk.extractorRevision,
               } : {}),

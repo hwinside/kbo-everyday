@@ -177,13 +177,15 @@ async function measure(chromium) {
       empty: process.env.RSC_GATE_FORCE_NO_COMMUNITY === "1",
     });
     // `/api/games` 를 고정 fixture 로 가로챈다 — 경기 없는 날에도 카드가 렌더되도록.
-    await page.route("**/api/games*", (route) =>
-      route.fulfill({
+    let gameFixtureRequests = 0;
+    await page.route((url) => url.origin === base && url.pathname === "/api/games", (route) => {
+      gameFixtureRequests++;
+      return route.fulfill({
         status: 200,
         contentType: "application/json",
         body: JSON.stringify({ games: FIXTURE_GAMES }),
-      }),
-    );
+      });
+    });
     const rsc = [];
     page.on("request", (r) => {
       const u = r.url();
@@ -192,6 +194,57 @@ async function measure(chromium) {
     await page.goto(base + "/", { waitUntil: "domcontentloaded", timeout: 90000 });
     await page.waitForTimeout(6000);
     const load = rsc.length;
+    const gamesHeading = page.getByRole("heading", { name: /^전체 (시범)?경기 현황$/ });
+    const gamesSection = page.locator("section").filter({ has: gamesHeading });
+    const gameIds = FIXTURE_GAMES.map(({ gameId }) => gameId);
+    const cardSnapshot = () => gamesSection.locator('a[href^="/games/"]').evaluateAll(
+      (links) => links.map((link) => ({ href: link.getAttribute("href"),
+        visible: link.getBoundingClientRect().height > 0 })));
+    log(`  경기 카드 로드 직후: fixtureRequests=${gameFixtureRequests}, links=${JSON.stringify(await cardSnapshot())}`);
+    // SSR initialGames skips the mount /api/games fetch. Use the real refresh UI
+    // to increment refreshNonce and install the browser fixture in either case.
+    // Dispatch only the input gesture, never React state or router.prefetch.
+    await page.evaluate(() => window.scrollTo(0, 0));
+    const rscBeforeRefresh = rsc.length;
+    const dispatchPullTouch = (type, clientY) => gamesHeading.evaluate((target, { type, clientY }) => {
+      const touch = new Touch({ identifier: 1, target, clientX: 100, clientY });
+      const touches = type === "touchend" ? [] : [touch];
+      target.dispatchEvent(new TouchEvent(type, {
+        bubbles: true, cancelable: true, touches, targetTouches: touches,
+        changedTouches: [touch],
+      }));
+    }, { type, clientY });
+    await dispatchPullTouch("touchstart", 100);
+    await dispatchPullTouch("touchmove", 300);
+    await page.getByText("놓으면 새로고침", { exact: true }).waitFor({ state: "visible", timeout: 5000 });
+    const fixtureResponse = page.waitForResponse((response) => {
+      const url = new URL(response.url());
+      return url.origin === base && url.pathname === "/api/games" && response.ok();
+    }, { timeout: 15000 });
+    await dispatchPullTouch("touchend", 300);
+    await fixtureResponse;
+    await gamesSection.locator(`a[href="/games/${gameIds[0]}"]`).waitFor({ state: "attached", timeout: 15000 });
+    log(`  새로고침 RSC: before=${rscBeforeRefresh}, after=${rsc.length}, delta=${rsc.length - rscBeforeRefresh} (누적 예산에 포함)`);
+    log(`  경기 카드 새로고침 후: fixtureRequests=${gameFixtureRequests}, links=${JSON.stringify(await cardSnapshot())}`);
+    // Mount is not exposure: a card below the viewport never triggers Next Link's
+    // IntersectionObserver. Expose every exact fixture target before counting.
+    // Do not click/hover or call router.prefetch: this measures automatic prefetch.
+    for (const { gameId } of FIXTURE_GAMES) {
+      const card = gamesSection.locator(`a[href="/games/${gameId}"]`);
+      await card.waitFor({ state: "visible", timeout: 15000 });
+      await card.scrollIntoViewIfNeeded();
+      const inViewport = await card.evaluate((link) => {
+        const rect = link.getBoundingClientRect();
+        return rect.width > 0 && rect.height > 0 && rect.top < innerHeight &&
+          rect.bottom > 0 && rect.left < innerWidth && rect.right > 0;
+      });
+      if (!inViewport) throw new Error(`fixture card not in viewport: ${gameId}`);
+      // Keep the card intersecting while idle callbacks / prefetch queue run.
+      // Baseline has no game request to await, so use the same bounded window
+      // for both baseline and mutations (including already-prefetched cards).
+      await page.waitForTimeout(2000);
+    }
+    await page.waitForTimeout(3000);
     // Explicitly expose this measured surface; a changing home layout must not leave
     // the community mutation below the viewport and silently pass.
     const community = page.locator("section").filter({ has: page.getByRole("heading", { name: /최근 24시간 인기글/ }) });
@@ -212,13 +265,17 @@ async function measure(chromium) {
         .filter((h) => !!document.querySelector(`a[href="${h}"]`)).length);
     // 경기 카드 Link 실재 확인 — mutation C 의 측정 대상. fixture 주입으로 항상 5장이
     // 렌더돼야 하고, 0장이면 카드 미렌더 상태의 측정이라 무효다(월요일 no-op 재발 방지).
-    const gameLinks = await page.evaluate(
-      () => document.querySelectorAll('a[href^="/games/2026"]').length);
+    const gameLinks = await gamesSection.locator('a[href^="/games/"]').evaluateAll(
+      (links, ids) => links.filter((link) => ids.some((id) => link.getAttribute("href") === `/games/${id}`)).length,
+      gameIds);
     const communityIds = await community.locator(HOME_POPULAR_LINKS).evaluateAll(
       (links) => links.map((link) => Number(link.getAttribute("href").split("/").pop())));
     const communityPrefetch = rsc.filter((p) => HOME_POPULAR_IDS.some((id) => p === `/community/teams/lg/posts/${id}`)).length;
+    // 로드/스크롤 중 어느 시점에 발화해도 경기 상세 자동 prefetch는 허용하지 않는다.
+    // 총량 예산 10건만 적용하면 fixture 5경기 prefetch가 예산에 흡수될 수 있다.
+    const gamePrefetch = rsc.filter((p) => FIXTURE_GAMES.some(({ gameId }) => p === `/games/${gameId}`)).length;
     await ctx.close();
-    return { load, scroll, navLinks, gameLinks, communityIds, communityPrefetch,
+    return { load, scroll, navLinks, gameLinks, gamePrefetch, communityIds, communityPrefetch,
       communityRequests: popularFixture.requests.length, paths: rsc };
   } finally {
     await browser.close();
@@ -235,6 +292,8 @@ function judge(m) {
     fails.push(`스크롤 3왕복 후 _rsc ${m.scroll}건 > 예산 ${RSC_BUDGET_SCROLL}`);
   if (m.communityPrefetch > 0)
     fails.push(`홈 글 상세 자동 prefetch ${m.communityPrefetch}건 > 예산 0`);
+  if (m.gamePrefetch > 0)
+    fails.push(`홈 경기 상세 자동 prefetch ${m.gamePrefetch}건 > 예산 0`);
   return fails;
 }
 
@@ -264,7 +323,13 @@ async function runOnce() {
     const idCheck = await servedBuildIdMatches(expectedBuildId);
     if (!idCheck.ok) { log(`HARNESS-FAIL ${idCheck.reason}`); return EXIT_HARNESS_FAILURE; }
     log(`  buildId ${expectedBuildId} 일치 (방금 빌드한 산출물을 측정)`);
-    const m = await measure(chromium);
+    let m;
+    try {
+      m = await measure(chromium);
+    } catch (error) {
+      log(`HARNESS-FAIL[RSC_MEASUREMENT] 카드 노출/브라우저 측정 실패: ${error.message}`);
+      return EXIT_HARNESS_FAILURE;
+    }
     // 자기보호 훅: navLinks<4 경계가 회귀하면 workflow 가 잡아야 한다(삼순 NO-GO 4차 지적①).
     // 이 env 로 불완전 렌더를 강제 주입하면, 아래 분기가 반드시 exit 30 을 내야 한다.
     // 만약 누군가 이 분기를 exit 20 으로 바꾸면 workflow 의 `-eq 30` 검사가 실패한다.
@@ -276,8 +341,8 @@ async function runOnce() {
     log(`  마운트된 경기 카드 Link ${m.gameLinks}장 (fixture 5경기 주입)`);
     // 카드 0장이면 mutation C 가 no-op 이 되는 무효 측정이다 — 예산 판정 전에 harness
     // 실패로 분리한다(navLinks 와 같은 원칙, 전용 marker 로 구분).
-    if (m.gameLinks < 1) {
-      log(`  HARNESS-FAIL[RSC_NO_GAME_CARDS] 경기 카드 Link 0장 — fixture 주입 실패, 측정 무효`);
+    if (m.gameLinks !== FIXTURE_GAMES.length) {
+      log(`  HARNESS-FAIL[RSC_NO_GAME_CARDS] fixture 경기 카드 ${m.gameLinks}/${FIXTURE_GAMES.length}장 — 측정 무효`);
       return EXIT_HARNESS_FAILURE;
     }
     if (m.navLinks < 4) {
@@ -291,6 +356,7 @@ async function runOnce() {
       return EXIT_HARNESS_FAILURE;
     }
     log(`  홈 인기글 ${m.communityIds.length}행 · 상세 prefetch ${m.communityPrefetch}건`);
+    log(`  홈 경기 상세 자동 prefetch ${m.gamePrefetch}건 (예산 0, gamePrefetch=${m.gamePrefetch})`);
     log(`  홈 로드 직후 _rsc ${m.load}건 (예산 ${RSC_BUDGET_LOAD})`);
     log(`  스크롤 3왕복 후  _rsc ${m.scroll}건 (예산 ${RSC_BUDGET_SCROLL})`);
     const uniq = new Set(m.paths);

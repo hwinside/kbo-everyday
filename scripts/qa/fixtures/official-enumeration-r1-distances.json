@@ -1,0 +1,1435 @@
+{
+  "mode": "read-only-rank-diagnostic-not-QA",
+  "startedAt": "2026-10-02T12:40:11.289Z",
+  "finishedAt": "2026-10-02T12:40:36.290Z",
+  "model": "gemini-embedding-2",
+  "chunks": 9152,
+  "manifestSha256": "3e79712e3ab7eae885552586768ba96a1954a4601fbd5dc1a94df5e2f37bd023",
+  "corpusVectorHash": "33d0f2032264dac77559d1867d520bf02f288d5ede093739f4f13555401926b8",
+  "threshold": 0.42,
+  "candidateLimit": 12,
+  "embeddingCalls": 13,
+  "replacements": [
+    {
+      "id": 192172,
+      "section": "2026 공식야구규칙#p45",
+      "originalSha256": "682743d92c27f2d5b2528748cd6f622bc85f88305058e1b404683438bccb1e94",
+      "boundSha256": "9e44889cc3108ee18caa2de4e5d0949bef131567775e3abdc95d5ad59743be21",
+      "boundText": "타자는 다음 경우 주자가 되어 아웃될 염려 없이 안전하게 1루에 나간다. 단, 타자가 1루로 가서 베이스에 닿는 것을 전제로 한다.\n5.05 타자가 주자되기 (이어짐)\n규정되어 있는 것처럼 베이스에 닿은 것으로 본다. [감독이 플레이를 선택하는 경우의 예] ① 1사 3루, 타자가 포수의 타격방해에도 불구하고 외야에 타자가 주자되기 5. 05 플라이 볼을 쳐 포구 뒤 3루주자가 득점하였다. → 감독 은 타자 아웃으로 득점을 기록하는 것, 주자 1·3루(타자 가 타격방해로 출루)가 되는 것 중 택일할 수 있다. ② 무사 2루, 타자는 포수에게 방해 받으면서 번트하여 주자 를 3루에 보내고 자신은 1루에서 아웃되었다. → 감독은 무사 1·2루와 1사 3루 중 택일할 수 있다. 감독이 방해에 의한 벌칙 적용을 선택하였을 경우 다음과 같이 해석한다. 포수(또는 다른 야수)가 타자를 방해하였을 경우 타자에게 는 1루가 허용된다. 이러한 방해가 일어나는 순간 3루주자 가 도루 또는 스퀴즈로 득점하려고 하였을 때는 볼 데드가 되어 3루주자의 득점을 인정하고 타자에게는 1루가 허용된 다. 이러한 방해가 일어나는 순간 3루주자가 도루 또는 스퀴즈 로 득점하려고 하지 않았을 때는 볼 데드가 되어 타자에게 1루가 허용되며, 그 때문에 베이스를 비워줘야 하는 주자는 진루한다. 도루를 시도하지 않은 주자와 베이스를 비우지 않아도 되는 주자는 방해 발생 순간에 점유하고 있던 베이 스에 머무르게 된다. 투수가 투구하기 전에 포수가 타자를 방해하였을 경우에는 이를 타격방해로 생각하지 않고 심판원은 즉시 “타임”을 선 고하여 처음부터 다시 시작한다. [주] 감독이 일단 주심에게 플레이 선택을 통고하면 이를 취 소할 수 없다. ⑷ 페어 볼이 페어지역에서 야수에 닿기 전에 심판원 또는 주자에 게 닿았을 경우 (단, 야수(투수 제외)를 통과하거나 야수(투수 포함)에 닿은 페 어 볼이 심판원에게 닿았을 때는 볼 인 플레이다)"
+    },
+    {
+      "id": 192182,
+      "section": "2026 공식야구규칙#p60",
+      "originalSha256": "e0b2b334c015d4811cf60987aadde2e297cd84164d6d0922bd41fa9fd04d55a3",
+      "boundSha256": "e03a4c0f902d0f6460787003f3baa593a728378162707486fc58a68d909a483e",
+      "boundText": "타자 아웃인 경우는 다음과 같다.\n5.09 아웃 (이어짐)\n인 때도 같음) 제3스트라이크로 선언된 투구가 뒤로 빠지거나 주\n심의 마스크 등에 끼었을 경우에도 이 항이 적용되어 타자는 아웃 이다. ⑷ 2스트라이크 뒤의 투구를 번트하여 파울 볼이 되었을 경우 ⑸ 인필드 플라이가 선언되었을 경우 (용어의 정의 40. 참조) ⑹ 2스트라이크 뒤 타자가 쳤으나(번트도 포함) 투구가 배트에 닿 지 않고 타자의 신체에 닿았을 경우"
+    },
+    {
+      "id": 192185,
+      "section": "2026 공식야구규칙#p65",
+      "originalSha256": "1f2720e5f3c97392f87f26311819a331fccc83edbad578c2c02a2b8b85532e73",
+      "boundSha256": "b6ec1b0904f1142fa980a889421205042c674e5536ff15f3365b96fffae7f8c2",
+      "boundText": "다음의 경우 주자는 아웃된다.\n5.09 아 웃 (이어짐)\n⑸ 페어 플라이 볼, 파울 플라이 볼이 정규로 포구된 뒤 주자가 베이\n스에 다시 닿기 전에 신체 또는 그 베이스에 태그당한 경우 단, 이 아웃은 어필 플레이므로 투수가 타자에게 다음 1구를 투구 하거나 다른 플레이를 하거나 플레이를 하려고 한 다음에는 주자 가 리터치하지 않은 것으로 아웃되지 않는다. (5. 09⒞ 참조)"
+    }
+  ],
+  "rows": [
+    {
+      "query": "플라이아웃",
+      "targets": [
+        {
+          "id": 192172,
+          "section": "2026 공식야구규칙#p45",
+          "stored": {
+            "id": 192172,
+            "section": "2026 공식야구규칙#p45",
+            "distance": 0.42901644084376556,
+            "rank": 42,
+            "withinThreshold": false
+          },
+          "plain": {
+            "distance": 0.42901644084376556,
+            "rank": 42,
+            "withinThreshold": false,
+            "candidateEligible": false
+          },
+          "bound": {
+            "distance": 0.42866530452538,
+            "rank": 42,
+            "withinThreshold": false,
+            "candidateEligible": false
+          }
+        },
+        {
+          "id": 192182,
+          "section": "2026 공식야구규칙#p60",
+          "stored": {
+            "id": 192182,
+            "section": "2026 공식야구규칙#p60",
+            "distance": 0.41376580705033716,
+            "rank": 13,
+            "withinThreshold": true
+          },
+          "plain": {
+            "distance": 0.41376580705033716,
+            "rank": 13,
+            "withinThreshold": true,
+            "candidateEligible": false
+          },
+          "bound": {
+            "distance": 0.4188296082466718,
+            "rank": 17,
+            "withinThreshold": true,
+            "candidateEligible": false
+          }
+        },
+        {
+          "id": 192185,
+          "section": "2026 공식야구규칙#p65",
+          "stored": {
+            "id": 192185,
+            "section": "2026 공식야구규칙#p65",
+            "distance": 0.3588511357168638,
+            "rank": 2,
+            "withinThreshold": true
+          },
+          "plain": {
+            "distance": 0.3588511357168638,
+            "rank": 2,
+            "withinThreshold": true,
+            "candidateEligible": true
+          },
+          "bound": {
+            "distance": 0.35704137360827226,
+            "rank": 2,
+            "withinThreshold": true,
+            "candidateEligible": true
+          }
+        }
+      ],
+      "exactTop12": [
+        {
+          "id": 192183,
+          "section": "2026 공식야구규칙#p62",
+          "distance": 0.3558747479107225
+        },
+        {
+          "id": 192185,
+          "section": "2026 공식야구규칙#p65",
+          "distance": 0.3588511357168638
+        },
+        {
+          "id": 193607,
+          "section": "2026 공식야구규칙#40. INFIELD FLY (인필드 플라이)",
+          "distance": 0.36709000393479085
+        },
+        {
+          "id": 192234,
+          "section": "2026 공식야구규칙#p150",
+          "distance": 0.3771150885647446
+        },
+        {
+          "id": 193608,
+          "section": "2026 공식야구규칙#40. INFIELD FLY (인필드 플라이)",
+          "distance": 0.3781963515079315
+        },
+        {
+          "id": 192186,
+          "section": "2026 공식야구규칙#p66",
+          "distance": 0.38918987299509644
+        },
+        {
+          "id": 192235,
+          "section": "2026 공식야구규칙#p151",
+          "distance": 0.405914430640004
+        },
+        {
+          "id": 193414,
+          "section": "2026 KBO 연감#p484",
+          "distance": 0.4107110163720812
+        },
+        {
+          "id": 192302,
+          "section": "2026 KBO 연감#p17",
+          "distance": 0.41174934300772736
+        },
+        {
+          "id": 192301,
+          "section": "2026 KBO 연감#p16",
+          "distance": 0.41186300030930745
+        },
+        {
+          "id": 4314,
+          "section": "2021 클린베이스볼 가이드북#p54",
+          "distance": 0.41198974821615963
+        },
+        {
+          "id": 192187,
+          "section": "2026 공식야구규칙#p68",
+          "distance": 0.4133415141256076
+        }
+      ],
+      "rpc": [
+        {
+          "section": "2026 공식야구규칙#p62",
+          "distance": 0.355874796036634,
+          "contentSha256": "fb0bcfd2bd3308ac6dcd5f8d3af0d37e40922e668996b0e215841aabdbef9d00"
+        },
+        {
+          "section": "2026 공식야구규칙#p65",
+          "distance": 0.358851205788989,
+          "contentSha256": "1f2720e5f3c97392f87f26311819a331fccc83edbad578c2c02a2b8b85532e73"
+        },
+        {
+          "section": "2026 공식야구규칙#40. INFIELD FLY (인필드 플라이)",
+          "distance": 0.367090099974256,
+          "contentSha256": "d549530b145f0329133b25f4a23469f38d4f01f0a3dcc6ca3417f9cdfd12b740"
+        },
+        {
+          "section": "2026 공식야구규칙#p150",
+          "distance": 0.377115122595704,
+          "contentSha256": "cd96fecbb84dd099fa523cb238062138504d69bd3351804511d79f1a7677cd15"
+        },
+        {
+          "section": "2026 공식야구규칙#40. INFIELD FLY (인필드 플라이)",
+          "distance": 0.378196251504561,
+          "contentSha256": "7f94266a65ae70ec598dcf0cc956ebcfbbf487986015e79eddb13c44acc3a22f"
+        },
+        {
+          "section": "2026 공식야구규칙#p66",
+          "distance": 0.389189948584445,
+          "contentSha256": "7f3f80bf8ac85940b6ac1709e2f424ffbbcc2f325f2b03ddbd266f2eec298e90"
+        },
+        {
+          "section": "2026 공식야구규칙#p151",
+          "distance": 0.405914496670425,
+          "contentSha256": "2c18b6a0c1d76e820973bae56d70346f72e59fcba929b9481a6dba5e515a3813"
+        },
+        {
+          "section": "2026 KBO 연감#p484",
+          "distance": 0.410711155406625,
+          "contentSha256": "cf5495e449592bd4ed99f4a45c4eee9066f050d5f76a28a1b072da7cc8020da3"
+        },
+        {
+          "section": "2026 KBO 연감#p17",
+          "distance": 0.411749327883075,
+          "contentSha256": "f94d3ecbbd17916e9667f807353cb5d3a19f751d645b64f1e7a55afeebe62888"
+        },
+        {
+          "section": "2026 KBO 연감#p16",
+          "distance": 0.411863039509888,
+          "contentSha256": "ac37ba817d3153f5d53063fef2eb2eced45ab99421aa3dcdd5004e10288341f0"
+        },
+        {
+          "section": "2021 클린베이스볼 가이드북#p54",
+          "distance": 0.411989808082576,
+          "contentSha256": "83b9ee4e42ef8321055f793be4130c8692232dad4e0a9286e9dc7eaa34c7466b"
+        },
+        {
+          "section": "2026 공식야구규칙#p68",
+          "distance": 0.41334146896656,
+          "contentSha256": "2ce9912ed6b7566f610e4b86c3c0fc264b5b64ab0dfd2c98deff030a08180dab"
+        }
+      ]
+    },
+    {
+      "query": "그건 플라이아웃 아니야?",
+      "targets": [
+        {
+          "id": 192172,
+          "section": "2026 공식야구규칙#p45",
+          "stored": {
+            "id": 192172,
+            "section": "2026 공식야구규칙#p45",
+            "distance": 0.41675654358310554,
+            "rank": 92,
+            "withinThreshold": true
+          },
+          "plain": {
+            "distance": 0.41675654358310554,
+            "rank": 92,
+            "withinThreshold": true,
+            "candidateEligible": false
+          },
+          "bound": {
+            "distance": 0.41668726078480656,
+            "rank": 91,
+            "withinThreshold": true,
+            "candidateEligible": false
+          }
+        },
+        {
+          "id": 192182,
+          "section": "2026 공식야구규칙#p60",
+          "stored": {
+            "id": 192182,
+            "section": "2026 공식야구규칙#p60",
+            "distance": 0.39375528278244887,
+            "rank": 11,
+            "withinThreshold": true
+          },
+          "plain": {
+            "distance": 0.39375528278244887,
+            "rank": 11,
+            "withinThreshold": true,
+            "candidateEligible": true
+          },
+          "bound": {
+            "distance": 0.394220004124345,
+            "rank": 11,
+            "withinThreshold": true,
+            "candidateEligible": true
+          }
+        },
+        {
+          "id": 192185,
+          "section": "2026 공식야구규칙#p65",
+          "stored": {
+            "id": 192185,
+            "section": "2026 공식야구규칙#p65",
+            "distance": 0.3436649264796854,
+            "rank": 2,
+            "withinThreshold": true
+          },
+          "plain": {
+            "distance": 0.3436649264796854,
+            "rank": 2,
+            "withinThreshold": true,
+            "candidateEligible": true
+          },
+          "bound": {
+            "distance": 0.3457921864195943,
+            "rank": 2,
+            "withinThreshold": true,
+            "candidateEligible": true
+          }
+        }
+      ],
+      "exactTop12": [
+        {
+          "id": 192183,
+          "section": "2026 공식야구규칙#p62",
+          "distance": 0.3291610082245242
+        },
+        {
+          "id": 192185,
+          "section": "2026 공식야구규칙#p65",
+          "distance": 0.3436649264796854
+        },
+        {
+          "id": 193607,
+          "section": "2026 공식야구규칙#40. INFIELD FLY (인필드 플라이)",
+          "distance": 0.35505676049082757
+        },
+        {
+          "id": 193608,
+          "section": "2026 공식야구규칙#40. INFIELD FLY (인필드 플라이)",
+          "distance": 0.36381964540950573
+        },
+        {
+          "id": 192234,
+          "section": "2026 공식야구규칙#p150",
+          "distance": 0.36431491928692894
+        },
+        {
+          "id": 192186,
+          "section": "2026 공식야구규칙#p66",
+          "distance": 0.3688938677762147
+        },
+        {
+          "id": 192184,
+          "section": "2026 공식야구규칙#p64",
+          "distance": 0.38326118357547734
+        },
+        {
+          "id": 4314,
+          "section": "2021 클린베이스볼 가이드북#p54",
+          "distance": 0.3850023719572563
+        },
+        {
+          "id": 193414,
+          "section": "2026 KBO 연감#p484",
+          "distance": 0.39009943881364073
+        },
+        {
+          "id": 192302,
+          "section": "2026 KBO 연감#p17",
+          "distance": 0.3935572435835992
+        },
+        {
+          "id": 192182,
+          "section": "2026 공식야구규칙#p60",
+          "distance": 0.39375528278244887
+        },
+        {
+          "id": 4280,
+          "section": "2021 클린베이스볼 가이드북#p18",
+          "distance": 0.3948205348922209
+        }
+      ],
+      "rpc": [
+        {
+          "section": "2026 공식야구규칙#p62",
+          "distance": 0.329161007950366,
+          "contentSha256": "fb0bcfd2bd3308ac6dcd5f8d3af0d37e40922e668996b0e215841aabdbef9d00"
+        },
+        {
+          "section": "2026 공식야구규칙#p65",
+          "distance": 0.343664651690758,
+          "contentSha256": "1f2720e5f3c97392f87f26311819a331fccc83edbad578c2c02a2b8b85532e73"
+        },
+        {
+          "section": "2026 공식야구규칙#40. INFIELD FLY (인필드 플라이)",
+          "distance": 0.355056879962358,
+          "contentSha256": "d549530b145f0329133b25f4a23469f38d4f01f0a3dcc6ca3417f9cdfd12b740"
+        },
+        {
+          "section": "2026 공식야구규칙#40. INFIELD FLY (인필드 플라이)",
+          "distance": 0.363819610054325,
+          "contentSha256": "7f94266a65ae70ec598dcf0cc956ebcfbbf487986015e79eddb13c44acc3a22f"
+        },
+        {
+          "section": "2026 공식야구규칙#p150",
+          "distance": 0.364314851375079,
+          "contentSha256": "cd96fecbb84dd099fa523cb238062138504d69bd3351804511d79f1a7677cd15"
+        },
+        {
+          "section": "2026 공식야구규칙#p66",
+          "distance": 0.368893739381985,
+          "contentSha256": "7f3f80bf8ac85940b6ac1709e2f424ffbbcc2f325f2b03ddbd266f2eec298e90"
+        },
+        {
+          "section": "2026 공식야구규칙#p64",
+          "distance": 0.383261208229769,
+          "contentSha256": "2fe617f8d6c9fbc89951fe39237af6f7ea3d6922d74365d10d6dca11664bcfce"
+        },
+        {
+          "section": "2021 클린베이스볼 가이드북#p54",
+          "distance": 0.38500231966397,
+          "contentSha256": "83b9ee4e42ef8321055f793be4130c8692232dad4e0a9286e9dc7eaa34c7466b"
+        },
+        {
+          "section": "2026 KBO 연감#p484",
+          "distance": 0.390099579981,
+          "contentSha256": "cf5495e449592bd4ed99f4a45c4eee9066f050d5f76a28a1b072da7cc8020da3"
+        },
+        {
+          "section": "2026 KBO 연감#p17",
+          "distance": 0.393557398551312,
+          "contentSha256": "f94d3ecbbd17916e9667f807353cb5d3a19f751d645b64f1e7a55afeebe62888"
+        },
+        {
+          "section": "2026 공식야구규칙#p60",
+          "distance": 0.393755237201061,
+          "contentSha256": "e0b2b334c015d4811cf60987aadde2e297cd84164d6d0922bd41fa9fd04d55a3"
+        },
+        {
+          "section": "2021 클린베이스볼 가이드북#p18",
+          "distance": 0.394820577986694,
+          "contentSha256": "4abac881d1f2ae7958a49a512d3147dc4df2a8a970be5fe8ce99af4709a9bb26"
+        }
+      ]
+    },
+    {
+      "query": "포구는 뭐야?",
+      "targets": [
+        {
+          "id": 192172,
+          "section": "2026 공식야구규칙#p45",
+          "stored": {
+            "id": 192172,
+            "section": "2026 공식야구규칙#p45",
+            "distance": 0.4238828834467945,
+            "rank": 181,
+            "withinThreshold": false
+          },
+          "plain": {
+            "distance": 0.4238828834467945,
+            "rank": 181,
+            "withinThreshold": false,
+            "candidateEligible": false
+          },
+          "bound": {
+            "distance": 0.4257681868767168,
+            "rank": 220,
+            "withinThreshold": false,
+            "candidateEligible": false
+          }
+        },
+        {
+          "id": 192182,
+          "section": "2026 공식야구규칙#p60",
+          "stored": {
+            "id": 192182,
+            "section": "2026 공식야구규칙#p60",
+            "distance": 0.4186205422679591,
+            "rank": 125,
+            "withinThreshold": true
+          },
+          "plain": {
+            "distance": 0.4186205422679591,
+            "rank": 125,
+            "withinThreshold": true,
+            "candidateEligible": false
+          },
+          "bound": {
+            "distance": 0.43820094560626954,
+            "rank": 657,
+            "withinThreshold": false,
+            "candidateEligible": false
+          }
+        },
+        {
+          "id": 192185,
+          "section": "2026 공식야구규칙#p65",
+          "stored": {
+            "id": 192185,
+            "section": "2026 공식야구규칙#p65",
+            "distance": 0.3973911642327893,
+            "rank": 17,
+            "withinThreshold": true
+          },
+          "plain": {
+            "distance": 0.3973911642327893,
+            "rank": 17,
+            "withinThreshold": true,
+            "candidateEligible": false
+          },
+          "bound": {
+            "distance": 0.40651365984367493,
+            "rank": 36,
+            "withinThreshold": true,
+            "candidateEligible": false
+          }
+        }
+      ],
+      "exactTop12": [
+        {
+          "id": 192241,
+          "section": "2026 공식야구규칙#p160",
+          "distance": 0.3557416968938626
+        },
+        {
+          "id": 192261,
+          "section": "2026 공식야구규칙#p198",
+          "distance": 0.359021035002828
+        },
+        {
+          "id": 192267,
+          "section": "2026 공식야구규칙#p205",
+          "distance": 0.3611385070797395
+        },
+        {
+          "id": 192258,
+          "section": "2026 공식야구규칙#p195",
+          "distance": 0.37493130490465987
+        },
+        {
+          "id": 192232,
+          "section": "2026 공식야구규칙#p145",
+          "distance": 0.3818443231372868
+        },
+        {
+          "id": 192169,
+          "section": "2026 공식야구규칙#p42",
+          "distance": 0.3821423176049954
+        },
+        {
+          "id": 192235,
+          "section": "2026 공식야구규칙#p151",
+          "distance": 0.3832685542600276
+        },
+        {
+          "id": 7735,
+          "section": "야구장 규모·용도별 건립 가이드북#p16",
+          "distance": 0.3857273158299773
+        },
+        {
+          "id": 7737,
+          "section": "야구장 규모·용도별 건립 가이드북#p17",
+          "distance": 0.3857273158299773
+        },
+        {
+          "id": 192262,
+          "section": "2026 공식야구규칙#p199",
+          "distance": 0.38783503985355694
+        },
+        {
+          "id": 192177,
+          "section": "2026 공식야구규칙#p51",
+          "distance": 0.39007682694971846
+        },
+        {
+          "id": 192179,
+          "section": "2026 공식야구규칙#p54",
+          "distance": 0.390157857581261
+        }
+      ],
+      "rpc": [
+        {
+          "section": "2026 공식야구규칙#p160",
+          "distance": 0.355741646443812,
+          "contentSha256": "00b9138a0fb125ec768ba4aab069dcbfd331c555066714462233c108fb7dac37"
+        },
+        {
+          "section": "2026 공식야구규칙#p198",
+          "distance": 0.359021237246543,
+          "contentSha256": "3a6661a35ece7a20694e6c8fa06cafd00305a3b9f69924a70f4d5535c6e942f0"
+        },
+        {
+          "section": "2026 공식야구규칙#p205",
+          "distance": 0.361138532568661,
+          "contentSha256": "b766fe99b507da7e6786af68caa42fd5fa66138c367d6acfc1c7b7977b95892a"
+        },
+        {
+          "section": "2026 공식야구규칙#p195",
+          "distance": 0.374931406244022,
+          "contentSha256": "082f5a95c0bd5b3db2ee1b3d3d553afbf93424fe351b386f117664ef1e531d44"
+        },
+        {
+          "section": "2026 공식야구규칙#p145",
+          "distance": 0.381844324406027,
+          "contentSha256": "781193ef8cf3a22b30cb0e5ed66ea977eb0cb941fc1ae2d41eb3dc5558827cea"
+        },
+        {
+          "section": "2026 공식야구규칙#p42",
+          "distance": 0.382142218628162,
+          "contentSha256": "9b695c5255ed3e5a3e4badcb6e8bcabab9cffa9d256457f72f88748e355393c8"
+        },
+        {
+          "section": "2026 공식야구규칙#p151",
+          "distance": 0.383268659332784,
+          "contentSha256": "2c18b6a0c1d76e820973bae56d70346f72e59fcba929b9481a6dba5e515a3813"
+        },
+        {
+          "section": "야구장 규모·용도별 건립 가이드북#p16",
+          "distance": 0.385727542633246,
+          "contentSha256": "73605f14e457a7580d0e5eade1229b710de65ce953071d1efe9964bb3c244fa9"
+        },
+        {
+          "section": "야구장 규모·용도별 건립 가이드북#p17",
+          "distance": 0.385727542633246,
+          "contentSha256": "73605f14e457a7580d0e5eade1229b710de65ce953071d1efe9964bb3c244fa9"
+        },
+        {
+          "section": "2026 공식야구규칙#p199",
+          "distance": 0.38783493456753,
+          "contentSha256": "8a5d932405ca76faf429ca83c7680315e5edcb098b6bcd6f04bf964ad90337dd"
+        },
+        {
+          "section": "2026 공식야구규칙#p51",
+          "distance": 0.390076849478768,
+          "contentSha256": "ee412e96be2588a9a611d8d8cfbaa0cc45df34c68c4010ac806926d46ee0ec5d"
+        },
+        {
+          "section": "2026 공식야구규칙#p54",
+          "distance": 0.390157938003471,
+          "contentSha256": "b0dbbf5a219c39293bdbd7a77475c2daf6aef02d5eccc7dd1bd57084e485ef42"
+        }
+      ]
+    },
+    {
+      "query": "포구와 플라이아웃은 어떻게 달라?",
+      "targets": [
+        {
+          "id": 192172,
+          "section": "2026 공식야구규칙#p45",
+          "stored": {
+            "id": 192172,
+            "section": "2026 공식야구규칙#p45",
+            "distance": 0.376651102224248,
+            "rank": 13,
+            "withinThreshold": true
+          },
+          "plain": {
+            "distance": 0.376651102224248,
+            "rank": 13,
+            "withinThreshold": true,
+            "candidateEligible": false
+          },
+          "bound": {
+            "distance": 0.3842577205046056,
+            "rank": 22,
+            "withinThreshold": true,
+            "candidateEligible": false
+          }
+        },
+        {
+          "id": 192182,
+          "section": "2026 공식야구규칙#p60",
+          "stored": {
+            "id": 192182,
+            "section": "2026 공식야구규칙#p60",
+            "distance": 0.3693359782311081,
+            "rank": 11,
+            "withinThreshold": true
+          },
+          "plain": {
+            "distance": 0.3693359782311081,
+            "rank": 11,
+            "withinThreshold": true,
+            "candidateEligible": true
+          },
+          "bound": {
+            "distance": 0.3825927978580549,
+            "rank": 20,
+            "withinThreshold": true,
+            "candidateEligible": false
+          }
+        },
+        {
+          "id": 192185,
+          "section": "2026 공식야구규칙#p65",
+          "stored": {
+            "id": 192185,
+            "section": "2026 공식야구규칙#p65",
+            "distance": 0.3265731293259101,
+            "rank": 1,
+            "withinThreshold": true
+          },
+          "plain": {
+            "distance": 0.3265731293259101,
+            "rank": 1,
+            "withinThreshold": true,
+            "candidateEligible": true
+          },
+          "bound": {
+            "distance": 0.3282902094257625,
+            "rank": 1,
+            "withinThreshold": true,
+            "candidateEligible": true
+          }
+        }
+      ],
+      "exactTop12": [
+        {
+          "id": 192185,
+          "section": "2026 공식야구규칙#p65",
+          "distance": 0.3265731293259101
+        },
+        {
+          "id": 192183,
+          "section": "2026 공식야구규칙#p62",
+          "distance": 0.33228135228677347
+        },
+        {
+          "id": 192234,
+          "section": "2026 공식야구규칙#p150",
+          "distance": 0.3394038097049571
+        },
+        {
+          "id": 193607,
+          "section": "2026 공식야구규칙#40. INFIELD FLY (인필드 플라이)",
+          "distance": 0.34186297069295624
+        },
+        {
+          "id": 192261,
+          "section": "2026 공식야구규칙#p198",
+          "distance": 0.3463894252834806
+        },
+        {
+          "id": 192235,
+          "section": "2026 공식야구규칙#p151",
+          "distance": 0.3474488616556546
+        },
+        {
+          "id": 192186,
+          "section": "2026 공식야구규칙#p66",
+          "distance": 0.3553048571643487
+        },
+        {
+          "id": 193608,
+          "section": "2026 공식야구규칙#40. INFIELD FLY (인필드 플라이)",
+          "distance": 0.3576656728120762
+        },
+        {
+          "id": 192241,
+          "section": "2026 공식야구규칙#p160",
+          "distance": 0.36426435001687874
+        },
+        {
+          "id": 192267,
+          "section": "2026 공식야구규칙#p205",
+          "distance": 0.36893998787403304
+        },
+        {
+          "id": 192182,
+          "section": "2026 공식야구규칙#p60",
+          "distance": 0.3693359782311081
+        },
+        {
+          "id": 192184,
+          "section": "2026 공식야구규칙#p64",
+          "distance": 0.3736976424614039
+        }
+      ],
+      "rpc": [
+        {
+          "section": "2026 공식야구규칙#p65",
+          "distance": 0.32657306963303,
+          "contentSha256": "1f2720e5f3c97392f87f26311819a331fccc83edbad578c2c02a2b8b85532e73"
+        },
+        {
+          "section": "2026 공식야구규칙#p62",
+          "distance": 0.332281251591628,
+          "contentSha256": "fb0bcfd2bd3308ac6dcd5f8d3af0d37e40922e668996b0e215841aabdbef9d00"
+        },
+        {
+          "section": "2026 공식야구규칙#p150",
+          "distance": 0.339403748512249,
+          "contentSha256": "cd96fecbb84dd099fa523cb238062138504d69bd3351804511d79f1a7677cd15"
+        },
+        {
+          "section": "2026 공식야구규칙#40. INFIELD FLY (인필드 플라이)",
+          "distance": 0.341862857341748,
+          "contentSha256": "d549530b145f0329133b25f4a23469f38d4f01f0a3dcc6ca3417f9cdfd12b740"
+        },
+        {
+          "section": "2026 공식야구규칙#p198",
+          "distance": 0.346389293670636,
+          "contentSha256": "3a6661a35ece7a20694e6c8fa06cafd00305a3b9f69924a70f4d5535c6e942f0"
+        },
+        {
+          "section": "2026 공식야구규칙#p151",
+          "distance": 0.347448786941088,
+          "contentSha256": "2c18b6a0c1d76e820973bae56d70346f72e59fcba929b9481a6dba5e515a3813"
+        },
+        {
+          "section": "2026 공식야구규칙#p66",
+          "distance": 0.355304956436139,
+          "contentSha256": "7f3f80bf8ac85940b6ac1709e2f424ffbbcc2f325f2b03ddbd266f2eec298e90"
+        },
+        {
+          "section": "2026 공식야구규칙#40. INFIELD FLY (인필드 플라이)",
+          "distance": 0.357665430455833,
+          "contentSha256": "7f94266a65ae70ec598dcf0cc956ebcfbbf487986015e79eddb13c44acc3a22f"
+        },
+        {
+          "section": "2026 공식야구규칙#p160",
+          "distance": 0.364264282163481,
+          "contentSha256": "00b9138a0fb125ec768ba4aab069dcbfd331c555066714462233c108fb7dac37"
+        },
+        {
+          "section": "2026 공식야구규칙#p205",
+          "distance": 0.368939961628815,
+          "contentSha256": "b766fe99b507da7e6786af68caa42fd5fa66138c367d6acfc1c7b7977b95892a"
+        },
+        {
+          "section": "2026 공식야구규칙#p60",
+          "distance": 0.36933598431061,
+          "contentSha256": "e0b2b334c015d4811cf60987aadde2e297cd84164d6d0922bd41fa9fd04d55a3"
+        },
+        {
+          "section": "2026 공식야구규칙#p64",
+          "distance": 0.373697526520047,
+          "contentSha256": "2fe617f8d6c9fbc89951fe39237af6f7ea3d6922d74365d10d6dca11664bcfce"
+        }
+      ]
+    },
+    {
+      "query": "인필드 플라이 아웃",
+      "targets": [
+        {
+          "id": 192172,
+          "section": "2026 공식야구규칙#p45",
+          "stored": {
+            "id": 192172,
+            "section": "2026 공식야구규칙#p45",
+            "distance": 0.33300256819280527,
+            "rank": 17,
+            "withinThreshold": true
+          },
+          "plain": {
+            "distance": 0.33300256819280527,
+            "rank": 17,
+            "withinThreshold": true,
+            "candidateEligible": false
+          },
+          "bound": {
+            "distance": 0.3207150578645733,
+            "rank": 11,
+            "withinThreshold": true,
+            "candidateEligible": true
+          }
+        },
+        {
+          "id": 192182,
+          "section": "2026 공식야구규칙#p60",
+          "stored": {
+            "id": 192182,
+            "section": "2026 공식야구규칙#p60",
+            "distance": 0.29544427639180704,
+            "rank": 6,
+            "withinThreshold": true
+          },
+          "plain": {
+            "distance": 0.29544427639180704,
+            "rank": 6,
+            "withinThreshold": true,
+            "candidateEligible": true
+          },
+          "bound": {
+            "distance": 0.2940250454767164,
+            "rank": 6,
+            "withinThreshold": true,
+            "candidateEligible": true
+          }
+        },
+        {
+          "id": 192185,
+          "section": "2026 공식야구규칙#p65",
+          "stored": {
+            "id": 192185,
+            "section": "2026 공식야구규칙#p65",
+            "distance": 0.27921535080325566,
+            "rank": 5,
+            "withinThreshold": true
+          },
+          "plain": {
+            "distance": 0.27921535080325566,
+            "rank": 5,
+            "withinThreshold": true,
+            "candidateEligible": true
+          },
+          "bound": {
+            "distance": 0.27298558601231704,
+            "rank": 5,
+            "withinThreshold": true,
+            "candidateEligible": true
+          }
+        }
+      ],
+      "exactTop12": [
+        {
+          "id": 193608,
+          "section": "2026 공식야구규칙#40. INFIELD FLY (인필드 플라이)",
+          "distance": 0.19506925223399085
+        },
+        {
+          "id": 193607,
+          "section": "2026 공식야구규칙#40. INFIELD FLY (인필드 플라이)",
+          "distance": 0.2011717193679975
+        },
+        {
+          "id": 192183,
+          "section": "2026 공식야구규칙#p62",
+          "distance": 0.21894941503719323
+        },
+        {
+          "id": 192186,
+          "section": "2026 공식야구규칙#p66",
+          "distance": 0.25944854055367694
+        },
+        {
+          "id": 192185,
+          "section": "2026 공식야구규칙#p65",
+          "distance": 0.27921535080325566
+        },
+        {
+          "id": 192182,
+          "section": "2026 공식야구규칙#p60",
+          "distance": 0.29544427639180704
+        },
+        {
+          "id": 192234,
+          "section": "2026 공식야구규칙#p150",
+          "distance": 0.3035663442519976
+        },
+        {
+          "id": 192188,
+          "section": "2026 공식야구규칙#p70",
+          "distance": 0.31476258555599057
+        },
+        {
+          "id": 192235,
+          "section": "2026 공식야구규칙#p151",
+          "distance": 0.31845462830215177
+        },
+        {
+          "id": 192184,
+          "section": "2026 공식야구규칙#p64",
+          "distance": 0.3197565160204765
+        },
+        {
+          "id": 192187,
+          "section": "2026 공식야구규칙#p68",
+          "distance": 0.3239934141318799
+        },
+        {
+          "id": 192196,
+          "section": "2026 공식야구규칙#p86",
+          "distance": 0.32439892880117216
+        }
+      ],
+      "rpc": [
+        {
+          "section": "2026 공식야구규칙#40. INFIELD FLY (인필드 플라이)",
+          "distance": 0.19506902591826,
+          "contentSha256": "7f94266a65ae70ec598dcf0cc956ebcfbbf487986015e79eddb13c44acc3a22f"
+        },
+        {
+          "section": "2026 공식야구규칙#40. INFIELD FLY (인필드 플라이)",
+          "distance": 0.20117194624616,
+          "contentSha256": "d549530b145f0329133b25f4a23469f38d4f01f0a3dcc6ca3417f9cdfd12b740"
+        },
+        {
+          "section": "2026 공식야구규칙#p62",
+          "distance": 0.218949566577405,
+          "contentSha256": "fb0bcfd2bd3308ac6dcd5f8d3af0d37e40922e668996b0e215841aabdbef9d00"
+        },
+        {
+          "section": "2026 공식야구규칙#p66",
+          "distance": 0.259448526037091,
+          "contentSha256": "7f3f80bf8ac85940b6ac1709e2f424ffbbcc2f325f2b03ddbd266f2eec298e90"
+        },
+        {
+          "section": "2026 공식야구규칙#p65",
+          "distance": 0.279215175801294,
+          "contentSha256": "1f2720e5f3c97392f87f26311819a331fccc83edbad578c2c02a2b8b85532e73"
+        },
+        {
+          "section": "2026 공식야구규칙#p60",
+          "distance": 0.295444183726998,
+          "contentSha256": "e0b2b334c015d4811cf60987aadde2e297cd84164d6d0922bd41fa9fd04d55a3"
+        },
+        {
+          "section": "2026 공식야구규칙#p150",
+          "distance": 0.303566264255937,
+          "contentSha256": "cd96fecbb84dd099fa523cb238062138504d69bd3351804511d79f1a7677cd15"
+        },
+        {
+          "section": "2026 공식야구규칙#p70",
+          "distance": 0.314762561434459,
+          "contentSha256": "32e9bcd0323224db2f8ca60d8ed59c7b8b8247dbfa33f7879e4cdea089f5e9e2"
+        },
+        {
+          "section": "2026 공식야구규칙#p151",
+          "distance": 0.318454685487504,
+          "contentSha256": "2c18b6a0c1d76e820973bae56d70346f72e59fcba929b9481a6dba5e515a3813"
+        },
+        {
+          "section": "2026 공식야구규칙#p64",
+          "distance": 0.319756548419194,
+          "contentSha256": "2fe617f8d6c9fbc89951fe39237af6f7ea3d6922d74365d10d6dca11664bcfce"
+        },
+        {
+          "section": "2026 공식야구규칙#p68",
+          "distance": 0.323993528369156,
+          "contentSha256": "2ce9912ed6b7566f610e4b86c3c0fc264b5b64ab0dfd2c98deff030a08180dab"
+        },
+        {
+          "section": "2026 공식야구규칙#p86",
+          "distance": 0.32439893803634,
+          "contentSha256": "0425904a73a0ded5dfa2c757e49a27e930288ca0a14949eb436ca23f5e3b4661"
+        }
+      ]
+    },
+    {
+      "query": "인필드 플라이가 선언되면 타자는 아웃이야?",
+      "targets": [
+        {
+          "id": 192172,
+          "section": "2026 공식야구규칙#p45",
+          "stored": {
+            "id": 192172,
+            "section": "2026 공식야구규칙#p45",
+            "distance": 0.3158191829360809,
+            "rank": 8,
+            "withinThreshold": true
+          },
+          "plain": {
+            "distance": 0.3158191829360809,
+            "rank": 8,
+            "withinThreshold": true,
+            "candidateEligible": true
+          },
+          "bound": {
+            "distance": 0.2963626890717458,
+            "rank": 7,
+            "withinThreshold": true,
+            "candidateEligible": true
+          }
+        },
+        {
+          "id": 192182,
+          "section": "2026 공식야구규칙#p60",
+          "stored": {
+            "id": 192182,
+            "section": "2026 공식야구규칙#p60",
+            "distance": 0.28961784626645526,
+            "rank": 5,
+            "withinThreshold": true
+          },
+          "plain": {
+            "distance": 0.28961784626645526,
+            "rank": 5,
+            "withinThreshold": true,
+            "candidateEligible": true
+          },
+          "bound": {
+            "distance": 0.2719168223087033,
+            "rank": 5,
+            "withinThreshold": true,
+            "candidateEligible": true
+          }
+        },
+        {
+          "id": 192185,
+          "section": "2026 공식야구규칙#p65",
+          "stored": {
+            "id": 192185,
+            "section": "2026 공식야구규칙#p65",
+            "distance": 0.29335968024369286,
+            "rank": 6,
+            "withinThreshold": true
+          },
+          "plain": {
+            "distance": 0.29335968024369286,
+            "rank": 6,
+            "withinThreshold": true,
+            "candidateEligible": true
+          },
+          "bound": {
+            "distance": 0.2781362131134347,
+            "rank": 5,
+            "withinThreshold": true,
+            "candidateEligible": true
+          }
+        }
+      ],
+      "exactTop12": [
+        {
+          "id": 193608,
+          "section": "2026 공식야구규칙#40. INFIELD FLY (인필드 플라이)",
+          "distance": 0.22610430375323864
+        },
+        {
+          "id": 192183,
+          "section": "2026 공식야구규칙#p62",
+          "distance": 0.2387180413128337
+        },
+        {
+          "id": 193607,
+          "section": "2026 공식야구규칙#40. INFIELD FLY (인필드 플라이)",
+          "distance": 0.23947586361771334
+        },
+        {
+          "id": 192186,
+          "section": "2026 공식야구규칙#p66",
+          "distance": 0.2679028936474932
+        },
+        {
+          "id": 192182,
+          "section": "2026 공식야구규칙#p60",
+          "distance": 0.28961784626645526
+        },
+        {
+          "id": 192185,
+          "section": "2026 공식야구규칙#p65",
+          "distance": 0.29335968024369286
+        },
+        {
+          "id": 192196,
+          "section": "2026 공식야구규칙#p86",
+          "distance": 0.31082515503897923
+        },
+        {
+          "id": 192172,
+          "section": "2026 공식야구규칙#p45",
+          "distance": 0.3158191829360809
+        },
+        {
+          "id": 192234,
+          "section": "2026 공식야구규칙#p150",
+          "distance": 0.3171005429375986
+        },
+        {
+          "id": 192184,
+          "section": "2026 공식야구규칙#p64",
+          "distance": 0.3173555712863335
+        },
+        {
+          "id": 192209,
+          "section": "2026 공식야구규칙#p110",
+          "distance": 0.32357688969967047
+        },
+        {
+          "id": 192188,
+          "section": "2026 공식야구규칙#p70",
+          "distance": 0.3245493260777642
+        }
+      ],
+      "rpc": [
+        {
+          "section": "2026 공식야구규칙#40. INFIELD FLY (인필드 플라이)",
+          "distance": 0.226104124997377,
+          "contentSha256": "7f94266a65ae70ec598dcf0cc956ebcfbbf487986015e79eddb13c44acc3a22f"
+        },
+        {
+          "section": "2026 공식야구규칙#p62",
+          "distance": 0.238718010148942,
+          "contentSha256": "fb0bcfd2bd3308ac6dcd5f8d3af0d37e40922e668996b0e215841aabdbef9d00"
+        },
+        {
+          "section": "2026 공식야구규칙#40. INFIELD FLY (인필드 플라이)",
+          "distance": 0.239475817742841,
+          "contentSha256": "d549530b145f0329133b25f4a23469f38d4f01f0a3dcc6ca3417f9cdfd12b740"
+        },
+        {
+          "section": "2026 공식야구규칙#p66",
+          "distance": 0.267902819168226,
+          "contentSha256": "7f3f80bf8ac85940b6ac1709e2f424ffbbcc2f325f2b03ddbd266f2eec298e90"
+        },
+        {
+          "section": "2026 공식야구규칙#p60",
+          "distance": 0.28961774397422,
+          "contentSha256": "e0b2b334c015d4811cf60987aadde2e297cd84164d6d0922bd41fa9fd04d55a3"
+        },
+        {
+          "section": "2026 공식야구규칙#p65",
+          "distance": 0.293359517666958,
+          "contentSha256": "1f2720e5f3c97392f87f26311819a331fccc83edbad578c2c02a2b8b85532e73"
+        },
+        {
+          "section": "2026 공식야구규칙#p86",
+          "distance": 0.310824856561437,
+          "contentSha256": "0425904a73a0ded5dfa2c757e49a27e930288ca0a14949eb436ca23f5e3b4661"
+        },
+        {
+          "section": "2026 공식야구규칙#p45",
+          "distance": 0.31581900464949,
+          "contentSha256": "682743d92c27f2d5b2528748cd6f622bc85f88305058e1b404683438bccb1e94"
+        },
+        {
+          "section": "2026 공식야구규칙#p150",
+          "distance": 0.31710036789174,
+          "contentSha256": "cd96fecbb84dd099fa523cb238062138504d69bd3351804511d79f1a7677cd15"
+        },
+        {
+          "section": "2026 공식야구규칙#p64",
+          "distance": 0.317355592093204,
+          "contentSha256": "2fe617f8d6c9fbc89951fe39237af6f7ea3d6922d74365d10d6dca11664bcfce"
+        },
+        {
+          "section": "2026 공식야구규칙#p110",
+          "distance": 0.323576751860306,
+          "contentSha256": "5864bfa51432a8db249b3b4cd763b46d77079fc0c551cef5b19094f88c0b69b7"
+        },
+        {
+          "section": "2026 공식야구규칙#p70",
+          "distance": 0.324549201292042,
+          "contentSha256": "32e9bcd0323224db2f8ca60d8ed59c7b8b8247dbfa33f7879e4cdea089f5e9e2"
+        }
+      ]
+    },
+    {
+      "query": "인필드 플라이를 떨어뜨리면 타자는 아웃이야?",
+      "targets": [
+        {
+          "id": 192172,
+          "section": "2026 공식야구규칙#p45",
+          "stored": {
+            "id": 192172,
+            "section": "2026 공식야구규칙#p45",
+            "distance": 0.31448227914269644,
+            "rank": 9,
+            "withinThreshold": true
+          },
+          "plain": {
+            "distance": 0.31448227914269644,
+            "rank": 9,
+            "withinThreshold": true,
+            "candidateEligible": true
+          },
+          "bound": {
+            "distance": 0.3009912596830193,
+            "rank": 7,
+            "withinThreshold": true,
+            "candidateEligible": true
+          }
+        },
+        {
+          "id": 192182,
+          "section": "2026 공식야구규칙#p60",
+          "stored": {
+            "id": 192182,
+            "section": "2026 공식야구규칙#p60",
+            "distance": 0.28965616646070425,
+            "rank": 5,
+            "withinThreshold": true
+          },
+          "plain": {
+            "distance": 0.28965616646070425,
+            "rank": 5,
+            "withinThreshold": true,
+            "candidateEligible": true
+          },
+          "bound": {
+            "distance": 0.2697957783908276,
+            "rank": 5,
+            "withinThreshold": true,
+            "candidateEligible": true
+          }
+        },
+        {
+          "id": 192185,
+          "section": "2026 공식야구규칙#p65",
+          "stored": {
+            "id": 192185,
+            "section": "2026 공식야구규칙#p65",
+            "distance": 0.29468700480251986,
+            "rank": 6,
+            "withinThreshold": true
+          },
+          "plain": {
+            "distance": 0.29468700480251986,
+            "rank": 6,
+            "withinThreshold": true,
+            "candidateEligible": true
+          },
+          "bound": {
+            "distance": 0.2818932788660189,
+            "rank": 5,
+            "withinThreshold": true,
+            "candidateEligible": true
+          }
+        }
+      ],
+      "exactTop12": [
+        {
+          "id": 192183,
+          "section": "2026 공식야구규칙#p62",
+          "distance": 0.20751600840700746
+        },
+        {
+          "id": 193608,
+          "section": "2026 공식야구규칙#40. INFIELD FLY (인필드 플라이)",
+          "distance": 0.23164690377395747
+        },
+        {
+          "id": 193607,
+          "section": "2026 공식야구규칙#40. INFIELD FLY (인필드 플라이)",
+          "distance": 0.251847713584715
+        },
+        {
+          "id": 192186,
+          "section": "2026 공식야구규칙#p66",
+          "distance": 0.26478263447046946
+        },
+        {
+          "id": 192182,
+          "section": "2026 공식야구규칙#p60",
+          "distance": 0.28965616646070425
+        },
+        {
+          "id": 192185,
+          "section": "2026 공식야구규칙#p65",
+          "distance": 0.29468700480251986
+        },
+        {
+          "id": 192234,
+          "section": "2026 공식야구규칙#p150",
+          "distance": 0.303263786506593
+        },
+        {
+          "id": 192184,
+          "section": "2026 공식야구규칙#p64",
+          "distance": 0.31022281586528944
+        },
+        {
+          "id": 192172,
+          "section": "2026 공식야구규칙#p45",
+          "distance": 0.31448227914269644
+        },
+        {
+          "id": 192207,
+          "section": "2026 공식야구규칙#p106",
+          "distance": 0.3159355202095191
+        },
+        {
+          "id": 192209,
+          "section": "2026 공식야구규칙#p110",
+          "distance": 0.31881889517866446
+        },
+        {
+          "id": 192188,
+          "section": "2026 공식야구규칙#p70",
+          "distance": 0.3232249328099762
+        }
+      ],
+      "rpc": [
+        {
+          "section": "2026 공식야구규칙#p62",
+          "distance": 0.207515968460187,
+          "contentSha256": "fb0bcfd2bd3308ac6dcd5f8d3af0d37e40922e668996b0e215841aabdbef9d00"
+        },
+        {
+          "section": "2026 공식야구규칙#40. INFIELD FLY (인필드 플라이)",
+          "distance": 0.231646982967807,
+          "contentSha256": "7f94266a65ae70ec598dcf0cc956ebcfbbf487986015e79eddb13c44acc3a22f"
+        },
+        {
+          "section": "2026 공식야구규칙#40. INFIELD FLY (인필드 플라이)",
+          "distance": 0.2518477589993,
+          "contentSha256": "d549530b145f0329133b25f4a23469f38d4f01f0a3dcc6ca3417f9cdfd12b740"
+        },
+        {
+          "section": "2026 공식야구규칙#p66",
+          "distance": 0.264782384919038,
+          "contentSha256": "7f3f80bf8ac85940b6ac1709e2f424ffbbcc2f325f2b03ddbd266f2eec298e90"
+        },
+        {
+          "section": "2026 공식야구규칙#p60",
+          "distance": 0.289656061962152,
+          "contentSha256": "e0b2b334c015d4811cf60987aadde2e297cd84164d6d0922bd41fa9fd04d55a3"
+        },
+        {
+          "section": "2026 공식야구규칙#p65",
+          "distance": 0.294686787658776,
+          "contentSha256": "1f2720e5f3c97392f87f26311819a331fccc83edbad578c2c02a2b8b85532e73"
+        },
+        {
+          "section": "2026 공식야구규칙#p150",
+          "distance": 0.303263682321499,
+          "contentSha256": "cd96fecbb84dd099fa523cb238062138504d69bd3351804511d79f1a7677cd15"
+        },
+        {
+          "section": "2026 공식야구규칙#p64",
+          "distance": 0.31022281890459,
+          "contentSha256": "2fe617f8d6c9fbc89951fe39237af6f7ea3d6922d74365d10d6dca11664bcfce"
+        },
+        {
+          "section": "2026 공식야구규칙#p45",
+          "distance": 0.314482128661115,
+          "contentSha256": "682743d92c27f2d5b2528748cd6f622bc85f88305058e1b404683438bccb1e94"
+        },
+        {
+          "section": "2026 공식야구규칙#p106",
+          "distance": 0.315935387470998,
+          "contentSha256": "d8c07c71d15ab2440c0b6db5db6bec872a4168ea0ae31a900ecae6cc09ad75eb"
+        },
+        {
+          "section": "2026 공식야구규칙#p110",
+          "distance": 0.318818750592596,
+          "contentSha256": "5864bfa51432a8db249b3b4cd763b46d77079fc0c551cef5b19094f88c0b69b7"
+        },
+        {
+          "section": "2026 공식야구규칙#p70",
+          "distance": 0.323224784751178,
+          "contentSha256": "32e9bcd0323224db2f8ca60d8ed59c7b8b8247dbfa33f7879e4cdea089f5e9e2"
+        }
+      ]
+    }
+  ],
+  "r0TraceAudit": {
+    "artifactRoot": "/Volumes/T7-Dev/reviews/runtime/art1521r0",
+    "candidateP60": 40,
+    "generationP60": 0,
+    "candidateRank": 11,
+    "suites": [
+      "ctx-base",
+      "ctx-cand",
+      "reg-base",
+      "reg-cand"
+    ]
+  }
+}

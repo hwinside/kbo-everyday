@@ -57,6 +57,8 @@ export interface TeamCollection {
   truncated: boolean;
   pagesFetched: number;
   error?: string;
+  /** Latest-snapshot scope, e.g. intraday vs yesterday. Never treat daily keyed coverage as a cumulative count. */
+  coverageDetail?: string;
   /**
    * 커버리지 원장에 기록할 날짜. 생략하면 호출 시 넘긴 기본 clipDate 를 쓴다.
    * 일일 cron 은 "어제" 하나라 생략하고, 백필은 기사 발행일별로 나눠 넘긴다 —
@@ -297,7 +299,7 @@ export async function ingestNewsArticles(
       truncated: collection.truncated,
       pages_fetched: collection.pagesFetched,
       status: s.status,
-      detail: s.detail,
+      detail: [collection.coverageDetail, s.detail].filter(Boolean).join("; ") || null,
       reached_api_limit: collection.reachedApiLimit ?? false,
       oldest_reached: collection.oldestReached ?? null,
       queries_used: collection.queriesUsed ?? 0,

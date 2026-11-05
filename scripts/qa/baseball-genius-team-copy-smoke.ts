@@ -5,7 +5,7 @@
  *   [1] 구조: 활성 30종 = 10팀 × 3종 exact, 예비 1종(NC-4), 팀 키 = TEAMS.id 폐쇄집합.
  *   [2] 결속: 모든 행(예비 포함)의 sourceId ∈ 레지스트리 17건 폐쇄집합. 행별 결속(섹션 결속 0).
  *   [3] 톤: 전 카피 합니다체 종결(`~다.`), 해요체 종결 0, 절대표현 0.
- *   [4] 렌더: 첫 문장 `{팀명}를 응원하신다니 반갑습니다.` 정확히 1회 + 카피 본문.
+ *   [4] 렌더: 첫 문장 `안녕하세요! {팀명} 이야기도 함께 나눠요.` 정확히 1회 + 카피 본문.
  *   [5] 결정론: 같은 (teamId, seed) → 같은 출력. seed 3연속이 3종을 모두 순회.
  *   [6] fail-open: 미설정(null)·미지원(0)·비정상 teamId → null.
  *   [7] 파이프라인 배선: pipeline.ts 가 pickTeamFanCopy 를 greeting 에서만 소비하는 소스 결속.
@@ -115,8 +115,8 @@ check("payload canonical digest 결속 (30+1 실내용 sha256 equality)",
       ok = false; details.push(`team ${team.id}: 첫 문장 누락`);
       continue;
     }
-    const count = rendered.split("응원하신다니 반갑습니다").length - 1;
-    if (count !== 1) { ok = false; details.push(`team ${team.id}: 첫 문장 ${count}회`); }
+    const count = rendered.split(greeting).length - 1;
+    if (count !== 1 || rendered.includes("응원하신다니")) { ok = false; details.push(`team ${team.id}: 첫 문장 ${count}회`); }
     const body = rendered.slice(greeting.length + 1);
     if (!TEAM_FAN_COPY[team.id]?.some((r) => r.text === body)) {
       ok = false; details.push(`team ${team.id}: 본문이 승인 카피가 아님`);
@@ -187,7 +187,7 @@ async function checkServerBinding(): Promise<void> {
   {
     const calls: string[] = [];
     const res = await answerQuestion("u1", GREETING_Q, stubDeps(async () => { calls.push("pick"); return TEAM_COPY_FIXED; }, calls) as never);
-    check("pipeline 실실행 (greeting + 팀 → 팀 카피 답변)",
+    check("pipeline 실실행 (greeting + 팀 → 비선언형 팀 카피 답변)",
       res.source === "ack" && res.answer === TEAM_COPY_FIXED && calls.includes("pick"),
       `source=${res.source} answer=${String(res.answer).slice(0, 40)}`);
   }

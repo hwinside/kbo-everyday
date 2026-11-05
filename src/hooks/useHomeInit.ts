@@ -10,6 +10,8 @@ import { PRESEASON_GAMES, PRESEASON_DATES } from "@/lib/constants/preseason-sche
 import type { BroadcastChannel } from "@/lib/broadcast-channels";
 
 interface RawGameData {
+  srId?: string;
+  gameLabel?: string;
   gameId: string;
   homeTeamId: number;
   awayTeamId: number;
@@ -26,10 +28,13 @@ interface RawGameData {
   homeStarterName?: string | null;
   winPitcher?: string | null;
   losePitcher?: string | null;
+  savePitcher?: string | null;
   broadcastChannels?: BroadcastChannel[];
 }
 
 export interface HomeGame {
+  srId?: string;
+  gameLabel?: string;
   id: string;
   homeTeamId: number;
   awayTeamId: number;
@@ -49,6 +54,7 @@ export interface HomeGame {
   homeStarterName?: string | null;
   winPitcher?: string | null;
   losePitcher?: string | null;
+  savePitcher?: string | null;
   // 중계방송사(TV/IPTV). 없으면 미표시.
   broadcastChannels?: BroadcastChannel[];
 }
@@ -115,6 +121,8 @@ export function useHomeInit(options?: UseHomeInitOptions) {
       .then(data => {
         const games: HomeGame[] = (data.games ?? []).map((g: RawGameData) => ({
           id: g.gameId,
+          srId: g.srId,
+          gameLabel: g.gameLabel,
           homeTeamId: g.homeTeamId,
           awayTeamId: g.awayTeamId,
           time: g.time,
@@ -130,6 +138,7 @@ export function useHomeInit(options?: UseHomeInitOptions) {
           homeStarterName: g.homeStarterName ?? null,
           winPitcher: g.winPitcher ?? null,
           losePitcher: g.losePitcher ?? null,
+          savePitcher: g.savePitcher ?? null,
           broadcastChannels: g.broadcastChannels,
         }));
         if (games.length > 0) {

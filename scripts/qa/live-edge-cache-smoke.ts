@@ -24,6 +24,12 @@ import assert from "node:assert/strict";
 process.env.NEXT_PUBLIC_SUPABASE_URL ??= "http://127.0.0.1:54321";
 process.env.SUPABASE_SERVICE_ROLE_KEY ??= "smoke-service-role-key";
 
+// This suite supplies Naver fixtures, not Redis protocol replies. Keep external
+// credentials out of this offline harness. Redis-enabled KBO success/busy/failure
+// is exercised separately by tests/kbo-relay-deadline.test.ts.
+delete process.env.UPSTASH_REDIS_REST_URL;
+delete process.env.UPSTASH_REDIS_REST_TOKEN;
+
 let passed = 0;
 const failures: string[] = [];
 

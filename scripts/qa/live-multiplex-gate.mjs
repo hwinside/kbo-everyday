@@ -85,7 +85,7 @@ const CHAT_TRANSPORT_SHA256 = {
   "src/app/api/admin/supabase-usage/route.ts": "4db90091a59b99da9dc3d1e0937359a4ab1da4f752addf41756ef4c07e0decb5",
   "src/app/api/admin/content/route.ts": "1f1c05f769d73e2be625ac4b3c84070dbb9dc86b6ecdd84594dd2a4205d94451",
   "src/app/api/admin/reports/route.ts": "2f8023871d42d8fdd424e299d6746eb97d5dc93fd4c337df30cc96f91684bfa6",
-  "src/app/api/contextual-stats/route.ts": "81d430b3a0af4e01261a8e1de8f2e8206713a2af363b6e4f53b42f5490674b77",
+  "src/app/api/contextual-stats/route.ts": "702ecef644a73174c3a194311817fbeb40b13226085750e5b253663f0d731d0d",
   "src/app/api/report/route.ts": "3fb645585272e76efb4a3462163af14769d9f5c5d40a1555ea9b73f625b6514a",
   "src/app/api/slack/gif-collector/route.ts": "155483260ced25cacfa3132a6c4305fc0a86f6eafd5b2aae722f2523d8a0e9d4",
   "src/app/api/game-chat/prefs/route.ts": "036a254346d128c5d12574a66f56b69864a578674b4edfbebb2abb8d827f320d",
@@ -240,11 +240,11 @@ function assertRouteIncludeWiring() {
   const src = stripComments(read("src/app/api/game-relay-events/route.ts"));
   ok("route parses include allowlist", /function parseInclude\(req: NextRequest\)[\s\S]*trimmed === "events" \|\| trimmed === "live" \|\| trimmed === "detail"/.test(src));
   ok("route creates events task only when included or include is absent",
-    /const rawInclude = req\.nextUrl\.searchParams\.get\("include"\);[\s\S]*if \(rawInclude === null \|\| include\.has\("events"\)\)\s*\{\s*tasks\.push\(\{ channel: "events", task: getEvents\(internalRequest\(req, "\/api\/game-events"\)\) \}\);\s*\}/.test(src));
+    /const rawInclude = req\.nextUrl\.searchParams\.get\("include"\);[\s\S]*if \(!eventsDisabled && \(rawInclude === null \|\| include\.has\("events"\)\)\)\s*\{\s*tasks\.push\(\{ channel: "events", task: getEvents\(internalRequest\(req, "\/api\/game-events", signal\)\) \}\);\s*\}/.test(src));
   ok("route creates live task only when included",
-    /if \(include\.has\("live"\)\)\s*\{\s*tasks\.push\(\{ channel: "live", task: getLive\(internalRequest\(req, "\/api\/game-live"\)\) \}\);\s*\}/.test(src));
+    /if \(include\.has\("live"\)\)\s*\{\s*tasks\.push\(\{ channel: "live", task: getLive\(internalRequest\(req, "\/api\/game-live", signal\)\) \}\);\s*\}/.test(src));
   ok("route creates detail task only when included",
-    /if \(include\.has\("detail"\)\)\s*\{\s*tasks\.push\(\{ channel: "detail", task: getDetail\(internalRequest\(req, "\/api\/game-detail"\)\) \}\);\s*\}/.test(src));
+    /if \(include\.has\("detail"\)\)\s*\{\s*tasks\.push\(\{ channel: "detail", task: getDetail\(internalRequest\(req, "\/api\/game-detail", signal\)\) \}\);\s*\}/.test(src));
 }
 
 function assertSharedIngestPath() {
@@ -597,8 +597,8 @@ function runSelfTest() {
       name: "events always-on combined mutant",
       apply: () => mutate(
         "src/app/api/game-relay-events/route.ts",
-        "  if (rawInclude === null || include.has(\"events\")) {\n    tasks.push({ channel: \"events\", task: getEvents(internalRequest(req, \"/api/game-events\")) });\n  }\n",
-        "  tasks.push({ channel: \"events\", task: getEvents(internalRequest(req, \"/api/game-events\")) });\n",
+        'if (!eventsDisabled && (rawInclude === null || include.has("events")))',
+        'if (!eventsDisabled)',
       ),
     },
     {

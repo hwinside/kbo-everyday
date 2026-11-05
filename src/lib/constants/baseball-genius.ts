@@ -149,6 +149,10 @@ export const BASEBALL_GENIUS_SYSTEM_ERROR_ANSWER =
  * ⚠️ 단수형이다 — 후보가 **정확히 1명**일 때만 쓴다. 여러 명이면 고르라고 묻는 게 맞지만
  *   그건 picker 의 일이라 이 문구의 책임이 아니다.
  */
+/** 여러 실존 후보는 이름·소속을 제시하고 재질의를 요청한다. */
+export const BASEBALL_GENIUS_NAME_CANDIDATES_ANSWER = (candidates: string[]): string =>
+  `${candidates.join("·")} 중 누구를 말씀하신 겁니까? 선수의 전체 이름과 소속 팀으로 다시 물어봐 주시면 확인하겠습니다.`;
+
 export const BASEBALL_GENIUS_NAME_SUGGEST_ANSWER = (suggested: string): string =>
   `혹시 ${suggested} 선수를 말씀하신 겁니까? 그 이름으로 다시 물어봐 주시면 확인하겠습니다.`;
 

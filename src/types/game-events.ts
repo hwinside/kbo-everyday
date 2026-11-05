@@ -29,6 +29,8 @@ export interface EventDetail {
   playerIn?: string;
   playerOut?: string;
   team?: string;
+  /** Roster diffs establish order, not the actual substitution inning. */
+  timing?: "observed";
   inning?: number;
   isTop?: boolean;
   message?: string;

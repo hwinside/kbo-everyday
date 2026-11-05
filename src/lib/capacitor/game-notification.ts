@@ -22,6 +22,7 @@ import {
 // 네이티브 GameNotificationPlugin(@CapacitorPlugin name="GameNotification")과 페어.
 // iOS는 Live Activity(별도)라 여기선 android만 동작.
 interface WidgetData {
+  resultPitchers?: string;
   myTeam: string;
   away: string;
   home: string;
@@ -43,6 +44,7 @@ interface WidgetData {
 
 /** 안드 위젯 06:00 롤오버 타깃(다음 예정 경기, 라이트). */
 export interface WidgetNextGame {
+  gameId: string;
   away: string;
   home: string;
   stadium: string;

@@ -1,3 +1,4 @@
+import { resolveGameSeries } from "@/lib/crawler/resolve-game-series";
 import { NextRequest, NextResponse } from "next/server";
 import { supabaseAdmin as supabase } from "@/lib/supabase/admin";
 import { fetchGames, type KboGame } from "@/lib/crawler/kbo-api";
@@ -152,9 +153,9 @@ async function fetchPrevGameLineup(
 
     const isAway = teamGame.awayTeamId === teamId;
     const seasonId = teamGame.gameId.slice(0, 4);
-    const body = `leId=1&srId=0&seasonId=${seasonId}&gameId=${teamGame.gameId}`;
-
     try {
+      const srId = await resolveGameSeries(teamGame.gameId, { srId: teamGame.srId });
+      const body = `leId=1&srId=${srId}&seasonId=${seasonId}&gameId=${teamGame.gameId}`;
       const sessionCookie = await fetchKboSessionCookie(
         AbortSignal.timeout(8000),
       );
@@ -180,7 +181,7 @@ async function fetchPrevGameLineup(
 
     // KBO GetLineUpAnalysis 열화(204/빈응답/타임아웃) → 공용 Naver 어댑터 폴백(삼순 PR#988 P0-2 ③).
     // 완전 라인업만 반환되므로 부분 데이터 오비교 위험 없음. 실패 시 다음 lookback 일자로 continue.
-    const snap = await fetchNaverLineup(teamGame.gameId, { timeoutMs: 8000 });
+    const snap = await fetchNaverLineup(teamGame.gameId, { timeoutMs: 8000, srId: teamGame.srId });
     if (snap) {
       const side = isAway ? snap.away : snap.home;
       const batters: LineupPlayer[] = side.batters.map(b => ({ order: b.order, position: b.position, name: b.name }));

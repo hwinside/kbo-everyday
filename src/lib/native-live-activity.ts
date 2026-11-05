@@ -75,6 +75,7 @@ interface LiveActivityPlugin {
 /** 홈 화면 위젯(KBOHomeWidget) App Group 스냅샷. 라이브/예정/종료 모두 표현 가능.
  *  라이브 경기가 없을 때 홈 화면이 최애팀 다음 경기(scheduled)를 기록하는 fallback 경로. */
 export interface WidgetSnapshotInput {
+  resultPitchers?: string;
   gameId: string;
   awayTeamCode: string;
   homeTeamCode: string;
@@ -126,6 +127,7 @@ export const ID_TO_KBO_CODE: Record<number, string> = {
 
 /** 홈 화면이 가진 최애팀 경기(HomeGame 형태) → 홈 위젯 스냅샷 기록용 입력. */
 export interface HomeWidgetGame {
+  resultPitchers?: string;
   gameId: string;
   awayTeamId: number;
   homeTeamId: number;
@@ -521,6 +523,7 @@ export async function writeHomeWidgetSnapshot(
         }
       : undefined;
   await writeWidgetSnapshot({
+    resultPitchers: game.status === "final" ? game.resultPitchers ?? "" : "",
     gameId: game.gameId,
     awayTeamCode: ID_TO_KBO_CODE[game.awayTeamId] ?? "",
     homeTeamCode: ID_TO_KBO_CODE[game.homeTeamId] ?? "",

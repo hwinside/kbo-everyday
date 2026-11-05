@@ -66,6 +66,7 @@ export interface NewsItem {
 
 /** KBO game-live raw game object from KBO GetKboGameList API */
 export interface KboRawGame {
+  SR_ID?: string;
   G_ID: string;
   G_DT: string;
   G_TM: string;

@@ -45,10 +45,11 @@ function pitcherRow(i: number): string {
   ];
   return `<tr>${c.map((x) => `<td>${x}</td>`).join("")}</tr>`;
 }
-const KBO_HITTER_HTML = `<table><tbody>${Array.from({ length: 40 }, (_, i) => hitterRow(i)).join("")}</tbody></table>`;
-const KBO_HITTER_PAGE_BOUNDARY_HTML = `<table><tbody>${Array.from({ length: 30 }, (_, i) => hitterRow(i)).join("")}</tbody></table>`;
+const regularControls = `<select name="x$ddlSeason"><option selected value="${new Date().getFullYear()}">current</option></select><select name="x$ddlSeries"><option selected value="0">regular</option></select><a id="ucPager_btnNo1" class="on">1</a>`;
+const KBO_HITTER_HTML = regularControls + `<table><tbody>${Array.from({ length: 40 }, (_, i) => hitterRow(i)).join("")}</tbody></table>`;
+const KBO_HITTER_PAGE_BOUNDARY_HTML = regularControls + `<table><tbody>${Array.from({ length: 30 }, (_, i) => hitterRow(i)).join("")}</tbody></table>`;
 // 투수 100행 — kind+source 정적 baseline(투수 KBO 병합 96명)의 90% floor(87)를 실전 규모로 통과
-const KBO_PITCHER_HTML = `<table><tbody>${Array.from({ length: 100 }, (_, i) => pitcherRow(i)).join("")}</tbody></table>`;
+const KBO_PITCHER_HTML = regularControls + `<table><tbody>${Array.from({ length: 100 }, (_, i) => pitcherRow(i)).join("")}</tbody></table>`;
 const EMPTY_TABLE_HTML = "<table><tbody></tbody></table>";
 // KBO 503/302 본문에는 표가 아예 없다(실측: 302 본문 <tbody> 부재).
 const ERROR_BODY = "<html><body>Service Unavailable</body></html>";

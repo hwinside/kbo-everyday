@@ -40,7 +40,7 @@ export default function GameReviewIdentity({ authorId, nickname, teamId, avatarU
   const avatar = getAvatarPath(avatarUrl ?? null);
   const [failedAvatar, setFailedAvatar] = useState<string | null>(null);
   return (
-    <Link href={`/profile/${encodeURIComponent(authorId)}`} onClick={onNavigate} aria-label={`${name} 프로필 보기`}
+    <Link prefetch={false} href={`/profile/${encodeURIComponent(authorId)}`} onClick={onNavigate} aria-label={`${name} 프로필 보기`}
       className={`flex min-h-11 min-w-0 items-center rounded-lg focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-accent ${compact ? "gap-1.5" : "gap-2.5"}`}>
       <span className={`flex shrink-0 items-center justify-center overflow-hidden rounded-full border border-border bg-bg-tertiary text-sm font-bold text-text-primary ${compact ? "h-8 w-8" : "h-10 w-10"}`}>
         {avatar && failedAvatar !== avatar ? (

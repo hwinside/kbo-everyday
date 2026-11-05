@@ -1179,6 +1179,15 @@
     "birthDate": "2001-07-07"
   },
   {
+    "name": "김시앙",
+    "kboId": "51303",
+    "teamId": 10,
+    "position": "포수",
+    "backNo": "35",
+    "team": "키움",
+    "birthDate": "2001-10-31"
+  },
+  {
     "name": "김시온",
     "kboId": "53464",
     "teamId": 8,
@@ -2962,21 +2971,21 @@
   },
   {
     "name": "박준영",
-    "kboId": "56709",
-    "teamId": 9,
-    "position": "투수",
-    "backNo": "68",
-    "team": "한화",
-    "birthDate": "2002-06-03"
-  },
-  {
-    "name": "박준영",
     "kboId": "52731",
     "teamId": 9,
     "position": "투수",
     "backNo": "96",
     "team": "한화",
     "birthDate": "2003-03-02"
+  },
+  {
+    "name": "박준영",
+    "kboId": "56709",
+    "teamId": 9,
+    "position": "투수",
+    "backNo": "68",
+    "team": "한화",
+    "birthDate": "2002-06-03"
   },
   {
     "name": "박준우",
@@ -6940,6 +6949,15 @@
   },
   {
     "name": "최원준",
+    "kboId": "53705",
+    "teamId": 9,
+    "position": "내야수",
+    "backNo": "3",
+    "team": "한화",
+    "birthDate": "2004-05-01"
+  },
+  {
+    "name": "최원준",
     "kboId": "66606",
     "teamId": 3,
     "position": "외야수",
@@ -6955,15 +6973,6 @@
     "backNo": "61",
     "team": "두산",
     "birthDate": "1994-12-21"
-  },
-  {
-    "name": "최원준",
-    "kboId": "53705",
-    "teamId": 9,
-    "position": "내야수",
-    "backNo": "3",
-    "team": "한화",
-    "birthDate": "2004-05-01"
   },
   {
     "name": "최원태",
@@ -7297,6 +7306,15 @@
     "backNo": "77",
     "team": "두산",
     "birthDate": "1994-07-01"
+  },
+  {
+    "name": "클레빈저",
+    "kboId": "56939",
+    "teamId": 5,
+    "position": "투수",
+    "backNo": "39",
+    "team": "NC",
+    "birthDate": "1990-12-21"
   },
   {
     "name": "타무라",
@@ -7927,6 +7945,15 @@
     "backNo": "95",
     "team": "한화",
     "birthDate": "1999-10-16"
+  },
+  {
+    "name": "황재균",
+    "kboId": "76313",
+    "teamId": 3,
+    "position": "야수",
+    "backNo": "0",
+    "team": "KT",
+    "birthDate": "1987-07-28"
   },
   {
     "name": "황정현",

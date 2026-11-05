@@ -28,11 +28,17 @@ import { buildEventText } from "@/lib/event-text-builder";
 import { normalizeBatterName } from "@/lib/relay-event-generator";
 
 export interface PrevGameState {
+  /** Collection start, not response completion: late responses cannot win. */
+  observedAt?: number;
+  revision?: string;
+  /** Confirmed live-only names, kept separately: never fabricate box-score rows. */
+  livePitchers?: Partial<Record<"home" | "away", string[]>>;
+  pitcherCandidate?: { side: "home" | "away"; name: string; half: string; progress: string };
   live: LiveGameData;
   boxScore: GameDetailResponse["boxScore"];
 }
 
-function makeSnapshot(live: LiveGameData): GameSnapshot {
+export function makeSnapshot(live: LiveGameData): GameSnapshot {
   return {
     awayScore: live.awayScore,
     homeScore: live.homeScore,
@@ -160,6 +166,43 @@ export function generateEvents(
   }
 
   const prevLive = prev.live;
+  const halfOrder = (live: LiveGameData) => live.inning * 2 + (live.isTop ? 0 : 1);
+  // A stale upstream response must not roll back the baseline used by the next poll.
+  // Score/outs corrections are NOT rejected: official reviews can decrease them.
+  if (currentLive.gameId !== prevLive.gameId ||
+      (prevLive.status === "final" && currentLive.status !== "final") ||
+      (currentLive.isLive && halfOrder(currentLive) < halfOrder(prevLive))) {
+    return { events: [], nextState: prev };
+  }
+  // Empty tables are missing evidence, not a rewind of the whole game. Keep
+  // each last-good table (including batters, to avoid replaying cumulative stats).
+  const missingPitchers = {
+    home: !currentBoxScore?.homePitchers.length,
+    away: !currentBoxScore?.awayPitchers.length,
+  };
+  if (prev.boxScore) {
+    if (!currentBoxScore) currentBoxScore = prev.boxScore;
+    else {
+      currentBoxScore = { ...currentBoxScore };
+      for (const key of ["homePitchers", "awayPitchers", "homeBatters", "awayBatters"] as const) {
+        if (!currentBoxScore[key].length) Object.assign(currentBoxScore, { [key]: prev.boxScore[key] });
+      }
+    }
+  }
+  const livePitchers = structuredClone(prev.livePitchers ?? {});
+  let pitcherCandidate: PrevGameState["pitcherCandidate"];
+  // Pitchers cannot re-enter. A shorter ordered roster is a stale response,
+  // not a new baseline from which to announce the same substitution again.
+  if (prev.boxScore && currentBoxScore) {
+    for (const side of ["awayPitchers", "homePitchers"] as const) {
+      const before = prev.boxScore[side];
+      const after = currentBoxScore[side];
+      if (after.length < before.length &&
+          after.every((pitcher, i) => pitcher.name === before[i].name)) {
+        return { events: [], nextState: prev };
+      }
+    }
+  }
 
   // --- Game state transitions ---
 
@@ -206,17 +249,35 @@ export function generateEvents(
     };
   }
 
-  // --- Pitcher change (via live data) ---
-  if (
-    prevLive.currentPitcher &&
-    currentLive.currentPitcher &&
-    prevLive.currentPitcher !== currentLive.currentPitcher &&
-    prevInningKey === currInningKey // same inning = mid-inning change
-  ) {
-    events.push(makeEvent(gameId, currentLive, "pitching_change", {
-      playerOut: prevLive.currentPitcher,
-      playerIn: currentLive.currentPitcher,
-    }, `${prevLive.currentPitcher}->${currentLive.currentPitcher}-${currInningKey}`));
+  // Degraded input: require a known team roster, the same fielding half in
+  // consecutive observations, a stable new name AND count/batter progress.
+  // Never infer the outgoing pitcher: intermediate substitutions may be missed.
+  const fieldingSide = currentLive.isTop ? "home" : "away";
+  const ownKey = currentLive.isTop ? "homePitchers" : "awayPitchers";
+  const otherKey = currentLive.isTop ? "awayPitchers" : "homePitchers";
+  const known = aggregatePitcherNames(currentBoxScore?.[ownKey] ?? []);
+  const otherNames = aggregatePitcherNames(currentBoxScore?.[otherKey] ?? []);
+  const otherStarter = currentLive.isTop ? currentLive.awayStarterName : currentLive.homeStarterName;
+  const name = currentLive.currentPitcher?.trim();
+  const progress = JSON.stringify([currentLive.balls, currentLive.strikes, currentLive.outs,
+    currentLive.currentBatter, currentLive.awayScore, currentLive.homeScore]);
+  if (missingPitchers[fieldingSide] && prevLive.isLive && prevInningKey === currInningKey &&
+      known.length > 0 && name && name !== currentLive.currentBatter && name !== otherStarter &&
+      !otherNames.includes(name) && !(livePitchers[currentLive.isTop ? "away" : "home"] ?? []).includes(name) &&
+      !(livePitchers[fieldingSide] ?? []).includes(name) &&
+      !known.includes(name)) {
+    const candidate = prev.pitcherCandidate;
+    if (candidate?.side === fieldingSide && candidate.name === name && candidate.half === currInningKey &&
+        prevLive.currentPitcher?.trim() === name && candidate.progress !== progress) {
+      events.push(makeEvent(gameId, currentLive, "pitching_change", {
+        playerIn: name,
+        team: fieldingSide === "home" ? currentLive.homeName : currentLive.awayName,
+        timing: "observed",
+      }, `${fieldingSide}-live-${name}`));
+      livePitchers[fieldingSide] = [...(livePitchers[fieldingSide] ?? []), name];
+    } else {
+      pitcherCandidate = { side: fieldingSide, name, half: currInningKey, progress };
+    }
   }
 
   // --- BoxScore diffs (batting stats) ---
@@ -366,29 +427,29 @@ export function generateEvents(
       }
     }
 
-    // Also check pitching side for pitcher changes via BoxScore
-    const prevPitchers = currentLive.isTop
-      ? prev.boxScore.homePitchers
-      : prev.boxScore.awayPitchers;
-    const currPitchers = currentLive.isTop
-      ? currentBoxScore.homePitchers
-      : currentBoxScore.awayPitchers;
-    const prevPNames = aggregatePitcherNames(prevPitchers);
-    const currPNames = aggregatePitcherNames(currPitchers);
-
-    if (currPNames.length > prevPNames.length) {
-      // New pitcher appeared in BoxScore
-      const newPitcher = currPNames[currPNames.length - 1];
-      const oldPitcher = prevPNames[prevPNames.length - 1];
-      // Only emit if we didn't already detect it from live data
-      const alreadyEmitted = events.some(
-        e => e.type === "pitching_change" && e.detail.playerIn === newPitcher,
-      );
-      if (!alreadyEmitted && oldPitcher && newPitcher !== oldPitcher) {
-        events.push(makeEvent(gameId, currentLive, "pitching_change", {
+    // Check both teams: an inning transition can deliver the previous fielding
+    // team's roster late. Comparing only the current fielding side loses it.
+    for (const side of ["home", "away"] as const) {
+      const rosterKey = side === "home" ? "homePitchers" : "awayPitchers";
+      const before = aggregatePitcherNames(prev.boxScore[rosterKey]);
+      const after = aggregatePitcherNames(currentBoxScore[rosterKey]);
+      if (!before.length || after.length <= before.length ||
+          !before.every((name, i) => name === after[i]) ||
+          after.some(name => !name.trim()) || new Set(after).size !== after.length) continue;
+      // Emit each adjacent extension, never A->C when polling missed B.
+      // BoxScore establishes sequence, not the actual change inning/time.
+      for (let i = before.length; i < after.length; i++) {
+        const oldPitcher = after[i - 1];
+        const newPitcher = after[i];
+        // A recovered roster can fill in missed intermediate names, but must
+        // not announce the live-confirmed incoming pitcher for a second time.
+        if (livePitchers[side]?.includes(newPitcher)) continue;
+        events.push(makeEvent(gameId, { ...currentLive, currentPitcher: newPitcher }, "pitching_change", {
           playerOut: oldPitcher,
           playerIn: newPitcher,
-        }, `${oldPitcher}->${newPitcher}-${currInningKey}`));
+          team: side === "home" ? currentLive.homeName : currentLive.awayName,
+          timing: "observed",
+        }, `${side}-${i}-${oldPitcher}->${newPitcher}`));
       }
     }
   }
@@ -427,7 +488,8 @@ export function generateEvents(
       for (let i = 0; i < outsToReport; i++) {
         const idx = prevLive.outs + soEvents + i + 1;
         events.push(makeEvent(gameId, currentLive, "at_bat_out", {
-          batter: prevLive.currentBatter || undefined,
+          // Out-count changes do not identify the retired runner/batter.
+          // A stale currentBatter or a double play must not invent a player.
           pitcher: currentLive.currentPitcher || undefined,
         }, `${currInningKey}-${idx}`));
       }
@@ -436,6 +498,6 @@ export function generateEvents(
 
   return {
     events,
-    nextState: { live: currentLive, boxScore: currentBoxScore },
+    nextState: { live: currentLive, boxScore: currentBoxScore, livePitchers, pitcherCandidate },
   };
 }

@@ -1,6 +1,7 @@
 "use client";
 
 import { useState, useEffect, useCallback } from "react";
+import { seasonPredictionsOpen } from "@/lib/constants/season";
 import { supabase } from "./client";
 
 interface PredictionStat {
@@ -51,7 +52,7 @@ export function usePredictions(userId?: string) {
 
   // 예측 저장 (upsert)
   const savePrediction = useCallback(async (category: string, pick: string) => {
-    if (!userId) return false;
+    if (!userId || !seasonPredictionsOpen(2026)) return false;
     const { error } = await supabase
       .from("season_predictions")
       .upsert({

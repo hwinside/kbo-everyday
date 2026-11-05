@@ -1,0 +1,19 @@
+{
+  "_comment": "#1526 P1 실측 회귀 고정. 2026 공식야구규칙 5.09 아웃 조항의 실제 serving 청크 본문. 출처 art1526r0/orig-{base,head}.json (official-generation 캡처).",
+  "canonicalUrl": "https://www.koreabaseball.com/kbo/board/ebook/ebookpublication.aspx",
+  "revision": "sha256:de8715105c8984be",
+  "anchors": [
+    {
+      "sectionPath": "2026 공식야구규칙#p62",
+      "eligible": true,
+      "note": "본문이 [부기]·[주1] 구조 단위를 들고 있어 형제 항목을 결속할 위치가 있다. base/head 모두 GROUNDED 3/3.",
+      "content": "5.09 아 웃 (이어짐)\n[부기] 인필드 플라이 규칙이 적용되는 경우를 제외하고 내야수가 타구\n에 닿지 않은 채 그대로 땅에 떨어뜨렸을 때는 타자는 아웃이 되 지 않는다. [주1] 이 항은 쉽게 잡을 수 있는 플라이 볼 또는 라인 드라이브를 내야 수가 땅에 떨어지기 전에 한 손 또는 두 손으로 닿은 뒤 고의로\n"
+    },
+    {
+      "sectionPath": "2026 공식야구규칙#p64",
+      "eligible": false,
+      "note": "본문이 앞 페이지 문장의 '또는' 연속으로만 시작해 구조 단위가 없다. 형제 블록(884자)이 본문(90자)을 대체해 base GENERAL/GROUNDED → head INSUFFICIENT 3/3 회귀를 만들었다.",
+      "content": "5.09 아 웃 (이어짐)\n또는 자신의 수비위치로 가던 중 타자가 주자의 의무를 포기하\n고 홈 플레이트 주위의 흙으로 뒤덮인 원(dirt circle)을 벗어나\n"
+    }
+  ]
+}

@@ -413,8 +413,8 @@ check("cursor: invalidToken + retryable 혼합(성공 無) → 보류",
   check("updatable: 토큰∪ACK만(기존 집계) → 2",
     countUpdatableUsers({ started, tokenUsers: new Set(["a"]), channelAckUsers: new Set(["b"]), channelBornUsers: new Set() }), 2);
   // 교정 후: c가 채널 내장 발송 → updatable 3, gap 1 (ACK 미도착이어도 수신).
-  check("updatable: channel_born 합산 → 3 (gap 과대계상 교정)",
-    countUpdatableUsers({ started, tokenUsers: new Set(["a"]), channelAckUsers: new Set(["b"]), channelBornUsers: new Set(["c"]) }), 3);
+  check("updatable: APNs acceptance alone is not device confirmation",
+    countUpdatableUsers({ started, tokenUsers: new Set(["a"]), channelAckUsers: new Set(["b"]), channelBornUsers: new Set(["c"]) }), 2);
   // 중복(토큰+ACK+내장 동일 유저)은 1로만 셈.
   check("updatable: 토큰∩ACK∩내장 중복 유저 → 1",
     countUpdatableUsers({ started: ["a"], tokenUsers: new Set(["a"]), channelAckUsers: new Set(["a"]), channelBornUsers: new Set(["a"]) }), 1);
@@ -447,7 +447,7 @@ check("cursor: invalidToken + retryable 혼합(성공 無) → 보류",
   const live = "20260723LGKT0";
   const sched = "20260723OBSS0";
   // 출생 세대: "A" = chanA(구채널), "B" = chanB(현 active), null = 레거시/비채널 발송.
-  const row = (user: string, game: string, born: "A" | "B" | null, createdAt: string | null = null) =>
+  const row = (user: string, game: string, born: "A" | "B" | null, createdAt: string | null = new Date(now - 180_000).toISOString()) =>
     ({
       user_id: user, game_id: game, created_at: createdAt,
       channel_born_environment: born ? "production" : null,
@@ -457,8 +457,8 @@ check("cursor: invalidToken + retryable 혼합(성공 無) → 보류",
   const activeB = new Set([`${live}|production|chanB`, `${sched}|production|chanB`]);
 
   // 핵심 회귀: 유효 채널출생 단독 row(토큰/ACK 없음)는 wake 대상·attempted 기록에서 제외.
-  check("wakeGap: 유효 채널출생(세대 일치) 단독 row → 제외(wake·attempted 모두 없음)",
-    selectWakeGapRows([row("u1", live, "B")], new Set(), activeB, new Set(), now, W), []);
+  check("wakeGap: accepted current-generation start without ACK → recovery",
+    selectWakeGapRows([row("u1", live, "B")], new Set(), activeB, new Set(), now, W), [row("u1", live, "B")]);
   // 삼순 라운드2 회귀: 채널 A born → A 무효화(deleted) → B active — 구채널 출생 row는
   // broadcast를 못 받으므로 wake gap으로 복귀해야 한다(boolean 영구 제외 금지).
   check("wakeGap: [라운드2] 채널 A born + 현 active=B → gap 복귀(wake 대상)",
@@ -473,9 +473,17 @@ check("cursor: invalidToken + retryable 혼합(성공 無) → 보류",
     selectWakeGapRows([row("u1", live, null)], new Set(), activeB, new Set(), now, W),
     [row("u1", live, null)]);
   // 혼합: 유효 채널출생 row만 정확히 빠진다(같은 경기 다른 유저 영향 없음).
-  check("wakeGap: 혼합 — 유효 채널출생 row만 제외, 구채널·null row는 gap 유지",
+  check("wakeGap: mixed unconfirmed starts all remain recovery candidates",
     selectWakeGapRows([row("u1", live, "B"), row("u2", live, "A"), row("u3", live, null)], new Set(), activeB, new Set(), now, W),
-    [row("u2", live, "A"), row("u3", live, null)]);
+    [row("u1", live, "B"), row("u2", live, "A"), row("u3", live, null)]);
+  check("wakeGap: ACK arrival stops channel-born recovery",
+    selectWakeGapRows([row("u1", live, "B")], new Set([`u1|${live}`]), activeB, new Set(), now, W), []);
+  for (const created of [new Date(now - 119_999).toISOString(), new Date(now + 1000).toISOString(), null, "invalid"]) {
+    check(`wakeGap: grace/invalid time does not start recovery (${created})`,
+      selectWakeGapRows([row("u1", live, "B", created)], new Set(), activeB, new Set(), now, W), []);
+  }
+  check("wakeGap: grace boundary starts recovery",
+    selectWakeGapRows([row("u1", live, "B", new Date(now - 120_000).toISOString())], new Set(), activeB, new Set(), now, W).length, 1);
   // 기존 제외 조건 회귀: update 토큰/유효 ACK 보유 유저 제외 유지.
   check("wakeGap: update 토큰/유효 ACK 보유 → 제외(기존 동작 보존)",
     selectWakeGapRows([row("u1", live, null)], new Set([`u1|${live}`]), activeB, new Set(), now, W), []);
@@ -487,8 +495,8 @@ check("cursor: invalidToken + retryable 혼합(성공 無) → 보류",
     [row("u1", sched, null, fresh)]);
   check("wakeGap: scheduled 창 경과 row → 제외",
     selectWakeGapRows([row("u1", sched, null, old)], new Set(), activeB, new Set([sched]), now, W), []);
-  check("wakeGap: scheduled + 유효 채널출생 → 창 이내여도 제외",
-    selectWakeGapRows([row("u1", sched, "B", fresh)], new Set(), activeB, new Set([sched]), now, W), []);
+  check("wakeGap: scheduled accepted start without ACK remains candidate",
+    selectWakeGapRows([row("u1", sched, "B", fresh)], new Set(), activeB, new Set([sched]), now, W), [row("u1", sched, "B", fresh)]);
   check("wakeGap: scheduled + 구채널 born → 창 이내면 gap 복귀(재제외 아님)",
     selectWakeGapRows([row("u1", sched, "A", fresh)], new Set(), activeB, new Set([sched]), now, W),
     [row("u1", sched, "A", fresh)]);
@@ -562,10 +570,10 @@ check("cursor: invalidToken + retryable 혼합(성공 無) → 보류",
   const rows = [born("production", "chanA"), born("production", "chanB")].map((b, i) =>
     ({ ...b, user_id: `u${i + 1}` }));
   const bornUsers = new Set(rows.filter((r) => isLiveBornChannel(r, activeKeys)).map((r) => r.user_id));
-  check("updatable: [라운드2] 구채널 born 유저는 updatable 아님(u2만 인정)",
-    countUpdatableUsers({ started: ["u1", "u2"], tokenUsers: new Set(), channelAckUsers: new Set(), channelBornUsers: bornUsers }), 1);
-  check("updatable: [라운드2] 구채널 born 유저도 이후 토큰/B ACK 등록 시 재인정 → 2",
-    countUpdatableUsers({ started: ["u1", "u2"], tokenUsers: new Set(["u1"]), channelAckUsers: new Set(), channelBornUsers: bornUsers }), 2);
+  check("updatable: neither stale nor current accepted generation proves receipt",
+    countUpdatableUsers({ started: ["u1", "u2"], tokenUsers: new Set(), channelAckUsers: new Set(), channelBornUsers: bornUsers }), 0);
+  check("updatable: only user with device token becomes confirmed",
+    countUpdatableUsers({ started: ["u1", "u2"], tokenUsers: new Set(["u1"]), channelAckUsers: new Set(), channelBornUsers: bornUsers }), 1);
 }
 
 // ── p2sSendPlan — 서버 자동 p2s 채널-우선/유보 (PR #808 R3, 삼순 blocker①) ──

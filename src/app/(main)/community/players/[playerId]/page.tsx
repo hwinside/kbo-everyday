@@ -1,5 +1,7 @@
 "use client";
 
+import { fetchPlayerResource } from "@/lib/stats/player-resource-client";
+
 import { useState, useEffect, useCallback } from "react";
 import { useSafeBack } from "@/lib/hooks/useSafeBack";
 import { useParams, useRouter } from "next/navigation";
@@ -242,7 +244,7 @@ export default function PlayerBoardPage() {
     if (!player) { setRealStats(null); return; }
     if (statSeason === 2026) {
       // KBO 개별 선수 상세 페이지 크롤링 (모든 선수 커버, 상위 30명 제한 없음)
-      fetch(`/api/player-stats?id=${kboId}&pos=${encodeURIComponent(player.position)}`)
+      fetchPlayerResource("player-stats", kboId, player.position)
         .then(r => r.json())
         .then(d => { setRealStats(d.stats || null); })
         .catch(() => { setRealStats(null); });

@@ -1,7 +1,9 @@
+import { markCollectorRequest } from "./collector-request";
 import { createHash } from "node:crypto";
 import { NextRequest } from "next/server";
 import { RELAY_DEGRADED_HEADER } from "./relay-degraded-header";
-import { fetchNaverGames } from "@/lib/crawler/naver-games";
+import { fetchKboLiveGames } from "@/lib/notifications/kbo-live-games";
+import { isKboGameCancelled } from "@/lib/crawler/kbo-status";
 import { toDeltaResponse } from "@/lib/game/relay-delta";
 import type { GameRelayResponse } from "@/app/api/game-relay/route";
 import type { LivePollEnvelope } from "@/lib/game/live-poll-stream";
@@ -235,9 +237,15 @@ export async function saveStatesAndSelectPersistable(params: {
 }
 
 /** 오늘 라이브 상태인 경기 gameId 목록. 실패는 그대로 throw (cron 이 5xx 로 노출). */
-export async function listLiveGameIds(date: string): Promise<string[]> {
-  const games = await fetchNaverGames(date);
-  return games.filter((g) => g.status === "live").map((g) => g.gameId);
+export async function listLiveGameIds(date: string, includeSnapshots = false): Promise<string[]> {
+  // Publisher has a minute-long invocation; do not use the latency budget of a
+  // user-facing poll. Leave time for Naver and postseason eligibility as well.
+  const result = await fetchKboLiveGames(date, Date.now() + 10_000, undefined, undefined, undefined, undefined, {
+    kboBudgetMs: 5_000,
+    observe: (event) => console.info("[relay-publisher-discovery]", JSON.stringify(event)),
+  });
+  if (!result.ok) throw new Error("publisher game discovery failed");
+  return result.games.filter(g => (g.GAME_STATE_SC === "2" || (includeSnapshots && (g.GAME_STATE_SC === "3" || g.GAME_STATE_SC === "1"))) && !isKboGameCancelled(g.CANCEL_SC_ID)).map(g => g.G_ID);
 }
 
 /** route handler 를 내부 호출하기 위한 NextRequest (공용 self-fetch 없음). */
@@ -245,12 +253,13 @@ export function internalGetRequest(
   pathname: string,
   params: Record<string, string>,
   signal?: AbortSignal,
+  origin = "https://internal.local",
 ): NextRequest {
-  const url = new URL(`https://internal.local${pathname}`);
+  const url = new URL(pathname, origin);
   for (const [k, v] of Object.entries(params)) url.searchParams.set(k, v);
   // 삼순 4차 ③: signal 을 handler 요청에 전달 — timeout abort 시 진행 중인 upstream fetch 가
   // 이 신호를 상속해 끊릴 수 있다(handler 가 req.signal 을 존중하는 경우).
-  return signal ? new NextRequest(url, { signal }) : new NextRequest(url);
+  return markCollectorRequest(signal ? new NextRequest(url, { signal }) : new NextRequest(url));
 }
 
 /**
@@ -308,7 +317,33 @@ export function channelsForTick(tickIndex: number): Array<"relay" | "events" | "
   return channels;
 }
 
+export type PublisherObservation = {
+  channel: "relay" | "events" | "live" | "detail";
+  outcome: "fetch-ok" | "http-error" | "fetch-or-json-error" | "unchanged" | "oversize" | "aborted" | RelayInsertOutcome;
+  status?: number;
+  stage?: "starter-witness-failed" | "known-slate-mismatch" | "other";
+  bytes?: number;
+};
+
+/** Bounded per-invocation counters, never response bodies, URLs or exception text. */
+export function createPublisherObservations() {
+  const counts: Record<string, number> = {};
+  const maxBytes: Record<string, number> = {};
+  return {
+    counts,
+    maxBytes,
+    observe(event: PublisherObservation) {
+      const key = [event.channel, event.outcome, event.status, event.stage].filter(v => v !== undefined).join(":");
+      counts[key] = (counts[key] ?? 0) + 1;
+      if (event.bytes !== undefined) maxBytes[event.channel] = Math.max(maxBytes[event.channel] ?? 0, event.bytes);
+    },
+  };
+}
+
 export interface TickDeps {
+  /** Authenticated cron origin for live's independent /api/games witness fetch. */
+  liveRequestOrigin?: string;
+  observe?: (event: PublisherObservation) => void;
   /** route handlers — 테스트에서 스텁 가능하도록 주입 */
   handlers: {
     relay: (req: NextRequest) => Promise<Response>;
@@ -321,6 +356,7 @@ export interface TickDeps {
   /** 이 인보케이션이 선예약한 단조 epoch(reserve_relay_epoch). 모든 프레임이 공유. */
   epoch: number;
   date: string;
+  publishSnapshot?: (gameId: string, channel: LivePollEnvelope["channel"], data: unknown, observedAt: string, ordinal: number, signal?: AbortSignal) => Promise<boolean>;
 }
 
 /**
@@ -357,16 +393,24 @@ export { RELAY_DEGRADED_HEADER } from "./relay-degraded-header";
 async function envelopeFrom(
   channel: LivePollEnvelope["channel"],
   task: Promise<Response>,
+  observe?: TickDeps["observe"],
 ): Promise<{ envelope: LivePollEnvelope; degraded: boolean } | null> {
   try {
     const response = await task;
-    if (!response.ok) return null; // 실패 프레임은 쓰지 않는다 — 클라이언트 last-good 유지 계약과 동일
+    if (!response.ok) {
+      const rawStage = response.headers.get("X-Game-Live-Stage");
+      const stage = rawStage === "starter-witness-failed" || rawStage === "known-slate-mismatch" ? rawStage : "other";
+      observe?.({ channel, outcome: "http-error", status: response.status, stage });
+      return null;
+    }
     const data: unknown = await response.json();
+    observe?.({ channel, outcome: "fetch-ok", status: response.status });
     return {
       envelope: { channel, ok: true, status: response.status, data },
       degraded: response.headers.get(RELAY_DEGRADED_HEADER) === "1",
     };
   } catch {
+    observe?.({ channel, outcome: "fetch-or-json-error" });
     return null;
   }
 }
@@ -396,24 +440,28 @@ export async function publishGameTick(
   };
   const channels = channelsForTick(tickIndex);
 
+  const collectionStartedAt = new Date().toISOString();
   const tasks = channels.map((channel) => ({
     channel,
-    promise: envelopeFrom(channel, deps.handlers[channel](internalGetRequest(
+    promise: envelopeFrom(channel, Promise.resolve().then(() => deps.handlers[channel](internalGetRequest(
       CHANNEL_PATH[channel],
       channel === "live" ? { gameId, date: deps.date } : { gameId },
       signal,
-    ))),
+      channel === "live" ? deps.liveRequestOrigin : undefined,
+    ))), deps.observe),
   }));
 
   for (const { channel, promise } of tasks) {
     // 삼순 4차 ③: abort 되면(timeout) 이후 어떤 INSERT 도 시도하지 않는다 — 늦게 끝난 tick 이
     // 다음 tick 과 같은 state 를 동시 변경·INSERT 하는 것을 차단(fence).
     if (signal?.aborted) {
+      deps.observe?.({ channel, outcome: "aborted" });
       result.errors.push(`${gameId}:${channel}:aborted`);
       continue;
     }
     const fetched = await promise;
     if (signal?.aborted) {
+      deps.observe?.({ channel, outcome: "aborted" });
       result.errors.push(`${gameId}:${channel}:aborted`);
       continue;
     }
@@ -423,8 +471,20 @@ export async function publishGameTick(
     }
     const { envelope, degraded } = fetched;
 
+    // Persist the complete validated envelope before delta conversion or content dedup.
+    // A source outage must never refresh the durable last-good observation time.
+    const data = envelope.data as Record<string, unknown>;
+    if (deps.publishSnapshot && !degraded && data?.degraded !== true && data?.partial !== true) {
+      const observedAt = channel === "relay" && typeof data.updatedAt === "string"
+        ? data.updatedAt : collectionStartedAt;
+      try {
+        const stored = await deps.publishSnapshot(gameId, channel, data, observedAt, ++state.seq, signal);
+        if (!stored) result.errors.push(`${gameId}:${channel}:snapshot-not-written`);
+      } catch { result.errors.push(`${gameId}:${channel}:snapshot-write-failed`); }
+    }
     const hash = frameHash(envelope.data);
     if (state.lastHash[channel] === hash) {
+      deps.observe?.({ channel, outcome: "unchanged" });
       result.skippedUnchanged += 1;
       // frames-stale 관측: relay 채널의 "**완전 fresh** fetch 성공 + 내용 동일"만 센다 —
       // 업스트림이 살아있는데 데이터가 멎은 stale-equal(mode B)의 직접 증거.
@@ -444,7 +504,7 @@ export async function publishGameTick(
     let payload: LivePollEnvelope = envelope;
     if (channel === "relay") {
       state.relayChanges += 1;
-      const wantFull = !state.publishedFull || state.relayChanges % RELAY_FRAME_FULL_EVERY === 1;
+      const wantFull = (envelope.data as GameRelayResponse).source === "kbo" || !state.publishedFull || state.relayChanges % RELAY_FRAME_FULL_EVERY === 1;
       if (wantFull) {
         kind = "relay-full";
       } else {
@@ -465,12 +525,14 @@ export async function publishGameTick(
 
     const bytes = Buffer.byteLength(JSON.stringify(payload));
     if (bytes > MAX_PAYLOAD_BYTES) {
+      deps.observe?.({ channel, outcome: "oversize", bytes });
       result.skippedOversize += 1;
       continue;
     }
 
     // 삼순 5차: INSERT 직전 abort 재확인 — hash 계산 사이에 timeout 이 나면 INSERT 건너뛴.
     if (signal?.aborted) {
+      deps.observe?.({ channel, outcome: "aborted" });
       result.errors.push(`${gameId}:${channel}:aborted`);
       continue;
     }
@@ -496,9 +558,11 @@ export async function publishGameTick(
     // 하지 않는다(단조 유지) — 이 번호는 gap 으로 버려진다. 단, 누락 감지를 위해 본
     // 번호의 commit 여부와 무관하게 상태만 멈춘다(durable ordering 은 route await-outstanding 이 보장).
     if (signal?.aborted) {
+      deps.observe?.({ channel, outcome: "aborted" });
       result.errors.push(`${gameId}:${channel}:aborted`);
       continue;
     }
+    deps.observe?.({ channel, outcome, bytes });
     if (outcome === "inserted") {
       // 해시는 INSERT 성공 후에만 갱신 — 실패 시 다음 tick 재시도(fail-closed retry). seq 는 불감.
       state.lastHash[channel] = hash;

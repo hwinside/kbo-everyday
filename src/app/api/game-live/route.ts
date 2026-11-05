@@ -1,3 +1,4 @@
+import { serveDeliverySnapshot } from "@/lib/game/delivery-snapshot";
 import { NextRequest, NextResponse } from "next/server";
 import type { KboRawGame } from "@/types/api";
 import { resolveCurrentPlayers } from "@/lib/kbo-player-mapping";
@@ -141,6 +142,7 @@ async function fetchSlateWitnesses(
   date: string,
   deadlineAtMs: number,
   deps: GameLiveRouteDeps,
+  confirmedOffday = false,
 ): Promise<[StarterWitnessGame[], string[]]> {
   const remainingMs = deadlineAtMs - Date.now();
   if (remainingMs <= SLATE_SETTLE_RESERVE_MS) {
@@ -170,7 +172,10 @@ async function fetchSlateWitnesses(
 
   try {
     const settled = await Promise.allSettled([
-      abortOnFailure(() => fetchStarterWitness(req, date, controller.signal)),
+      // No starters exist on a calendar-confirmed off day. Avoid /api/games'
+      // Naver dependency, but still reject any durable known-slate conflict.
+      confirmedOffday ? Promise.resolve([] as StarterWitnessGame[])
+        : abortOnFailure(() => fetchStarterWitness(req, date, controller.signal)),
       abortOnFailure(() => deps.fetchKnownSlateIdsImpl(date, deadlineAtMs, controller.signal)),
     ] as const);
     if (firstFailure !== undefined) throw firstFailure;
@@ -262,6 +267,7 @@ export async function gameLiveRoute(
         date,
         deadlineAtMs,
         deps,
+        rawGames.length === 0 && trace.stage === "kbo-offday-confirmed",
       );
       if (knownSlateIds.length > 0 && (
         !slateMatches(rawGames.map((game) => ({ gameId: game.G_ID })), knownSlateIds)
@@ -282,7 +288,7 @@ export async function gameLiveRoute(
         );
       }
       rawGames = reconciled;
-      trace = { ...trace, stage: "starter-witness", fetchedAtMs: Date.now() };
+      trace = { ...trace, stage: trace.stage === "kbo-offday-confirmed" ? trace.stage : "starter-witness", fetchedAtMs: Date.now() };
     } catch {
       trace = { ...trace, stage: "starter-witness-failed", fetchedAtMs: Date.now() };
       return NextResponse.json(
@@ -360,5 +366,7 @@ export async function gameLiveRoute(
 }
 
 export async function GET(req: NextRequest) {
+  const stored = await serveDeliverySnapshot(req, "live", req.nextUrl.searchParams.get("gameId") || req.nextUrl.searchParams.get("date") || resolveGameLiveDate());
+  if (stored) return stored;
   return gameLiveRoute(req);
 }

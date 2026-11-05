@@ -8,9 +8,12 @@ import type { Stadium } from "@/lib/constants/stadiums";
 import { useAuth } from "@/lib/supabase/AuthContext";
 import { useTheme } from "@/components/ThemeProvider";
 import GlassCard from "@/components/ui/GlassCard";
+import { isPostseason } from "@/lib/crawler/game-series";
+import { POSTSEASON_TICKET_NOTICE, KBO_NOTICE_URL } from "@/lib/utils/ticket-utils";
 import { TICKET_OPEN_RULES } from "@/lib/constants/tickets";
 
 interface StadiumGame {
+  srId?: string;
   gameId: string;
   date: string; // YYYYMMDD
   time: string;
@@ -146,6 +149,7 @@ export default function StadiumCalendar({ stadium }: StadiumCalendarProps) {
 
   return (
     <div className="space-y-4">
+      {games.some(g => isPostseason(g.srId)) && <a href={KBO_NOTICE_URL} target="_blank" rel="noopener noreferrer" className="block text-sm text-accent px-4">{POSTSEASON_TICKET_NOTICE}</a>}
       {/* 예매 오픈 안내 */}
       <GlassCard className="p-4">
         <div className="space-y-2">
@@ -157,7 +161,7 @@ export default function StadiumCalendar({ stadium }: StadiumCalendarProps) {
                   {team && (
                     <Image src={team.logoPath} alt="" width={20} height={20} unoptimized className="object-contain" />
                   )}
-                  <span className="text-text-primary font-medium">{team?.shortName} 예매 오픈</span>
+                  <span className="text-text-primary font-medium">{team?.shortName} 정규시즌 예매 오픈</span>
                 </div>
                 <span className="text-text-secondary text-xs">{TICKET_OPEN_RULES[teamId]?.label || ""}</span>
               </div>
@@ -341,6 +345,7 @@ export default function StadiumCalendar({ stadium }: StadiumCalendarProps) {
                       {game.status === "scheduled" ? "예정" : game.status === "final" ? "종료" : game.status === "cancelled" ? "취소" : "진행중"}
                     </span>
                     {game.status === "scheduled" && (() => {
+                      if (isPostseason(game.srId)) return <span className="text-xs ml-2 text-accent">{POSTSEASON_TICKET_NOTICE}</span>;
                       if (isDoubleHeader(games, game)) {
                         return <span className="text-xs ml-2 text-yellow-400">변경 경기 · 예매 일정 별도 확인</span>;
                       }
@@ -357,13 +362,13 @@ export default function StadiumCalendar({ stadium }: StadiumCalendarProps) {
                   </div>
                   {game.status === "scheduled" && TICKET_OPEN_RULES[game.homeTeamId] && (
                     <a
-                      href={TICKET_OPEN_RULES[game.homeTeamId].url}
+                      href={isPostseason(game.srId) ? KBO_NOTICE_URL : TICKET_OPEN_RULES[game.homeTeamId].url}
                       target="_blank"
                       rel="noopener noreferrer"
                       className="flex items-center gap-1 rounded-full bg-accent px-3 py-1.5 text-xs font-semibold text-white"
                     >
                       <ExternalLink size={12} />
-                      예매하기
+                      {isPostseason(game.srId) ? "공지 확인" : "예매하기"}
                     </a>
                   )}
                 </div>
@@ -390,7 +395,7 @@ export default function StadiumCalendar({ stadium }: StadiumCalendarProps) {
               const opponent = getTeamById(opponentId);
 
               const isDH = isDoubleHeader(games, game);
-              const openDate = isDH ? null : getTicketOpenDate(game.date, game.homeTeamId);
+              const openDate = isDH || isPostseason(game.srId) ? null : getTicketOpenDate(game.date, game.homeTeamId);
               const now = new Date();
               const isOpen = openDate ? now >= openDate : false;
 
@@ -408,18 +413,20 @@ export default function StadiumCalendar({ stadium }: StadiumCalendarProps) {
                     </div>
                     {game.status === "scheduled" && (
                       <a
-                        href={TICKET_OPEN_RULES[game.homeTeamId]?.url || stadium.ticketing.url}
+                        href={isPostseason(game.srId) ? KBO_NOTICE_URL : TICKET_OPEN_RULES[game.homeTeamId]?.url || stadium.ticketing.url}
                         target="_blank"
                         rel="noopener noreferrer"
                         className="text-xs text-accent font-medium"
                       >
-                        예매
+                        {isPostseason(game.srId) ? "공지 확인" : "예매"}
                       </a>
                     )}
                   </div>
                   {game.status === "scheduled" && (
                     <div className="mt-1.5">
-                      {isDH ? (
+                      {isPostseason(game.srId) ? (
+                        <span className="text-[11px] text-accent">{POSTSEASON_TICKET_NOTICE}</span>
+                      ) : isDH ? (
                         <span className="text-[11px] text-yellow-400">변경 경기 · 예매 일정 별도 확인</span>
                       ) : openDate ? (
                         <span className={`text-[11px] ${isOpen ? "text-green-400" : "text-text-tertiary"}`}>

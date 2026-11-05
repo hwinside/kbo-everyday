@@ -79,3 +79,19 @@ export function normalizeQuestion(text: string): string {
   }
   return s;
 }
+
+/** Recover the original definition subject, without candidates or new vocabulary.
+ * Only an exact prefix projection of the existing question normalizer can narrow scope.
+ * Otherwise retain the original input; never synthesize a source spelling. */
+export function originalSpellingScope(question: string): string {
+  const sourceKey = normalizeKey(question);
+  // A trailing particle alone is not proof of a definition request (e.g. evaluation/follow-up).
+  if (!QUESTION_SUFFIXES.some(suffix => sourceKey.endsWith(suffix))) return question;
+  const target = normalizeQuestion(question);
+  if (!target || target === normalizeKey(question)) return question;
+  for (let end = 1; end <= question.length; end++) {
+    const prefix = question.slice(0, end);
+    if (normalizeKey(prefix) === target) return prefix.trim();
+  }
+  return question;
+}

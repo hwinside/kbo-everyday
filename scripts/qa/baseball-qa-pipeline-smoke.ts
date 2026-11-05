@@ -5,6 +5,7 @@ import path from "node:path";
 import { PGlite } from "@electric-sql/pglite";
 import ts from "typescript";
 import { normalizeKey, normalizeQuestion } from "../../src/lib/baseball-qa/normalize";
+import { termKnowledgeCacheKey } from "../../src/lib/baseball-qa/term-knowledge";
 import { selectContextTurn, type ContextTurn } from "../../src/lib/baseball-qa/context";
 import {
   applyBaseballQaPlayerPick,
@@ -1457,7 +1458,7 @@ async function verifyPipeline() {
   );
 
   const cache = freshState();
-  cache.cache.set(normalizeQuestion("체크스윙 룰이 뭐야?"), "캐시 답변");
+  cache.cache.set(termKnowledgeCacheKey(normalizeQuestion("체크스윙 룰이 뭐야?")), "캐시 답변");
   assert.equal((await answerQuestion("u1", "체크스윙 룰이 뭐야?", makeDeps(cache))).source, "cache");
   assert.equal(cache.llmCalls, 0);
 
@@ -1549,7 +1550,7 @@ async function verifyPipeline() {
   for (const [input, expectedSource] of deterministicClosures) {
     const expectedAnswer = expectedSource === "history_hold" ? HISTORY_HOLD_ANSWER : BLOCKED_ANSWER;
     const state = freshState();
-    state.cache.set(normalizeQuestion(input), "오염 캐시");
+    state.cache.set(termKnowledgeCacheKey(normalizeQuestion(input)), "오염 캐시");
     let officialRagCalls = 0;
     let playerRagCalls = 0;
     const deps: QaDeps = {
@@ -1568,7 +1569,7 @@ async function verifyPipeline() {
     assert.equal(state.cacheReads, 0, `${input}: cache read 0`);
     assert.equal(state.llmCalls, 0, `${input}: generic LLM 0`);
     assert.equal(state.cacheWrites, 0, `${input}: cache write 0`);
-    assert.equal(state.cache.get(normalizeQuestion(input)), "오염 캐시", `${input}: cache write 0`);
+    assert.equal(state.cache.get(termKnowledgeCacheKey(normalizeQuestion(input))), "오염 캐시", `${input}: cache write 0`);
   }
 
   // P0 출시 경계 ② — **2차 가드 위임**(하린아빠 2026-08-03): 룰베이스가 못 가린 비야구 질문.
@@ -1597,7 +1598,7 @@ async function verifyPipeline() {
     const state = freshState({
       llmText: `{"status":"${NOT_BASEBALL_SENTINEL}","answer":""}`,
     });
-    state.cache.set(normalizeQuestion(input), "오염 캐시");
+    state.cache.set(termKnowledgeCacheKey(normalizeQuestion(input)), "오염 캐시");
     let officialRagCalls = 0;
     let playerRagCalls = 0;
     const deps: QaDeps = {
@@ -1632,7 +1633,7 @@ async function verifyPipeline() {
     assert.equal(playerRagCalls, 0, `${input}: player RAG 0`);
     assert.equal(state.cacheReads, 0, `${input}: cache read 0`);
     assert.equal(state.cacheWrites, 0, `${input}: cache write 0`);
-    assert.equal(state.cache.get(normalizeQuestion(input)), "오염 캐시", `${input}: 오염 캐시 미노출`);
+    assert.equal(state.cache.get(termKnowledgeCacheKey(normalizeQuestion(input))), "오염 캐시", `${input}: 오염 캐시 미노출`);
   }
 
   // 2차 가드 양성편: 사전 미수록·신호어 미등록인 **정상 룰 질문**은 blocked로 죽지 않고
@@ -2190,7 +2191,7 @@ async function verifyPipeline() {
     "야구 경기 결과가 무승부면 순위는 어떻게 정해?",
   ]) {
     const state = freshState();
-    state.cache.set(normalizeQuestion(input), "검증 캐시 답변");
+    state.cache.set(termKnowledgeCacheKey(normalizeQuestion(input)), "검증 캐시 답변");
     const result = await answerQuestion("u1", input, makeDeps(state));
     assert.notEqual(result.source, "blocked", `${input}: 룰 질문 과차단 금지`);
     assert.notEqual(result.answer, BLOCKED_ANSWER, `${input}: exact fallback 금지`);
@@ -2365,7 +2366,7 @@ async function verifyPipeline() {
   {
     const input = "홈런볼 과자 어디서 사";
     const state = freshState({ llmText: `{"status":"${NOT_BASEBALL_SENTINEL}","answer":""}` });
-    state.cache.set(normalizeQuestion(input), "오염 캐시");
+    state.cache.set(termKnowledgeCacheKey(normalizeQuestion(input)), "오염 캐시");
     let officialRagCalls = 0;
     const result = await answerQuestion("u1", input, {
       ...makeDeps(state),
@@ -3892,7 +3893,7 @@ async function verifyReplyKindMatchesActualPipelineOutcome() {
   }];
   const statsRow = {
     player_key: "69102", kbo_id: "69102", name: "문보경", team: "LG",
-    updated_at: new Date(Date.now() - 3_600_000).toISOString(), doubles: 8,
+    updated_at: "2026-08-08T02:00:00Z", doubles: 8,
   };
   // 구단 서술형 근거 — 선수 근거와 **다른 문서**여야 경로가 섞이지 않는다.
   const teamEvidence = [{
@@ -3904,7 +3905,7 @@ async function verifyReplyKindMatchesActualPipelineOutcome() {
   // canonicalUrl 은 출처 allowlist 를 통과하는 네이버 재송고 링크다(production 적재 형식 그대로).
   const newsEvidence = [{
     content: "체성호→송찬의→문정빈 홈런 합작…FA 김현수 떠난 자리는\n" +
-      "지난해 LG 트윈스는 통합 우승을 차지했다. 떠난 주전 외야수 자리를 젊은 타자들이 메우고 있다.",
+      "8월 7일 LG 트윈스 문보경과 젊은 타자들이 경기에서 승리했습니다.",
     pageTitle: "체성호→송찬의→문정빈 홈런 합작…FA 김현수 떠난 자리는",
     canonicalUrl: "https://m.sports.naver.com/kbaseball/article/109/0005585034",
     revision: "article:2b1c9f", sectionPath: "2026-08-07",
@@ -3919,7 +3920,7 @@ async function verifyReplyKindMatchesActualPipelineOutcome() {
     // 최근 기사 RAG 도 같은 이유로 켜다 — `news_rag` 는 `team_rag` 에서 분리된 별도 경로다
     // (2026-08-08 감사 식별자 분리 — 근거 수명이 30일이라 문서 경로와 감사 축을 나눈다).
     enableNewsRag: true,
-    now: () => Date.now(),
+    now: () => Date.parse("2026-08-08T03:00:00Z"),
     searchRag: async (candidate: { entityType?: string }) =>
       (candidate?.entityType === "team" ? teamEvidence : evidence) as never,
     searchNewsRag: async () => newsEvidence as never,
@@ -3933,7 +3934,7 @@ async function verifyReplyKindMatchesActualPipelineOutcome() {
     }),
     callNewsRagLlm: async () => ({
       // 기사 tier2 는 숫자 전면 HOLD 라 모델도 숫자 없이 서술한다.
-      text: '{"status":"GROUNDED","answer":"젊은 타자들이 홈런을 합작하며 떠난 자리를 메우고 있습니다."}',
+      text: '{"status":"GROUNDED","answer":"LG 트윈스의 젊은 타자들이 경기에서 승리했습니다."}',
       inputTokens: 10, outputTokens: 5,
     }),
     fetchSeasonRecord: async () => [statsRow] as never,
@@ -3944,6 +3945,8 @@ async function verifyReplyKindMatchesActualPipelineOutcome() {
     { question: "보크가 뭐야?", deps: richDeps },                       // dictionary
     { question: "문보경 별명이 뭐야?", deps: richDeps },                // rag
     { question: "LG 트윈스 역사 알려줘", deps: richDeps },              // team_rag
+    { question: "어제 문보경 소식 알려줘", deps: richDeps },
+    { question: "오늘 문보경 뉴스 알려줘", deps: s => ({ ...richDeps(s), searchNewsRag: async () => newsEvidence.map(row => ({ ...row, asOf: "2026-08-08T01:00:00Z" })) as never }) },
     { question: "어제 LG 무슨 일 있었어?", deps: richDeps },           // news_rag
     { question: "문보경 올해 2루타 몇개 칩어?", deps: richDeps },      // kbo_structured
     { question: "김동현 별명이 뭐야?", deps: richDeps },                // player_picker
@@ -3951,7 +3954,7 @@ async function verifyReplyKindMatchesActualPipelineOutcome() {
       question: "보끄가모야",
       deps: (state) => ({
         ...richDeps(state),
-        normalizeQuestionLlm: async () => ({ text: "보크가 뭐야?", inputTokens: 5, outputTokens: 2 }),
+        normalizeQuestionLlm: async () => ({ text: "보크가 뭐야?", originalSpelling: { status: "typo", quote: "보끄가모야" }, inputTokens: 5, outputTokens: 2 }),
       }),
     },                                                                    // question_correction
     { question: "고마워", deps: richDeps },                                // ack
@@ -4009,6 +4012,7 @@ async function verifyReplyKindMatchesActualPipelineOutcome() {
   for (const probe of probes) {
     const state = freshState(probe.state ?? {});
     const result = await answerQuestion("u-behavioral", probe.question, probe.deps(state));
+    if (/^(오늘|어제) 문보경/u.test(probe.question)) assert.equal(result.source, "news_rag", `선수 게시일 probe 실패: ${probe.question}`);
     if (result.source === "pending") continue;
     observed.set(result.source, {
       answer: result.answer,

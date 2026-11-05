@@ -1,5 +1,6 @@
+import { fetchGamesUserFacing } from "@/lib/crawler/games-user-facing";
 import { NextRequest, NextResponse } from "next/server";
-import { fetchStandings, teamCardRank, fetchGames } from "@/lib/crawler/kbo-api";
+import { fetchStandings, teamCardRank } from "@/lib/crawler/kbo-api";
 import { getMonthGames } from "@/lib/crawler/season-games-cache";
 import { appendLiveRankIfStale } from "@/lib/analysis/rank-history-selfheal";
 import { fetchAllRows } from "@/lib/db/paginate";
@@ -82,13 +83,13 @@ export async function GET(req: NextRequest) {
 
     let monthGames = await getMonthGames(thisMonth).catch(() => []);
     let teamFinals = monthGames.filter(
-      (g) => (g.awayTeamId === team.id || g.homeTeamId === team.id) && g.status === "final",
+      (g) => (g.awayTeamId === team.id || g.homeTeamId === team.id) && g.status === "final" && g.srId === "0",
     );
     if (teamFinals.length < 5) {
       const prevGames = await getMonthGames(prevMonth).catch(() => []);
       monthGames = [...prevGames, ...monthGames];
       teamFinals = monthGames.filter(
-        (g) => (g.awayTeamId === team.id || g.homeTeamId === team.id) && g.status === "final",
+        (g) => (g.awayTeamId === team.id || g.homeTeamId === team.id) && g.status === "final" && g.srId === "0",
       );
     }
     teamFinals.sort((a, b) => a.date.localeCompare(b.date));
@@ -116,7 +117,7 @@ export async function GET(req: NextRequest) {
     } | null = null;
     for (let i = 0; i < 10 && !nextGame; i++) {
       const date = kstDateStr(i);
-      const games = await fetchGames(date).catch(() => []);
+      const games = await fetchGamesUserFacing(date).catch(() => []);
       const g = games.find(
         (x) =>
           (x.awayTeamId === team.id || x.homeTeamId === team.id) && x.status === "scheduled",

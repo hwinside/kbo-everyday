@@ -14,6 +14,7 @@ import { execFileSync } from "node:child_process";
 import { copyFileSync, readFileSync, writeFileSync, unlinkSync } from "node:fs";
 
 const TARGETS = {
+  dateMigration: "supabase/migrations/20260929112000_genius_event_date_discard_reason.sql",
   pipeline: "src/lib/baseball-qa/pipeline.ts",
   retrieve: "src/lib/baseball-qa/rag/retrieve.ts",
   logrow: "src/lib/baseball-qa/log-row.ts",
@@ -186,7 +187,7 @@ const MUTATIONS = [
   },
   {
     name: "M11 migration CHECK 에서 사유 하나를 뺀다 (배포 후 23514)",
-    file: "migration",
+    file: "dateMigration",
     from: `      'numeric_claim_ungrounded',`,
     to: ``,
     expect: "폐기 사유 CHECK 가 어긋난다",

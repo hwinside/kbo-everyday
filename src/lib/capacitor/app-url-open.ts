@@ -1,5 +1,7 @@
 "use client";
 
+import { setOAuthBridgeReady } from "@/lib/auth/oauth-diagnostics";
+
 // appUrlOpen 단일 디스패처 (삼순 #1204 R2·R3·R4)
 //
 // R2 문제: Capacitor iOS는 retained `appUrlOpen`(cold launch로 앱이 열리기 전 도착한 URL)을
@@ -168,9 +170,11 @@ function ensureAttached(): Promise<void> {
       const app = await loadAppSource();
       await app.addListener("appUrlOpen", fanout);
       attached = true;
+      setOAuthBridgeReady(true);
       retryAttempt = 0;
     })().catch(() => {
       attachPromise = null;
+      setOAuthBridgeReady(false);
       scheduleRetry(); // 실패를 삼키되 재연결 책임은 디스패처가 진다(R3-①)
     });
   }

@@ -223,6 +223,19 @@
         </LinearLayout>
 
 
+        <TextView
+            android:id="@+id/widget_result_pitchers"
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:layout_marginTop="3dp"
+            android:gravity="center"
+            android:fontFamily="@font/notosanskr"
+            android:textColor="#D9FFFFFF"
+            android:textSize="11sp"
+            android:maxLines="2"
+            android:ellipsize="end"
+            android:visibility="gone" />
+
         <!-- 하단: (OUT + 투수/타자 소속표기) + 다이아몬드 — SSOT lockscreen-card-approved -->
         <LinearLayout
             android:id="@+id/widget_live_row"

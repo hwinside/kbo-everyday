@@ -28,6 +28,8 @@
  * 실행: npm run qa:team-fullname-routing
  */
 import assert from "node:assert/strict";
+import { mkdirSync, readFileSync, writeFileSync } from "node:fs";
+import { dirname, join } from "node:path";
 import {
   answerQuestion,
   BLOCKED_ANSWER,
@@ -1516,11 +1518,161 @@ async function verifySystemPromptContract() {
   });
 }
 
+/** Validate this checkout's handlers, not the previously deployed production revision.
+ * Keep server.makeDeps -> real fetchers -> HTTP response parsing unchanged.
+ * Local API transport is replaced by this checkout's handlers; upstream bytes are replayed.
+ */
+
+/**
+ * 업스트림은 **녹화된 cassette**로 재생한다.
+ *
+ * 🔴 왜 라이브 호출을 뺐는가 (삼식 2026-10-27 실측, dpl_ELUYRc1vN8nM5CwxGcbrFWFguVYr).
+ *   Vercel 빌드는 한국이 아니라 미국(Washington, D.C. - iad1)에서 돈다. 같은 코드가 런타임
+ *   icn1 에서는 KBO 폼 4페이지를 0.1~0.26s 로 읽지만, iad1 에서는 0.68~1.42s 로 1.5s KBO
+ *   예산의 경계선에 걸리고 네이버 api-gw 는 클라우드 출구가 차단돼 폴백도 막힌다. 그래서
+ *   게이트 3s abort 로 **모든 빌드가 FAIL** 했다. 런타임 결함이 아니라, 빌드 머신의 지역
+ *   때문에 게이트가 흔들리는 구조 결함이다.
+ *   예산을 올려 통과시키지 않는 이유: 왕복 지연은 빌드 지역마다 계속 달라지므로 숫자를 올리면
+ *   다음 지역에서 같은 사고가 재발하고, 그 사이 진짜 지연 회귀는 가려진다.
+ *
+ * 그래서 **네트워크 경계만** 녹화 바이트로 고정한다. handler·파싱·3s abort·계약 검증은 전부
+ * 실제 코드 그대로다 — 게이트가 검증 대상(파싱·계약)을 직접 만들지 않는다는 원칙은 유지된다.
+ *
+ * 업스트림 변경(KBO 페이지 개편 등)은 빌드가 아니라 라이브 점검으로 잡는다:
+ *   QA_TEAM_CONTRACT_LIVE=1   - 라이브 업스트림으로 실행(빌드에서는 쓰지 않는다)
+ *   QA_TEAM_CONTRACT_RECORD=1 - KBO 에 도달 가능한 머신에서 cassette 재녹화
+ */
+const UPSTREAM_HOSTS = new Set(["www.koreabaseball.com", "api-gw.sports.naver.com"]);
+const CASSETTE_PATH = join(process.cwd(), "scripts/qa/fixtures/kbo-upstream.json");
+
+interface CassetteEntry {
+  key: string;
+  status?: number;
+  headers?: [string, string][];
+  body?: string;
+  /** 녹화 시 업스트림이 연결 자체를 거부/지연시킨 경우(클라우드 출구 차단 등). */
+  networkError?: string;
+  note?: string;
+}
+
+function loadCassette(): Map<string, CassetteEntry[]> {
+  const entries = JSON.parse(readFileSync(CASSETTE_PATH, "utf8")) as CassetteEntry[];
+  assert.ok(entries.length > 0, "cassette 가 비어 있다 - QA_TEAM_CONTRACT_RECORD=1 로 재녹화해야 한다");
+  const byKey = new Map<string, CassetteEntry[]>();
+  for (const entry of entries) {
+    const queue = byKey.get(entry.key) ?? [];
+    queue.push(entry);
+    byKey.set(entry.key, queue);
+  }
+  return byKey;
+}
+
+function replayUpstream(cassette: Map<string, CassetteEntry[]>, key: string): Response {
+  const queue = cassette.get(key);
+  // cassette miss 를 조용히 통과시키지 않는다 - 업스트림 호출 형태가 바뀌면 FAIL 이어야 한다.
+  assert.ok(queue && queue.length > 0, `cassette miss: ${key} - QA_TEAM_CONTRACT_RECORD=1 로 재녹화`);
+  const entry = queue.length > 1 ? queue.shift()! : queue[0];
+  if (entry.networkError) throw new TypeError(entry.networkError);
+  return new Response(entry.body ?? "", { status: entry.status ?? 200, headers: entry.headers ?? [] });
+}
+
+async function installLocalTeamRoutes() {
+  // Supabase placeholder 는 route import 보다 먼저 세팅한다 - admin 클라이언트가 모듈 로드
+  // 시점에 생성돼서, env 없는 환경에선 import 만으로 `supabaseUrl is required` 로 죽는다(삼식 P2).
+  process.env.NEXT_PUBLIC_SUPABASE_URL ||= "https://example.supabase.co";
+  process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY ||= "gate-placeholder";
+  process.env.SUPABASE_SERVICE_ROLE_KEY ||= "gate-placeholder";
+
+  const [{ NextRequest }, records, standings] = await Promise.all([
+    import("next/server"),
+    import("../../src/app/api/team-records/route"),
+    import("../../src/app/api/standings/route"),
+  ]);
+  const nativeFetch = globalThis.fetch;
+  const origin = new URL(process.env.NEXT_PUBLIC_APP_URL || "https://keubo.fan").origin;
+  const hits = new Set<string>();
+  const live = process.env.QA_TEAM_CONTRACT_LIVE === "1";
+  const recording = process.env.QA_TEAM_CONTRACT_RECORD === "1";
+  const recorded: CassetteEntry[] = [];
+  const cassette = live || recording ? null : loadCassette();
+  const upstreamHosts = new Set<string>();
+
+  globalThis.fetch = (async (input, init) => {
+    const url = new URL(input instanceof Request ? input.url : String(input));
+
+    if (UPSTREAM_HOSTS.has(url.host)) {
+      const method = init?.method ?? (input instanceof Request ? input.method : "GET");
+      const key = `${method} ${url.href}`;
+      upstreamHosts.add(url.host);
+      if (cassette) return replayUpstream(cassette, key);
+      if (!recording) return nativeFetch(input, init);
+      // 녹화는 **클라우드와 같은 조건**으로 남긴다. 네이버 api-gw 는 Vercel 출구가 차단돼
+      // 프로덕션/빌드에서는 항상 timeout 이므로, 녹화 머신(한국)에서 200 이 와도 그 200 을
+      // 박아두면 게이트가 프로덕션에 없는 경로를 검증하게 된다. 그래서 차단을 그대로 녹화하고
+      // KBO 폴백 응답을 수집한다(QA_TEAM_CONTRACT_RECORD_NAVER_LIVE=1 로 해제).
+      if (url.host === "api-gw.sports.naver.com" && process.env.QA_TEAM_CONTRACT_RECORD_NAVER_LIVE !== "1") {
+        const blocked = new TypeError("The operation was aborted due to timeout");
+        recorded.push({
+          key,
+          networkError: blocked.message,
+          note: "Naver api-gw blocks cloud egress (Vercel iad1/icn1, 2026-10-27) - standings must come from the KBO fallback",
+        });
+        throw blocked;
+      }
+      try {
+        const res = await nativeFetch(input, init);
+        const body = await res.text();
+        const headers = [...res.headers] as [string, string][];
+        recorded.push({ key, status: res.status, headers, body });
+        return new Response(body, { status: res.status, headers });
+      } catch (error) {
+        recorded.push({ key, networkError: (error as Error).message, note: "recorded upstream failure" });
+        throw error;
+      }
+    }
+
+    if (url.origin !== origin || !["/api/team-records", "/api/standings"].includes(url.pathname)) {
+      return nativeFetch(input, init);
+    }
+    assert.equal(init?.method ?? "GET", "GET");
+    hits.add(url.pathname);
+    const signal = init?.signal ?? (input instanceof Request ? input.signal : undefined);
+    signal?.throwIfAborted();
+    let onAbort: (() => void) | undefined;
+    try {
+      return await Promise.race([
+        url.pathname === "/api/team-records" ? records.GET(new NextRequest(url)) : standings.GET(),
+        new Promise<never>((_, reject) => {
+          onAbort = () => reject(signal?.reason ?? new DOMException("Aborted", "AbortError"));
+          signal?.addEventListener("abort", onAbort, { once: true });
+          if (signal?.aborted) onAbort();
+        }),
+      ]);
+    } finally {
+      if (onAbort) signal?.removeEventListener("abort", onAbort);
+    }
+  }) as typeof fetch;
+
+  return () => {
+    globalThis.fetch = nativeFetch;
+    if (recording) {
+      mkdirSync(dirname(CASSETTE_PATH), { recursive: true });
+      writeFileSync(CASSETTE_PATH, `${JSON.stringify(recorded, null, 2)}\n`);
+      console.log(`[cassette] recorded ${recorded.length} upstream responses -> ${CASSETTE_PATH}`);
+    }
+    assert.deepEqual([...hits].sort(), ["/api/standings", "/api/team-records"], "local handler wiring was bypassed");
+    // 업스트림을 전혀 타지 않았다면 handler 가 실제 fetcher 경로를 돌지 않은 것이다.
+    assert.ok(upstreamHosts.size > 0, "업스트림 조회가 전혀 발생하지 않았다 - handler 가 실제 fetcher 를 타지 않았다");
+  };
+}
+
 async function main() {
   if (process.env.QA_TEAM_CONTRACT_SELFTEST === "1") {
     verifyTeamSnapshotContractSelftest();
     return;
   }
+  const restoreRoutes = await installLocalTeamRoutes();
+  try {
   players = await loadRosterPlayers();
   assert.ok(
     players.length > 100,
@@ -1548,6 +1700,9 @@ async function main() {
     `✅ team question contract: ${pass} PASS ` +
     `(10개 구단 표기 변형 answerQuestion 실행 + 교차조합 거절 + 범위밖/인젝션 차단 + 지원밖 지표 안내 + 룰 회귀)`,
   );
+  } finally {
+    restoreRoutes();
+  }
 }
 
 main().catch((error) => {

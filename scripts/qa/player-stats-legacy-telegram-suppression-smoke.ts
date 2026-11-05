@@ -60,7 +60,7 @@ async function main() {
 
     // 다른 legacy API 경보 동작은 그대로 유지되는지(과억제 회귀 방지).
     for (let i = 0; i < 3; i++) {
-      await trackFallback("naver-standings", "timeout", { errorMessage: `control-${i}` });
+      await trackFallback("kbo-boxscore", "timeout", { errorMessage: `control-${i}` });
     }
     ok("다른 legacy API 이벤트 저장 유지", insertCalls === 13);
     ok("다른 legacy API 경보 동작은 유지", telegramCalls === 1);

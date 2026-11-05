@@ -3,7 +3,7 @@
 import { useState, useEffect } from "react";
 import { motion } from "framer-motion";
 import { getTeamBgColor, type TeamData } from "@/lib/constants/teams";
-import { getNextTicketOpen, formatCountdown, formatOpenAt, formatGameDateTime, type NextTicketOpen } from "@/lib/utils/ticket-utils";
+import { getNextTicketOpen, POSTSEASON_TICKET_NOTICE, formatCountdown, formatOpenAt, formatGameDateTime, type NextTicketOpen } from "@/lib/utils/ticket-utils";
 
 interface Props {
   team: TeamData;
@@ -35,6 +35,7 @@ export default function TeamNextTicketCard({ team }: Props) {
 
       type SchedDay = {
         date: string;
+        srId?: string;
         time?: string;
         home: boolean;
         status: string;
@@ -72,6 +73,7 @@ export default function TeamNextTicketCard({ team }: Props) {
         const g = games[0];
         return {
           date: g.date,
+          srId: g.srId,
           time: g.time ?? "",
           // 예매룰은 주최(홈)팀 기준 — 원정이면 상대(홈)팀 id로 정책 조회.
           homeTeamId: g.home ? team.id : (g.opponent?.id ?? 0),
@@ -110,7 +112,7 @@ export default function TeamNextTicketCard({ team }: Props) {
 
     let timer: ReturnType<typeof setTimeout>;
     function tick() {
-      const ms = ticketInfo!.openAt.getTime() - Date.now();
+      const ms = ticketInfo!.openAt!.getTime() - Date.now();
       setCountdown(formatCountdown(ms));
       setNear(ms > 0 && ms < 60 * 60 * 1000);
       // 오픈 시각 지나면 카운트다운 종료('오픈!') — 다음 주기 fetch가 다음 오픈 대기 경기로 자동 갱신
@@ -126,7 +128,7 @@ export default function TeamNextTicketCard({ team }: Props) {
   if (!ticketInfo) return null;
 
   const gameLabel = formatGameDateTime(ticketInfo.gameDate, ticketInfo.gameTime);
-  const openLabel = formatOpenAt(ticketInfo.openAt);
+  const openLabel = ticketInfo.status === "countdown" ? formatOpenAt(ticketInfo.openAt) : "";
 
   const isNear = ticketInfo.status === "countdown" && near && !ticketInfo.uncertain;
   const bgColor = getTeamBgColor(team);
@@ -143,7 +145,7 @@ export default function TeamNextTicketCard({ team }: Props) {
     >
       <div className="flex-1 min-w-0">
         <div className="flex items-center gap-2 mb-1">
-          <p className="text-xs text-text-tertiary">다음 예매 오픈</p>
+          <p className="text-xs text-text-tertiary">{ticketInfo.status === "postseason" ? "포스트시즌 예매" : "다음 예매 오픈"}</p>
           {isNear && (
             <span className="relative flex h-2 w-2">
               <span className="animate-ping absolute inline-flex h-full w-full rounded-full bg-red-400 opacity-75" />
@@ -151,13 +153,15 @@ export default function TeamNextTicketCard({ team }: Props) {
             </span>
           )}
         </div>
-        {ticketInfo.uncertain ? (
+        {ticketInfo.status === "postseason" ? (
+          <p className="text-sm font-bold text-text-primary">{POSTSEASON_TICKET_NOTICE}</p>
+        ) : ticketInfo.uncertain ? (
           // 더블헤더/일정 변경 경기 — 표준 룰로 확정 표기 금지, 예매처에서 별도 확인 유도
           <p className="text-sm font-bold text-yellow-400">변경 경기 · 예매 일정 별도 확인</p>
         ) : (
           <p className="text-sm font-bold text-text-primary">{countdown}</p>
         )}
-        {!ticketInfo.uncertain && (
+        {ticketInfo.status === "countdown" && !ticketInfo.uncertain && (
           <p className="text-xs font-semibold text-text-primary mt-0.5">{openLabel} 예매 오픈</p>
         )}
         <p className="text-xs text-text-secondary mt-0.5">
@@ -167,7 +171,7 @@ export default function TeamNextTicketCard({ team }: Props) {
             : `${ticketInfo.opponentName ? ` vs ${ticketInfo.opponentName}` : ""} 홈경기`}
           {" · "}{ticketInfo.provider}
         </p>
-        {!ticketInfo.uncertain && (
+        {ticketInfo.status === "countdown" && !ticketInfo.uncertain && (
           <p className="text-[10px] leading-[13px] text-text-tertiary mt-1">
             * 안내된 예매 오픈 시간은 정확하지 않을 수 있어요. 정확한 시간은 예매처에서 확인해주세요.
           </p>
@@ -180,7 +184,7 @@ export default function TeamNextTicketCard({ team }: Props) {
         className="flex-shrink-0 px-4 py-2 rounded-xl text-xs font-bold text-white"
         style={{ backgroundColor: bgColor }}
       >
-        예매처로 가기
+        {ticketInfo.status === "postseason" ? "공지 확인" : "예매처로 가기"}
       </a>
     </motion.div>
   );

@@ -4,6 +4,11 @@ import { readFileSync } from "node:fs";
 import type { PGlite } from "@electric-sql/pglite";
 
 export async function runHomeCommunitySplitCases(db: PGlite) {
+  await runCases(db, false);
+  await runCases(db, true);
+}
+
+async function runCases(db: PGlite, optimized: boolean) {
   await db.exec(readFileSync("supabase/migrations/20260908063000_home_team_latest_posts.sql", "utf8"));
   await db.exec("begin");
   const a = "00000000-0000-4000-8000-000000000001";
@@ -21,6 +26,21 @@ export async function runHomeCommunitySplitCases(db: PGlite) {
   }
   const ids = (rows: { id: number }[]) => rows.map((r) => Number(r.id));
   try {
+    if (optimized) {
+      // The production migration must reject the older private-row fixture.
+      await db.exec("savepoint policy_guard");
+      await assert.rejects(
+        db.exec(readFileSync("supabase/migrations/20260929094000_home_team_latest_posts_rls_plan.sql", "utf8")),
+        /requires unconditional posts SELECT/,
+      );
+      await db.exec("rollback to savepoint policy_guard; release savepoint policy_guard");
+      await db.exec("alter policy public_posts on public.posts using (true)");
+      await db.exec(readFileSync("supabase/migrations/20260929094000_home_team_latest_posts_rls_plan.sql", "utf8"));
+      const config = await db.query<{ prosecdef: boolean; proconfig: string[] }>(
+        "select prosecdef, proconfig from pg_proc where oid='public.home_team_latest_posts(text,integer,text[],uuid[],timestamptz,bigint)'::regprocedure");
+      assert.equal(config.rows[0].prosecdef, true);
+      assert.ok(config.rows[0].proconfig.includes("plan_cache_mode=force_custom_plan"));
+    }
     await db.exec(`delete from public.posts;
       insert into public.posts(id, author_id, created_at, like_count)
       select i, '${a}', '${now}'::timestamptz - i * interval '1 minute', i from generate_series(1,40) i;
@@ -32,8 +52,8 @@ export async function runHomeCommunitySplitCases(db: PGlite) {
         (904,'${a}','${now}',103,'["lg"]','[]',true,false),
         (905,'${a}','${now}'::timestamptz-interval '8 day',999,'["lg"]','[]',false,false),
         (906,'${b}','${now}',104,'["lg"]','[]',false,false),
-        (907,'${a}','${now}',105,'["lg"]','[]',false,true),
-        (908,'${b}','${now}',106,'["lg"]','[]',false,true),
+        (907,'${a}','${now}',105,'["lg"]','[]',${optimized},true),
+        (908,'${b}','${now}',106,'["lg"]','[]',${optimized},true),
         (909,'${a}','${now}'::timestamptz-interval '24 hour',107,'["lg"]','[]',false,false),
         (910,'${a}','${now}'::timestamptz-interval '24 hour 1 second',108,'["lg"]','[]',false,false),
         (911,'${a}','${now}',109,'[]','[]',false,false);`);
@@ -61,8 +81,16 @@ export async function runHomeCommunitySplitCases(db: PGlite) {
     assert.ok(global.includes(909), "24h exact boundary is inclusive");
     const authA = ids(await query("authenticated", a, latest()));
     const authB = ids(await query("authenticated", b, latest()));
-    assert.ok(authA.includes(907) && !authA.includes(908));
-    assert.ok(authB.includes(908) && !authB.includes(907));
-    console.log("PASS S2 24h boundary, global popularity, hidden/blocked filters, independent A/B RLS");
+    if (optimized) {
+      // Public-read production contract: hidden/blocked filters remain inside the RPC.
+      assert.ok(!authA.includes(907) && !authA.includes(908));
+      assert.ok(!authB.includes(907) && !authB.includes(908));
+      assert.deepEqual(authA, authB);
+      assert.deepEqual(await query("authenticated", a, latest("null, null", `{${a},${b}}`)), []);
+    } else {
+      assert.ok(authA.includes(907) && !authA.includes(908));
+      assert.ok(authB.includes(908) && !authB.includes(907));
+    }
+    console.log(`PASS S2 24h boundary, global popularity, hidden/blocked filters (${optimized ? "latest migration/public-read" : "legacy/private RLS"})`);
   } finally { await db.exec("rollback"); }
 }

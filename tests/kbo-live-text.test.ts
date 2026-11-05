@@ -1,0 +1,257 @@
+import assert from 'node:assert/strict';
+import { readFileSync } from 'node:fs';
+import { test } from 'node:test';
+import { loadKboLiveText, parseKboLiveText, type RedisCommand } from '../src/lib/crawler/kbo-live-text';
+process.env.NEXT_PUBLIC_SUPABASE_URL ||= 'https://smoke.local';
+process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY ||= 'smoke-anon-key';
+const gameId = '20261027HTSS0';
+const v1 = readFileSync(new URL('./fixtures/kbo-live/view1.html', import.meta.url), 'utf8');
+const v2 = readFileSync(new URL('./fixtures/kbo-live/view2.html', import.meta.url), 'utf8');
+
+test('official live fixture preserves innings, pending batter, pitches and actual stats', async () => {
+  const { parseInningRelays } = await import('../src/app/api/game-relay/route');
+  const snapshot = parseKboLiveText(gameId, v1, v2);
+  const innings = parseInningRelays(snapshot.rows);
+  assert.deepEqual(innings.map(i => [i.inning, i.half, i.plays.length]), [[1, 'top', 3], [1, 'bottom', 3], [2, 'top', 4], [2, 'bottom', 1]]);
+  assert.equal(innings[1].plays[2].batterName, '구자욱');
+  assert.equal(innings[1].plays[2].type, 'strikeout');
+  assert.equal(innings[1].plays[2].pitches?.length, 7);
+  assert.equal(innings[3].currentAtBat?.batterName, '최형우');
+  assert.equal(snapshot.boxScore.awayBatters.length, 9);
+  assert.ok(snapshot.boxScore.awayPitchers[0].pitchCount > 0);
+  assert.equal(snapshot.linescore.away.innings[8], null);
+});
+test('blank, truncated, changed tables fail closed instead of successful empty payload', () => {
+  assert.throws(() => parseKboLiveText(gameId, v1, ''));
+  assert.throws(() => parseKboLiveText(gameId, v1.replaceAll('tblScoreBoard2', 'changed'), v2));
+  assert.throws(() => parseKboLiveText(gameId, v1, v2.replaceAll('병살', 'changed')));
+});
+test('PO1 actual pinch hitters and defensive replacements retain all late-inning at-bats', async () => {
+  const { parseInningRelays } = await import('../src/app/api/game-relay/route');
+  const score = readFileSync(new URL('./fixtures/kbo-live/po1-view1.html', import.meta.url), 'utf8');
+  const text = readFileSync(new URL('./fixtures/kbo-live/po1-view2.html', import.meta.url), 'utf8');
+  const snapshot = parseKboLiveText('20261026HTSS0', score, text);
+  const innings = parseInningRelays(snapshot.rows);
+  const bottom8 = innings.find(i => i.inning === 8 && i.half === 'bottom')!;
+  const top9 = innings.find(i => i.inning === 9 && i.half === 'top')!;
+  assert.deepEqual(bottom8.plays.map(p => p.batterName), ['김영웅', '김현준', '김도환']);
+  assert.deepEqual(top9.plays.map(p => p.batterName), ['김태군', '박민', '박정우']);
+  assert.ok(bottom8.plays[1].pitches?.length);
+  assert.ok(top9.plays[0].pitches?.length);
+  assert.equal(bottom8.plays[1].batOrder, 8);
+  assert.equal(bottom8.plays[2].batOrder, 9);
+  assert.ok(snapshot.rows.flatMap(r => r.textOptions ?? []).filter(o => o.type === 8).every(o => !o.text.includes('교체')));
+  assert.ok(snapshot.rows.some(r => r.title.includes('대타 김도환 : 2루수 김상준')));
+});
+test('same-length scorer correction replaces original result', async () => {
+  const { parseInningRelays } = await import('../src/app/api/game-relay/route');
+  const corrected = parseInningRelays(parseKboLiveText(gameId, v1, v2.replace('구자욱 : 삼진 아웃', '구자욱 : 볼넷')).rows);
+  assert.equal(corrected[1].plays[2].type, 'walk');
+});
+function harness(fail = false) {
+  const cache = new Map<string, string>(); let fetches = 0;
+  const command: RedisCommand = async a => {
+    if (a[0] === 'GET') return cache.get(String(a[1])) ?? null;
+    if (a[0] === 'SET') { if (cache.has(String(a[1]))) return null; cache.set(String(a[1]), String(a[2])); return 'OK'; }
+    if (a[0] === 'EVAL') { assert.equal(cache.get(String(a[3])), a[5]); cache.set(String(a[4]), String(a[6])); return 'OK'; }
+    throw new Error('unexpected Redis command');
+  };
+  const fetcher = (async (url: string | URL | Request) => {
+    fetches++; if (fail) throw new Error('upstream unavailable');
+    return new Response(String(url).includes('View1') ? v1 : v2);
+  }) as typeof fetch;
+  return { command, fetcher, count: () => fetches };
+}
+test('100 simultaneous cold callers admit only one two-view collection; warm readers fetch zero', async () => {
+  const h = harness();
+  const results = await Promise.allSettled(Array.from({ length: 100 }, () => loadKboLiveText(gameId, { ...h, srId: '5' })));
+  assert.equal(results.filter(r => r.status === 'fulfilled').length, 100);
+  assert.equal(h.count(), 2);
+  await loadKboLiveText(gameId, { ...h, srId: '5' });
+  assert.equal(h.count(), 2);
+});
+test('failure keeps shared cooldown closed and Redis failure never bypasses admission', async () => {
+  const h = harness(true);
+  await assert.rejects(loadKboLiveText(gameId, { ...h, srId: '5' }));
+  await assert.rejects(loadKboLiveText(gameId, { ...h, srId: '5' }));
+  assert.equal(h.count(), 2);
+  const command: RedisCommand = async () => { throw new Error('Redis unavailable'); };
+  await assert.rejects(loadKboLiveText(gameId, { ...h, command, srId: '5' }));
+  assert.equal(h.count(), 2);
+});
+test('caller deadline is shared by Redis and both KBO views without another timer', async (t) => {
+  const h = harness(); const ac = new AbortController();
+  const timeout = t.mock.method(AbortSignal, 'timeout', () => { throw new Error('unexpected nested deadline'); });
+  const command: RedisCommand = async (args, signal) => {
+    assert.equal(signal, ac.signal);
+    return h.command(args, signal);
+  };
+  const fetcher: typeof fetch = async (url, init) => {
+    assert.equal(init?.signal, ac.signal);
+    return h.fetcher(url, init);
+  };
+  await loadKboLiveText(gameId, { command, fetcher, srId: '5', signal: ac.signal });
+  assert.equal(h.count(), 2);
+  assert.equal(timeout.mock.callCount(), 0);
+});
+test('standalone collection retains one 2800ms deadline shared across all IO', async (t) => {
+  const h = harness(); const ac = new AbortController();
+  const timeout = t.mock.method(AbortSignal, 'timeout', (ms: number) => {
+    assert.equal(ms, 2800);
+    return ac.signal;
+  });
+  const command: RedisCommand = async (args, signal) => {
+    assert.equal(signal, ac.signal);
+    return h.command(args, signal);
+  };
+  const fetcher: typeof fetch = async (url, init) => {
+    assert.equal(init?.signal, ac.signal);
+    return h.fetcher(url, init);
+  };
+  await loadKboLiveText(gameId, { command, fetcher, srId: '5' });
+  assert.equal(timeout.mock.callCount(), 1);
+});
+test('shared Redis isolates production, preview and local snapshots and admission keys', async () => {
+  const original = process.env.VERCEL_ENV;
+  const h = harness();
+  const keys = new Set<string>();
+  const command: RedisCommand = async (args, signal) => {
+    if (args[0] === 'GET' || args[0] === 'SET') keys.add(String(args[1]));
+    if (args[0] === 'EVAL') {
+      assert.equal(args[3], `${args[4]}:admission`);
+      keys.add(String(args[3])); keys.add(String(args[4]));
+    }
+    return h.command(args, signal);
+  };
+  try {
+    for (const environment of ['production', 'preview', undefined]) {
+      if (environment === undefined) delete process.env.VERCEL_ENV;
+      else process.env.VERCEL_ENV = environment;
+      await loadKboLiveText(gameId, { ...h, command, srId: '5' });
+      await loadKboLiveText(gameId, { ...h, command, srId: '5' });
+    }
+    assert.equal(h.count(), 6, 'each environment collects its own two views; warm reads do not collect');
+    assert.deepEqual([...keys].sort(), ['production', 'preview', 'development'].flatMap(e => [
+      `kbo:live-text:v1:${e}:${gameId}`, `kbo:live-text:v1:${e}:${gameId}:admission`,
+    ]).sort());
+    process.env.VERCEL_ENV = 'invalid';
+    await assert.rejects(loadKboLiveText(gameId, { ...h, command, srId: '5' }), /Invalid KBO cache environment/);
+  } finally {
+    if (original === undefined) delete process.env.VERCEL_ENV;
+    else process.env.VERCEL_ENV = original;
+  }
+});
+test('aborted collection cannot publish snapshot', async () => {
+  const h = harness(); const ac = new AbortController();
+  const fetcher = (async () => { ac.abort(); return new Response(v2); }) as typeof fetch;
+  await assert.rejects(loadKboLiveText(gameId, { ...h, fetcher, srId: '5', signal: ac.signal }));
+});
+test('wrong-date HTML and old/mismatched cache are rejected', async () => {
+  assert.throws(() => parseKboLiveText(gameId, v1, v2.replace('2026-10-27', '2026-10-26')));
+  const snapshot = parseKboLiveText(gameId, v1, v2);
+  for (const cached of [{ ...snapshot, updatedAt: '2026-01-01T00:00:00Z' }, { ...snapshot, gameId: '20261026HTSS0' }]) {
+    const command: RedisCommand = async a => a[0] === 'GET' ? JSON.stringify(cached) : null;
+    await assert.rejects(loadKboLiveText(gameId, { command, srId: '5' }));
+  }
+});
+test('expired admission cannot return or persist a late successful snapshot', async () => {
+  const h = harness();
+  const command: RedisCommand = async (args, signal) => args[0] === 'EVAL' ? null : h.command(args, signal);
+  await assert.rejects(loadKboLiveText(gameId, { ...h, command, srId: '5' }), /publish failed/);
+});
+
+test('busy reader waits for the collector snapshot without another admission or upstream call', async () => {
+  const snapshot = parseKboLiveText(gameId, v1, v2);
+  let gets = 0; let admits = 0; let fetches = 0;
+  const command: RedisCommand = async args => {
+    if (args[0] === 'GET') return ++gets >= 3 ? JSON.stringify(snapshot) : null;
+    if (args[0] === 'SET') { admits++; return null; }
+    throw new Error('follower must not publish');
+  };
+  const fetcher: typeof fetch = async () => { fetches++; throw new Error('no duplicate collection'); };
+  const result = await loadKboLiveText(gameId, { command, fetcher, srId: '5' });
+  assert.deepEqual(result, snapshot);
+  assert.equal(admits, 1); assert.equal(fetches, 0);
+});
+test('busy reader respects caller abort and never returns a later snapshot', async () => {
+  const ac = new AbortController(); let gets = 0;
+  const command: RedisCommand = async args => {
+    if (args[0] === 'GET') { gets++; return null; }
+    return null;
+  };
+  const timer = setTimeout(() => ac.abort(), 30);
+  try {
+    await assert.rejects(loadKboLiveText(gameId, { command, srId: '5', signal: ac.signal }), { name: 'AbortError' });
+    assert.equal(gets, 2);
+  } finally { clearTimeout(timer); }
+});
+
+test('ten-minute upstream outage preserves last-good body and original observation time', async () => {
+  const snapshot = { ...parseKboLiveText(gameId, v1, v2), updatedAt: new Date(Date.now() - 10 * 60_000).toISOString() };
+  let published = false;
+  const command: RedisCommand = async args => {
+    if (args[0] === 'GET') return JSON.stringify(snapshot);
+    if (args[0] === 'SET') return 'OK';
+    if (args[0] === 'EVAL') published = true;
+    return null;
+  };
+  const fetcher = (async () => { throw new Error('upstream offline'); }) as typeof fetch;
+  const result = await loadKboLiveText(gameId, { command, fetcher, srId: '5', allowStaleOnError: true });
+  assert.deepEqual(result, snapshot);
+  assert.equal(published, false, 'failed collection never refreshes stored TTL/time');
+  await assert.rejects(loadKboLiveText(gameId, { command, fetcher, srId: '5' }), /offline/,
+    'strict consumers must not silently accept stale snapshots');
+});
+
+test('cold, wrong-game, future and over-retention snapshots are never successful fallback', async () => {
+  const snapshot = parseKboLiveText(gameId, v1, v2);
+  for (const value of [null, { ...snapshot, gameId: '20261026HTSS0' },
+    { ...snapshot, updatedAt: new Date(Date.now() + 60_000).toISOString() },
+    { ...snapshot, updatedAt: new Date(Date.now() - 25 * 3600_000).toISOString() }]) {
+    const command: RedisCommand = async args => args[0] === 'GET' ? (value && JSON.stringify(value)) : 'OK';
+    const fetcher = (async () => { throw new Error('offline'); }) as typeof fetch;
+    await assert.rejects(loadKboLiveText(gameId, { command, fetcher, srId: '5', allowStaleOnError: true }));
+  }
+});
+
+test('new successful collection replaces stale snapshot and retains it beyond freshness window', async () => {
+  const old = { ...parseKboLiveText(gameId, v1, v2), updatedAt: new Date(Date.now() - 600_000).toISOString() };
+  let stored = JSON.stringify(old);
+  const command: RedisCommand = async args => {
+    if (args[0] === 'GET') return stored;
+    if (args[0] === 'SET') return 'OK';
+    assert.match(String(args[1]), /'PX',86400000/, 'durable last-good must survive the 10-second freshness expiry');
+    stored = String(args[6]);
+    return 'OK';
+  };
+  const fetcher = (async url => new Response(String(url).includes('View1') ? v1 : v2)) as typeof fetch;
+  const recovered = await loadKboLiveText(gameId, { command, fetcher, srId: '5', allowStaleOnError: true });
+  assert.ok(Date.parse(recovered.updatedAt) > Date.parse(old.updatedAt));
+  assert.deepEqual(JSON.parse(stored), recovered);
+});
+
+
+test('first-inning unplayed totals and boxscore counts accept placeholders but reject malformed numbers', () => {
+  const tr = (values: string[]) => `<tr>${values.map(v => `<td>${v}</td>`).join('')}</tr>`;
+  const score = (value: string) => `<table id="tblScoreBoard2"><tbody>${tr(['0', ...Array(8).fill('-')])}${tr(Array(9).fill('-'))}</tbody></table>
+    <table id="tblScoreBoard3"><tbody>${tr(['1', '2', '0', '0'])}${tr([value, '', '-', '0'])}</tbody></table>`;
+  const player = (header: string, name: string, values: string[]) => `<table><thead><tr><th>${header}</th></tr></thead><tbody>${tr([name, ...values])}</tbody></table>`;
+  const text = (value: string) => `<p class="ground">2026-10-27</p><span id="rptLiveText1_spanLiveText_0">1회초 KIA 공격</span>` +
+    [0, 1].map(i => `<table><caption>팀 타자</caption><tbody>${tr(['1', '8', `타자${i}`])}</tbody></table>` +
+      player('병살', `타자${i}`, [value, '', '-', '', '-', '', '-', '', '-', '', '-']) +
+      player('투구', `투수${i}`, ['0', value, '', '-', '', '-', '', '-', '', '-', ''])).join('');
+  const snapshot = parseKboLiveText(gameId, score('-'), text('-'));
+  assert.deepEqual(snapshot.linescore.home, { innings: Array(9).fill(null), R: 0, H: 0, E: 0 });
+  assert.equal(snapshot.linescore.away.R, 1);
+  assert.equal(snapshot.linescore.away.H, 2);
+  for (const batter of [...snapshot.boxScore.awayBatters, ...snapshot.boxScore.homeBatters]) {
+    for (const key of ['atBats', 'runs', 'hits', 'hr', 'rbi', 'sb', 'bb', 'so'] as const) assert.equal(batter[key], 0);
+  }
+  for (const pitcher of [...snapshot.boxScore.awayPitchers, ...snapshot.boxScore.homePitchers]) {
+    for (const key of ['battersFaced', 'pitchCount', 'atBats', 'hits', 'hr', 'walks', 'strikeouts', 'runs', 'earnedRuns'] as const) assert.equal(pitcher[key], 0);
+  }
+  for (const invalid of ['X', 'oops', '-1', '1.5']) {
+    assert.throws(() => parseKboLiveText(gameId, score(invalid), text('-')), /numeric schema/);
+    assert.throws(() => parseKboLiveText(gameId, score('-'), text(invalid)), /numeric schema/);
+  }
+});

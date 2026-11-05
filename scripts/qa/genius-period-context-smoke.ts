@@ -23,7 +23,7 @@ const EVIDENCE: RagEvidence = {
   revision: "fixture", sectionPath: "홀드", asOf: "2026-09-07", sourceGrade: "tier1",
 };
 const raw = (answer: string, official: boolean): LlmResult => ({
-  text: JSON.stringify({ status: official ? "GROUNDED" : "BASEBALL_RULE_TERM", answer }), inputTokens: 1, outputTokens: 1,
+  text: JSON.stringify({ calendarClaims: [], status: official ? "GROUNDED" : "BASEBALL_RULE_TERM", answer }), inputTokens: 1, outputTokens: 1,
 });
 const row = (question: string, answer = SEASON): PreviousTurnRow => ({
   question, answer, jobSource: "llm", answeredAt: "2026-09-07T01:00:00Z", currentCreatedAt: "2026-09-07T01:00:01Z",

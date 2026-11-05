@@ -167,7 +167,7 @@ function makeDeps(overrides: Partial<QaDeps> = {}): {
     },
     searchOfficialRag: async () => { calls.officialSearch++; return []; },
     callOfficialRagLlm: async () => ({
-      text: JSON.stringify({ status: RAG_GROUNDED_SENTINEL, answer: "공식 조문 답변입니다." }),
+      text: JSON.stringify({ calendarClaims: [], status: RAG_GROUNDED_SENTINEL, answer: "공식 조문 답변입니다." }),
       inputTokens: 1,
       outputTokens: 1,
     }),

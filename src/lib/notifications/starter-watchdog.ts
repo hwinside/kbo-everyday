@@ -125,7 +125,11 @@ export async function runStarterWatchdog(args: {
   deadlineAtMs: number;
   deps?: Partial<StarterWatchdogDeps>;
 }): Promise<StarterWatchdogResult> {
-  const fetchGames = args.deps?.fetchGames ?? realFetchGames;
+  const fetchGames = args.deps?.fetchGames ?? (async (date: string) => {
+    const games = await realFetchGames(date);
+    const { filterNeededPostseasonGames } = await import("@/lib/postseason/schedule");
+    return filterNeededPostseasonGames(games, date, g => g.gameId);
+  });
   const fetchScheduleWitness = args.deps?.fetchScheduleWitness ?? realFetchScheduleWitness;
   const observeGames = args.deps?.observeGames ?? realObserveGames;
   const openSnapshot = args.deps?.openSnapshot ?? realOpenSnapshot;

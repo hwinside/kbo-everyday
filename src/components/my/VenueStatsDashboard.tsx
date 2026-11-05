@@ -1192,6 +1192,7 @@ export default function VenueStatsDashboard() {
               <span className="truncate text-[9px] text-white/55">종료 {scope.coverage.finalGames}경기</span>
               <ChevronDown size={14} className={evidenceOpen ? "rotate-180" : ""} />
             </button>
+            <p className="mt-1.5 text-[10px] leading-relaxed text-white/60">성적 비교는 정규시즌 기준이며 포스트시즌 직관은 비교 집계에서 제외돼요. 직관일기는 그대로 남아요.</p>
             {evidenceOpen && (
               <>
                 <p className="mt-1.5 text-[10px] leading-relaxed text-white/70">{coverageCaption(scope)}</p>

@@ -49,6 +49,8 @@ export async function GET(
       count: homeGames.length,
       games: homeGames.map((g) => ({
         gameId: g.gameId,
+        srId: g.srId,
+        gameLabel: g.gameLabel,
         date: g.date,
         time: g.time,
         homeTeamId: g.homeTeamId,
@@ -58,7 +60,7 @@ export async function GET(
         status: g.status,
       })),
     }, {
-      headers: { "Cache-Control": "public, s-maxage=3600, stale-while-revalidate=7200" },
+      headers: { "Cache-Control": "public, s-maxage=300, stale-while-revalidate=600" },
     });
   } catch (e: unknown) {
     return NextResponse.json({ error: (e as Error).message }, { status: 500 });

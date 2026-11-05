@@ -25,40 +25,35 @@ export default function NextGameBanner({ team }: NextGameBannerProps) {
   const [loading, setLoading] = useState(true);
 
   useEffect(() => {
+    const controller = new AbortController();
+    setGame(null);
+    setLoading(true);
     async function findNextGame() {
       const today = new Date();
-      for (let i = 0; i < 7; i++) {
-        const d = new Date(today);
-        d.setDate(d.getDate() + i);
-        const dateStr = d.toLocaleDateString("sv-SE", { timeZone: "Asia/Seoul" }).replace(/-/g, "");
-        try {
-          const res = await fetch(`/api/games?date=${dateStr}`);
-          if (!res.ok) continue;
-          const data = await res.json();
-          const games = data.games || data;
-          const match = (Array.isArray(games) ? games : []).find(
-            (g: { awayTeamId: number; homeTeamId: number; status: string }) =>
-              (g.awayTeamId === team.id || g.homeTeamId === team.id) &&
-              g.status !== "cancelled" && g.status !== "final"
-          );
-          if (match) {
-            const isHome = match.homeTeamId === team.id;
-            setGame({
-              gameId: match.gameId,
-              date: match.date,
-              time: match.time,
-              opponentId: isHome ? match.awayTeamId : match.homeTeamId,
-              home: isHome,
-              stadium: match.stadium,
-              starterName: isHome ? match.homeStarterName : match.awayStarterName,
-            });
-            break;
-          }
-        } catch { /* skip */ }
-      }
-      setLoading(false);
+      const last = new Date(today);
+      last.setDate(last.getDate() + 6);
+      const apiDate = (date: Date) => date.toLocaleDateString("sv-SE", { timeZone: "Asia/Seoul" }).replace(/-/g, "");
+      try {
+        const res = await fetch(`/api/games/next?from=${apiDate(today)}&to=${apiDate(last)}&teamId=${team.id}`, { signal: controller.signal });
+        if (!res.ok) return;
+        const { game: match } = await res.json();
+        if (match && !controller.signal.aborted) {
+          const isHome = match.homeTeamId === team.id;
+          setGame({
+            gameId: match.gameId,
+            date: match.date,
+            time: match.time,
+            opponentId: isHome ? match.awayTeamId : match.homeTeamId,
+            home: isHome,
+            stadium: match.stadium,
+            starterName: isHome ? match.homeStarterName : match.awayStarterName,
+          });
+        }
+      } catch { /* best-effort schedule banner */ }
+      finally { if (!controller.signal.aborted) setLoading(false); }
     }
-    findNextGame();
+    void findNextGame();
+    return () => controller.abort();
   }, [team.id]);
 
   if (loading || !game) return null;

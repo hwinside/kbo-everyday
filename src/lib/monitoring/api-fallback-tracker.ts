@@ -30,10 +30,13 @@ const LEGACY_TELEGRAM_TIMEOUT_MS = 8000;
 // 쓰는데, in-memory cooldown 은 서버리스 인스턴스별이라 KBO 열화 중 트래픽이 인스턴스마다 첫 알림을
 // 발사해 텔레그램이 폭주한다(kbo-games 와 동일 패턴). 이벤트 저장은 유지하되 durable tracker 로
 // 전환하기 전까지 legacy Telegram fanout 만 차단한다.
+// naver-standings 도 같은 패턴으로 Naver 타임아웃 때 반복 알림을 내고, 실패 시 KBO HTML 폴백으로
+// 순위 제공이 계속되므로 알림만 차단한다(이벤트 저장은 유지).
 const LEGACY_TELEGRAM_SUPPRESSED_APIS = new Set([
   "kbo-games",
   "kbo-player-stats-batter",
   "kbo-player-stats-pitcher",
+  "naver-standings",
 ]);
 
 export function getRecentFallbackBufferSizeForTest(): number {

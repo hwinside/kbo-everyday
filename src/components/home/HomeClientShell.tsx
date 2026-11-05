@@ -1,4 +1,6 @@
 "use client";
+import PostseasonLadder from "./PostseasonLadder";
+import { installForegroundTask } from "@/lib/foreground-task";
 
 import { useState, useEffect, useCallback, useMemo, useRef } from "react";
 import { useRouter } from "next/navigation";
@@ -14,7 +16,9 @@ import LoginSheet from "@/components/auth/LoginSheet";
 import AppDownloadBanner from "@/components/ui/AppDownloadBanner";
 import { TEAMS, getTeamById, isAllStarGameId } from "@/lib/constants/teams";
 import { useLiveGame, type LiveGameData } from "@/lib/hooks/useLiveGame";
+import { isNativeRuntime } from "@/lib/capacitor/platform";
 import { startHomeNextGamePoller } from "@/lib/polling/home-next-game-poller";
+import { isVerifiedEmptyNextGameResult } from "@/lib/games/next-game-scan";
 import { getTeamBorderColorById } from "@/lib/utils/team-border-color";
 import { getTeamBgColorById, getTeamColor } from "@/lib/utils/team";
 import { useHomeInit, type HomeGame } from "@/hooks/useHomeInit";
@@ -24,7 +28,8 @@ import { useNewsPhotoFilter } from "@/hooks/useNewsPhotoFilter";
 import { isPhotoArticle } from "@/lib/news-relevance";
 import type { HomeSectionKey } from "@/lib/store/home-sections-pref";
 import type { HomeCommunityFeedMode } from "@/lib/supabase/useHomePopularFeed";
-import { setWidgetFavPlayers, setWidgetMyTeam, updateGameWidget } from "@/lib/capacitor/game-notification";
+import { widgetResultPitchers } from "@/lib/widget-result-pitchers";
+import { clearGameWidget, setWidgetFavPlayers, setWidgetMyTeam, updateGameWidget } from "@/lib/capacitor/game-notification";
 import { writeHomeWidgetSnapshot, type HomeWidgetGame } from "@/lib/native-live-activity";
 import { latestRelayLine } from "@/lib/notifications/relay-line";
 import HeaderAvatar from "@/components/home/HeaderAvatar";
@@ -38,11 +43,13 @@ import LiveGameBanner from "@/components/home/LiveGameBanner";
 import AIAnalysis from "@/components/game/AIAnalysis";
 
 // Lazy load heavy sections
-import { lazy, Suspense } from "react";
-const NewsCarousel = lazy(() => import("@/components/news/NewsCarousel"));
-const HomeHighlights = lazy(() => import("@/components/home/HomeHighlights"));
-const WhatsNewCard = lazy(() => import("@/components/home/WhatsNewCard"));
-const CommunityLatestPosts = lazy(() => import("@/components/home/CommunityLatestPosts"));
+import { lazy } from "react";
+import { retryChunkImport } from "@/lib/retry-chunk-import";
+import HomeSectionBoundary from "./HomeSectionBoundary";
+import WhatsNewCard from "./WhatsNewCard";
+const NewsCarousel = lazy(() => retryChunkImport(() => import("@/components/news/NewsCarousel")));
+const HomeHighlights = lazy(() => retryChunkImport(() => import("@/components/home/HomeHighlights")));
+const CommunityLatestPosts = lazy(() => retryChunkImport(() => import("@/components/home/CommunityLatestPosts")));
 
 const container = {
   hidden: {},
@@ -80,6 +87,8 @@ const ID_TO_KBO_CODE: Record<number, string> = {
 };
 
 interface ApiGameData {
+  srId?: string;
+  gameLabel?: string;
   gameId: string;
   awayTeamId: number;
   homeTeamId: number;
@@ -96,6 +105,7 @@ interface ApiGameData {
   homeStarterName?: string | null;
   winPitcher?: string | null;
   losePitcher?: string | null;
+  savePitcher?: string | null;
   broadcastChannels?: HomeGame["broadcastChannels"];
 }
 
@@ -147,6 +157,8 @@ function formatApiDate(date: string): string {
 function mapApiGame(g: ApiGameData): HomeGame {
   return {
     id: g.gameId,
+    srId: g.srId,
+    gameLabel: g.gameLabel,
     homeTeamId: g.homeTeamId,
     awayTeamId: g.awayTeamId,
     time: g.time,
@@ -161,6 +173,7 @@ function mapApiGame(g: ApiGameData): HomeGame {
     homeStarterName: g.homeStarterName ?? null,
     winPitcher: g.winPitcher ?? null,
     losePitcher: g.losePitcher ?? null,
+    savePitcher: g.savePitcher ?? null,
     broadcastChannels: g.broadcastChannels,
   };
 }
@@ -274,21 +287,7 @@ export default function HomeClientShell({ initialGames, initialLiveGames, initia
       router.refresh();
     };
 
-    if (gameTime) {
-      maybeRefresh();
-    }
-
-    const onFocus = () => maybeRefresh();
-    const onVisibilityChange = () => {
-      if (document.visibilityState === "visible") maybeRefresh();
-    };
-
-    window.addEventListener("focus", onFocus);
-    document.addEventListener("visibilitychange", onVisibilityChange);
-    return () => {
-      window.removeEventListener("focus", onFocus);
-      document.removeEventListener("visibilitychange", onVisibilityChange);
-    };
+    return installForegroundTask(maybeRefresh, gameTime);
   }, [router, gameTime]);
 
   const myTeam = myTeamId ? getTeamById(myTeamId) : null;
@@ -413,6 +412,33 @@ export default function HomeClientShell({ initialGames, initialLiveGames, initia
       cancel: (id) => window.clearTimeout(id),
       now: () => performance.now(),
       dateAtOffset: formatKSTDateOffset,
+      fetchNext: async (signal) => {
+        const from = formatApiDate(formatKSTDateOffset(1));
+        const to = formatApiDate(formatKSTDateOffset(14));
+        const res = await fetch(`/api/games/next?from=${from}&to=${to}&teamId=${teamId}`, { signal });
+        if (!res.ok) throw new Error(`Next game lookup: ${res.status}`);
+        const data = await res.json();
+        const date = data.date as string | undefined;
+        if (!data.game && !isVerifiedEmptyNextGameResult(data)) {
+          throw new Error("Next-game absence not verified: partial or invalid scan");
+        }
+        if (!data.game && !isOvernight) {
+          // Initial todayGames may still be loading. Confirm today's absence too,
+          // so a future-empty result cannot clear a current live/final widget.
+          const todayDate = formatKSTDateOffset(0);
+          const todayResponse = await fetch(`/api/games?date=${formatApiDate(todayDate)}`, { signal });
+          if (!todayResponse.ok) throw new Error("Today's schedule not verified");
+          const todayData = await todayResponse.json();
+          if (!Array.isArray(todayData.games)) throw new Error("Invalid today's schedule");
+          const todayGame = (todayData.games as ApiGameData[]).map(mapApiGame)
+            .find(g => g.homeTeamId === teamId || g.awayTeamId === teamId);
+          if (todayGame) return { game: todayGame, date: todayDate };
+        }
+        return {
+          game: data.game ? mapApiGame(data.game as ApiGameData) : null,
+          date: date ? `${date.slice(0, 4)}-${date.slice(4, 6)}-${date.slice(6, 8)}` : undefined,
+        };
+      },
       fetchGames: async (date, signal) => {
         const res = await fetch(`/api/games?date=${formatApiDate(date)}`, { signal });
         if (!res.ok) throw new Error(`Next game lookup: ${res.status}`);
@@ -422,9 +448,11 @@ export default function HomeClientShell({ initialGames, initialLiveGames, initia
       findGame: (games) => findWidgetGame(games, teamId),
       onResult: (candidate, date) => {
         setNextWidgetGame(candidate ? { ...candidate, dateISO: date } : null);
+        // Only a successful empty lookup may clear stale native data; not transport failure.
+        if (!candidate && !isOvernight) void clearGameWidget();
       },
     });
-  }, [myTeamId, todayGames]);
+  }, [myTeamId, todayGames, isOvernight]);
 
   // 최애선수 목록 → 네이티브 prefs 동기화(선수 카드 위젯 config 선택 목록)
   useEffect(() => {
@@ -480,6 +508,7 @@ export default function HomeClientShell({ initialGames, initialLiveGames, initia
     const androidNext =
       rolloverNextGame
         ? {
+            gameId: rolloverNextGame.id,
             away: ID_TO_KBO_CODE[rolloverNextGame.awayTeamId] ?? "",
             home: ID_TO_KBO_CODE[rolloverNextGame.homeTeamId] ?? "",
             stadium: rolloverNextGame.stadium ?? "",
@@ -498,6 +527,7 @@ export default function HomeClientShell({ initialGames, initialLiveGames, initia
       status,
       gameId: widgetGame.id,
       next: androidNext,
+      resultPitchers: widgetResultPitchers(widgetGame),
       // 예정/종료 경기는 라이브 정보가 없으므로 전부 비워 라이브 행 자체를 숨긴다
       // (빈 다이아몬드 + "O ○○○"가 미시작/종료 경기에 떠서 완성도 떨어져 보이던 문제).
       pitcher: hideLive ? "" : (widgetGame.currentPitcher ?? ""),
@@ -520,37 +550,32 @@ export default function HomeClientShell({ initialGames, initialLiveGames, initia
   // 위젯이 이미 미래 예정 경기를 보여주는 중이면(rolloverBase 없음) 롤오버 불필요.
   const rolloverBase = (isOvernight && overnightGame) ? overnightGame : myTeamGame;
   useEffect(() => {
+    // This look-ahead only feeds native widget snapshots, never the web UI.
+    if (!isNativeRuntime()) return;
     if (!myTeamId || !rolloverBase) {
       setRolloverNextGame(null);
       return;
     }
     const teamId = myTeamId;
     const excludeId = rolloverBase.id;
-    let cancelled = false;
+    const controller = new AbortController();
     (async () => {
-      // offset 0(오늘)부터 스캔 — 전날 결과(overnight) 표시 중엔 오늘 경기가 곧 다음 예정이다.
-      for (let offset = 0; offset <= 14; offset += 1) {
-        const date = formatKSTDateOffset(offset);
-        try {
-          const res = await fetch(`/api/games?date=${formatApiDate(date)}`);
-          if (!res.ok) continue;
-          const data = await res.json();
-          const games = ((data.games ?? []) as ApiGameData[]).map(mapApiGame);
-          const candidate = games.find(
-            (g) => (g.homeTeamId === teamId || g.awayTeamId === teamId) &&
-              g.status === "scheduled" && g.id !== excludeId,
-          );
-          if (candidate) {
-            if (!cancelled) setRolloverNextGame({ ...candidate, dateISO: date });
-            return;
-          }
-        } catch {
-          /* 다음 경기 조회 실패는 무시 — 롤오버 폴백만 비활성 */
-        }
-      }
-      if (!cancelled) setRolloverNextGame(null);
+      try {
+        // Preserve today's game through D+14, scheduled-only and exclude the current game.
+        const from = formatApiDate(formatKSTDateOffset(0));
+        const to = formatApiDate(formatKSTDateOffset(14));
+        const res = await fetch(`/api/games/next?from=${from}&to=${to}&teamId=${teamId}&mode=scheduled&excludeId=${encodeURIComponent(excludeId)}`, { signal: controller.signal });
+        if (!res.ok) return;
+        const data = await res.json();
+        if (controller.signal.aborted) return;
+        const date = data.date as string | undefined;
+        setRolloverNextGame(data.game && date ? {
+          ...mapApiGame(data.game as ApiGameData),
+          dateISO: `${date.slice(0, 4)}-${date.slice(4, 6)}-${date.slice(6, 8)}`,
+        } : null);
+      } catch { if (!controller.signal.aborted) setRolloverNextGame(null); }
     })();
-    return () => { cancelled = true; };
+    return () => controller.abort();
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [myTeamId, rolloverBase?.id]);
 
@@ -558,7 +583,7 @@ export default function HomeClientShell({ initialGames, initialLiveGames, initia
   // 라이브 경기가 없을 때 *다음 예정 경기*가 위젯에 뜨게 하는 핵심 fallback 경로.
   // (네이티브 iOS 외엔 no-op.) 스코어/이닝/주자 등 변할 때만 재기록되도록 signature로 dep.
   const widgetSig = widgetGame
-    ? `${widgetGame.id}|${widgetGame.status}|${widgetGame.awayScore}|${widgetGame.homeScore}|${widgetGame.inning ?? ""}|${widgetGame.outs ?? ""}|${widgetGame.runner1b ? 1 : 0}${widgetGame.runner2b ? 1 : 0}${widgetGame.runner3b ? 1 : 0}|${widgetGame.currentPitcher ?? ""}|${widgetGame.currentBatter ?? ""}|${widgetGame.awayStarterName ?? ""}|${widgetGame.homeStarterName ?? ""}`
+    ? `${widgetGame.id}|${widgetGame.status}|${widgetGame.awayScore}|${widgetGame.homeScore}|${widgetGame.inning ?? ""}|${widgetGame.outs ?? ""}|${widgetGame.runner1b ? 1 : 0}${widgetGame.runner2b ? 1 : 0}${widgetGame.runner3b ? 1 : 0}|${widgetGame.currentPitcher ?? ""}|${widgetGame.currentBatter ?? ""}|${widgetGame.awayStarterName ?? ""}|${widgetGame.homeStarterName ?? ""}|${widgetResultPitchers(widgetGame)}`
     : "";
   const rolloverSig = rolloverNextGame
     ? `${rolloverNextGame.id}|${rolloverNextGame.dateISO ?? ""}|${rolloverNextGame.time}|${rolloverNextGame.awayStarterName ?? ""}|${rolloverNextGame.homeStarterName ?? ""}`
@@ -609,6 +634,7 @@ export default function HomeClientShell({ initialGames, initialLiveGames, initia
       if (cancelled) return;
       void writeHomeWidgetSnapshot(myTeamId, {
       gameId: widgetGame.id,
+      resultPitchers: widgetResultPitchers(widgetGame),
       awayTeamId: widgetGame.awayTeamId,
       homeTeamId: widgetGame.homeTeamId,
       status: widgetGame.status,
@@ -744,9 +770,9 @@ export default function HomeClientShell({ initialGames, initialLiveGames, initia
           각 섹션은 마이페이지 토글(sections.*)로 on/off. 팀카드는 S3에서 삽입. */}
 
       {/* What's New Card (토글/순서 대상 아님 — 팀카드 바로 위 고정) */}
-      <Suspense fallback={null}>
+      <HomeSectionBoundary fallback={null}>
         <WhatsNewCard />
-      </Suspense>
+      </HomeSectionBoundary>
 
       {/* 올스타전 크관 연결 경기카드 — 배포 즉시~경기 종료 전까지 팀카드 위 노출 (목업 v2 승인, 2026-07-11) */}
       {(() => {
@@ -755,6 +781,8 @@ export default function HomeClientShell({ initialGames, initialLiveGames, initia
         const allStarLive = allLiveData.find((g) => g.gameId === allStarGame.id);
         return <AllStarGameCard game={allStarGame} live={allStarLive} />;
       })()}
+
+      <PostseasonLadder />
 
       {/* 팀 카드 (필수, 토글 없음) — 경기카드(MyTeamHero)를 안에 종속 임베드(④=B) */}
       {myTeam && (
@@ -776,9 +804,9 @@ export default function HomeClientShell({ initialGames, initialLiveGames, initia
             return sections.news && newsToShow.length > 0 ? (
               <div key={key} className="mb-3">
                 <div className="-mx-5">
-                  <Suspense fallback={<SectionSkeleton height={180} />}>
+                  <HomeSectionBoundary fallback={<SectionSkeleton height={180} />}>
                     <NewsCarousel news={newsToShow.slice(0, 10)} />
-                  </Suspense>
+                  </HomeSectionBoundary>
                 </div>
               </div>
             ) : null;
@@ -786,19 +814,19 @@ export default function HomeClientShell({ initialGames, initialLiveGames, initia
           case "communityLatest":
             return sections.communityLatest ? (
               <div key={key} className="mb-3">
-                <Suspense fallback={null}>
+                <HomeSectionBoundary fallback={null}>
                   <CommunityLatestPosts myTeamId={myTeamId} refreshNonce={refreshNonce}
                     showActions={lastCommunitySection === key} onVisibilityChange={onCommunityVisibilityChange} />
-                </Suspense>
+                </HomeSectionBoundary>
               </div>
             ) : null;
           case "communityPopular":
             return sections.communityPopular ? (
               <div key={key} className="mb-3">
-                <Suspense fallback={null}>
+                <HomeSectionBoundary fallback={null}>
                   <CommunityLatestPosts myTeamId={myTeamId} refreshNonce={refreshNonce} mode="popular"
                     showActions={lastCommunitySection === key} onVisibilityChange={onCommunityVisibilityChange} />
-                </Suspense>
+                </HomeSectionBoundary>
               </div>
             ) : null;
           case "favPlayers":
@@ -810,9 +838,9 @@ export default function HomeClientShell({ initialGames, initialLiveGames, initia
           case "shorts":
             return sections.shorts ? (
               <div key={key} className="mb-3">
-                <Suspense fallback={<SectionSkeleton height={250} />}>
+                <HomeSectionBoundary fallback={<SectionSkeleton height={250} />}>
                   <HomeHighlights team={myTeamId ? TEAMS.find(t => t.id === myTeamId)?.shortName || null : null} refreshNonce={refreshNonce} />
-                </Suspense>
+                </HomeSectionBoundary>
               </div>
             ) : null;
           case "liveOtherTeams":

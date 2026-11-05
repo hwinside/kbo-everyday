@@ -48,7 +48,7 @@ for (const signal of ["SIGINT", "SIGTERM"]) {
 const MUTATIONS = [
   {
     name: "N-A fail-close 제거 (원래 사고 재현)",
-    from: `  if (resolveUnboundName(question, players) !== null) return "name_suggest";`,
+    from: `  if (resolveUnboundName(question, players, glossary) !== null) return "name_suggest";`,
     to: `  if (false) return "name_suggest";`,
     expect: "source=",
   },
@@ -65,8 +65,10 @@ const MUTATIONS = [
   },
   {
     name: "N-C 조사 분해 제거 (`임창규는 어느 팀이야` 누수)",
-    from: `    for (const token of stripTokenSuffix(raw)) {`,
-    to: `    for (const token of [raw]) {`,
+    from: `    for (const token of stripTokenSuffix(raw)) {
+      const suggestion = MEASURED_TYPO_ALIASES.get(token);`,
+    to: `    for (const token of [raw]) {
+      const suggestion = MEASURED_TYPO_ALIASES.get(token);`,
     expect: "source=",
   },
   {
@@ -101,13 +103,13 @@ const MUTATIONS = [
   },
   {
     name: "N-I 문구 생성 fail-close 제거 (라우팅만 하고 문구가 없다)",
-    from: `        ? (unbound === null ? UNCLEAR_ANSWER : NAME_SUGGEST_ANSWER(unbound.suggestion))`,
+    from: "        ? (unbound === null ? UNCLEAR_ANSWER : (unbound.candidates\n          ? BASEBALL_GENIUS_NAME_CANDIDATES_ANSWER(unbound.candidates.map(player =>\n            `${player.name}${player.team ? `(${player.team}${player.backNo ? ` ${player.backNo}번` : \"\"})` : \"\"}`))\n          : NAME_SUGGEST_ANSWER(unbound.suggestion)))",
     to: `        ? NAME_SUGGEST_ANSWER("")`,
     expect: "answer",
   },
   {
     name: "N-J 캐시 우회 제거 (미결속 실명 답이 캐시를 탄다)",
-    from: `  if (resolveUnboundName(question, players) !== null) return "name_suggest";
+    from: `  if (resolveUnboundName(question, players, glossary) !== null) return "name_suggest";
 `,
     to: `
 `,

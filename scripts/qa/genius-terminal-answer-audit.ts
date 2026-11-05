@@ -1,3 +1,4 @@
+import { createCurrentSeasonRecordFetcher } from "../../src/lib/baseball-qa/stats/current-season-source";
 /**
  * 인입 질문 **전건 terminal 답변 감사** — 배포된 실제 배선을 그대로 태워, 유저가 받는
  * 답변 문자열과 근거를 판정한다.
@@ -193,6 +194,7 @@ function prodDeps(counters: Counters, prev: PreviousTurnRow | null): QaDeps {
       return evidence;
     },
     callOfficialRagLlm,
+    fetchCurrentSeasonRecord: createCurrentSeasonRecordFetcher(),
     fetchSeasonRecord: createSeasonRecordFetcher(admin as unknown as SeasonRecordClient),
     fetchServedRecord: createServedRecordFetcher(),
     fetchTeamRecord: createTeamRecordFetchers(),

@@ -232,7 +232,7 @@ export async function runLineupWatchdog(args: {
     const probeBudget = Math.max(1, Math.min(lineupFetchMs, deadlineAtMs - now()));
     let ck: boolean | null;
     try {
-      ck = await fetchLineupConfirmed(game.gameId, { timeoutMs: probeBudget });
+      ck = await fetchLineupConfirmed(game.gameId, { timeoutMs: probeBudget, srId: game.srId });
     } catch {
       ck = null;
     }

@@ -1,6 +1,7 @@
 import { startVisibilityPoller, type VisibilityPollerDeps } from "./visibility-poller";
 
 interface HomeNextGameDeps<T> extends Omit<VisibilityPollerDeps, "callback" | "intervalMs" | "runImmediately"> {
+  fetchNext?: (signal: AbortSignal) => Promise<{ game: T | null; date?: string }>;
   dateAtOffset: (offset: number) => string;
   fetchGames: (date: string, signal: AbortSignal) => Promise<T[]>;
   findGame: (games: T[]) => T | undefined;
@@ -25,6 +26,15 @@ export function startHomeNextGamePoller<T>(deps: HomeNextGameDeps<T>): () => voi
       controller = request;
       const active = () => !stopped && !request.signal.aborted && !deps.isHidden();
       try {
+        if (deps.fetchNext) {
+          try {
+            const result = await deps.fetchNext(request.signal);
+            if (active()) deps.onResult(result.game, result.date);
+          } catch {
+            // Transport failure is not evidence of no game; keep the previous card.
+          }
+          return;
+        }
         for (let offset = 1; offset <= 14; offset += 1) {
           if (!active()) return;
           const date = deps.dateAtOffset(offset);

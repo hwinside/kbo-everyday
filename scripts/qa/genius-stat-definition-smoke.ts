@@ -24,7 +24,7 @@ const EVIDENCE: RagEvidence = {
   content: ANSWER, pageTitle: "QA fixture — 홀드", canonicalUrl: "https://www.koreabaseball.com/",
   revision: "fixture", sectionPath: "홀드", asOf: "2026-09-06", sourceGrade: "tier1",
 };
-const llmResult = (): LlmResult => ({ text: JSON.stringify({ status: "GROUNDED", answer: ANSWER }), inputTokens: 1, outputTokens: 1 });
+const llmResult = (): LlmResult => ({ text: JSON.stringify({ calendarClaims: [], status: "GROUNDED", answer: ANSWER }), inputTokens: 1, outputTokens: 1 });
 
 function quantityTrace(raw: LlmResult) {
   try {
@@ -40,7 +40,7 @@ async function verifyDefinitionNumericRepair() {
   const captured = "야구에서 홀드는 리드를 유지하는 데 결정적인 역할을 한 투수에게 주어지는 기록입니다.";
   assert.deepEqual(numericQuantityMatches(captured), [{ token: "한 투수", value: "1", counter: "투수" }]);
   for (const answer of [captured, "야구에서 이닝을 한 투수가 던졌습니다.", "야구에서 한 점을 기록했습니다.", "야구에서 1홀드가 기록됩니다."]) {
-    const result = validateRagResponse(JSON.stringify({ status: "GROUNDED", answer }), { numericEvidence: true, evidence: [EVIDENCE] });
+    const result = validateRagResponse(JSON.stringify({ calendarClaims: [], status: "GROUNDED", answer }), { numericEvidence: true, evidence: [EVIDENCE] });
     assert.equal(result.kind, "insufficient", "The existing numeric grounding contract was weakened");
   }
   type RepairSample = { answer: string; evidence: RagEvidence[]; quantities: string[]; numbers: string[] };
@@ -50,7 +50,7 @@ async function verifyDefinitionNumericRepair() {
     const evidence = sample?.evidence ?? [EVIDENCE];
     const good = `야구에서 ${ANSWER}`;
     const raw = (answer: string, inputTokens = 2, outputTokens = 3): LlmResult => ({
-      text: JSON.stringify({ status: official ? "GROUNDED" : "BASEBALL_RULE_TERM", answer }), inputTokens, outputTokens,
+      text: JSON.stringify({ calendarClaims: [], status: official ? "GROUNDED" : "BASEBALL_RULE_TERM", answer }), inputTokens, outputTokens,
     });
     const state = {
       calls: [] as Array<StatDefinitionFrame | undefined>, logs: [] as Array<Parameters<QaDeps["log"]>[0]>,
@@ -206,7 +206,7 @@ function verifyExplicitKoreanQuantities() {
   }
   // Tier2 retains its character-only prohibition. This does not claim all
   // natural-language quantities are solved by the explicit-notation normalizer.
-  assert.equal(validateRagResponse(JSON.stringify({ status: "GROUNDED", answer: "야구에서 일백칠십칠 개를 기록했어요." })).kind, "grounded");
+  assert.equal(validateRagResponse(JSON.stringify({ calendarClaims: [], status: "GROUNDED", answer: "야구에서 일백칠십칠 개를 기록했어요." })).kind, "grounded");
 }
 
 async function verifyMissingReferenceContext() {

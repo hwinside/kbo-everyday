@@ -172,7 +172,7 @@ function makeDeps(calls: Calls, overrides: Partial<QaDeps> = {}): QaDeps {
     callOfficialRagLlm: async () => {
       calls.officialLlm += 1;
       return {
-        text: JSON.stringify({ status: RAG_GROUNDED_SENTINEL, answer: "공식 자료 기준으로 그렇습니다." }),
+        text: JSON.stringify({ calendarClaims: [], status: RAG_GROUNDED_SENTINEL, answer: "공식 자료 기준으로 그렇습니다." }),
         inputTokens: 10, outputTokens: 5,
       };
     },
@@ -192,7 +192,7 @@ function makeDeps(calls: Calls, overrides: Partial<QaDeps> = {}): QaDeps {
     callRagLlm: async () => {
       calls.playerLlm += 1;
       return {
-        text: JSON.stringify({ status: RAG_GROUNDED_SENTINEL, answer: "LG 트윈스 내야수입니다." }),
+        text: JSON.stringify({ calendarClaims: [], status: RAG_GROUNDED_SENTINEL, answer: "LG 트윈스 내야수입니다." }),
         inputTokens: 3, outputTokens: 2,
       };
     },

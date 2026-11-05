@@ -4,12 +4,11 @@ import { useRouter } from "next/navigation";
 import { useSafeBack } from "@/lib/hooks/useSafeBack";
 import { ArrowLeft, MessageCircle, Settings, X, ShieldBan } from "lucide-react";
 import { useDMList } from "@/lib/supabase/useDM";
-import { useBlockList } from "@/lib/supabase/useBlock";
+import BlockManagement from "@/components/profile/BlockManagement";
 import GlassCard from "@/components/ui/GlassCard";
 import TeamBadge from "@/components/ui/TeamBadge";
 import { useAuth } from "@/lib/supabase/AuthContext";
 import LoginSheet from "@/components/auth/LoginSheet";
-import { supabase } from "@/lib/supabase/client";
 import { useState } from "react";
 import { motion, AnimatePresence } from "framer-motion";
 import { BASEBALL_GENIUS_USER_ID } from "@/lib/constants/baseball-genius";
@@ -30,23 +29,8 @@ export default function MessagesPage() {
   const goBack = useSafeBack("/");
   const { user } = useAuth();
   const { conversations, loading } = useDMList();
-  const { blockedUsers, loading: blocksLoading, refresh: refreshBlocks } = useBlockList();
   const [showLogin, setShowLogin] = useState(false);
   const [showBlockList, setShowBlockList] = useState(false);
-  const [unblocking, setUnblocking] = useState<string | null>(null);
-
-  const handleUnblock = async (blockedId: string) => {
-    if (!user) return;
-    setUnblocking(blockedId);
-    await supabase
-      .from("user_blocks")
-      .delete()
-      .eq("blocker_id", user.id)
-      .eq("blocked_id", blockedId);
-    await refreshBlocks();
-    setUnblocking(null);
-  };
-
   if (!user) {
     return (
       <div className="min-h-screen bg-bg-primary pb-24">
@@ -191,35 +175,7 @@ export default function MessagesPage() {
                 </button>
               </div>
 
-              {blocksLoading ? (
-                <div className="text-center py-8 text-sm text-text-tertiary">불러오는 중...</div>
-              ) : blockedUsers.length === 0 ? (
-                <div className="text-center py-8">
-                  <p className="text-sm text-text-tertiary">차단한 유저가 없습니다</p>
-                </div>
-              ) : (
-                <div className="space-y-3">
-                  {blockedUsers.map((bu) => (
-                    <div key={bu.id} className="flex items-center gap-3 px-3 py-2.5 rounded-xl bg-bg-tertiary">
-                      <div className="w-8 h-8 rounded-full bg-bg-primary flex items-center justify-center flex-shrink-0">
-                        {bu.team_id ? (
-                          <TeamBadge teamId={bu.team_id} size="xs" />
-                        ) : (
-                          <span className="text-sm">👤</span>
-                        )}
-                      </div>
-                      <span className="flex-1 text-sm font-semibold text-text-primary">{bu.nickname}</span>
-                      <button
-                        onClick={() => handleUnblock(bu.blocked_id)}
-                        disabled={unblocking === bu.blocked_id}
-                        className="px-3 py-1.5 rounded-lg text-xs font-semibold bg-red-500/15 text-red-500 hover:bg-red-500/25 transition-colors disabled:opacity-50"
-                      >
-                        {unblocking === bu.blocked_id ? "..." : "해제"}
-                      </button>
-                    </div>
-                  ))}
-                </div>
-              )}
+              <BlockManagement key={user.id} />
             </motion.div>
           </motion.div>
         )}

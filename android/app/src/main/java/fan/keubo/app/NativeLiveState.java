@@ -19,7 +19,8 @@ final class NativeLiveState {
     static WidgetUpdatePolicy.ApplyResult apply(Context ctx, NativeLiveEnvelope env) {
         if (NativeLiveEnvelope.KIND_END.equals(env.kind)) {
             // 종료도 별도 특례가 아니라 같은 게이트(gameId 일치 + sourceTs 통과)를 통과.
-            return GameScoreWidget.markFinal(ctx, env.gameId, env.sourceTs);
+            return GameScoreWidget.markFinal(ctx, env.gameId, env.sourceTs, env.data.get("w_result_pitchers"),
+                env.data.get("w_as"), env.data.get("w_hs"));
         }
         // live / cancel — 같은 writeInternal 상태머신. cancel은 문자중계(lastPlay)를 비운다.
         boolean cancel = NativeLiveEnvelope.KIND_CANCEL.equals(env.kind);

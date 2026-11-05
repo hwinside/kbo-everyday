@@ -128,7 +128,7 @@ async function verifyRuntime() {
           assert.match(data, /<요청 범위/); assert.ok(data.includes(expected));
           scope.add(extras?.ruleRequest?.kind + ":" + extras?.ruleRequest?.competition);
         } else assert.doesNotMatch(data, /<요청 범위/);
-        return { text: JSON.stringify({ status: "GROUNDED", answer }), inputTokens: 1, outputTokens: 1 };
+        return { text: JSON.stringify({ calendarClaims: [], status: "GROUNDED", answer }), inputTokens: 1, outputTokens: 1 };
       },
     };
     const result = await answerQuestion("qa-required-rules-memory", question, deps);
@@ -140,7 +140,7 @@ async function verifyRuntime() {
   assert.doesNotMatch(JSON.stringify(buildRagLlmRequest("아웃 원인이 뭐야?", [], RAG_OFFICIAL_SYSTEM_PROMPT)), /<요청 범위/);
 
   assert.notEqual(routeQuestion("4년제 대학 졸업하고 프로 오면 FA 몇 시즌 뛰어야 해?"), "blocked");
-  assert.equal(routeQuestion("FA 기자회견 몇 시야?"), "blocked", "clock request remains outside scope");
+  assert.equal(requiredRuleEvidence("FA 기자회견 몇 시야?", NOW), null, "event clock request must not become an FA eligibility answer");
   assert.equal(routeQuestion("FA 몇 시즌이야? 날씨도 알려줘"), "blocked", "mixed non-baseball request bypassed scope gate");
   for (const question of ["MLB FA 자격 조건", "해외 복귀 FA 자격", "FA 자격 재취득", "포스트시즌 진출할 확률은?"]) {
     assert.equal(requiredRuleEvidence(question, NOW), null, question + " overmatched current KBO policy");
@@ -190,7 +190,7 @@ async function verifyRuntime() {
       getCache: async () => null, setCache: async () => {}, log: async () => {}, now: () => NOW,
       searchOfficialRag: async () => ev, storeLlm: async (result) => { stored = result; },
       callLlm: async () => { throw new Error("generic fallback must not repair policy"); },
-      callOfficialRagLlm: async () => ({ text: JSON.stringify({ status: "GROUNDED", answer }), inputTokens: 1, outputTokens: 1 }),
+      callOfficialRagLlm: async () => ({ text: JSON.stringify({ calendarClaims: [], status: "GROUNDED", answer }), inputTokens: 1, outputTokens: 1 }),
     };
     const result = await answerQuestion("qa-current-criteria", question, deps);
     assert.equal(result.source, "scope_guide", "obsolete or incomplete policy was served: " + answer);
@@ -205,7 +205,7 @@ async function verifyRuntime() {
       getCache: async () => null, setCache: async () => {}, log: async () => {}, now: () => NOW,
       searchOfficialRag: async () => ++searches === 2 && recovery ? ev : ev.filter((r) => !r.content.includes("① 제25조")),
       callLlm: async () => { throw new Error("generic fallback"); },
-      callOfficialRagLlm: async () => { calls++; return { text: JSON.stringify({ status: "GROUNDED", answer: "2022년 시즌 종료 후부터 8정규시즌을 활동하면 일반 FA 자격을 취득합니다." }), inputTokens: 1, outputTokens: 1 }; },
+      callOfficialRagLlm: async () => { calls++; return { text: JSON.stringify({ calendarClaims: [], status: "GROUNDED", answer: "2022년 시즌 종료 후부터 8정규시즌을 활동하면 일반 FA 자격을 취득합니다." }), inputTokens: 1, outputTokens: 1 }; },
     };
     const result = await answerQuestion("qa-current-recovery", "FA 자격은 어떻게 얻어?", deps);
     assert.equal(searches, 2); assert.equal(calls, recovery ? 1 : 0);
@@ -242,7 +242,7 @@ async function verifyQuantityGrounding() {
     const badHeading = scoped.map((r) => ({...r, content: r.content.replace(/제(?:30|34|38|42)조/, "제99조")}));
     assert.deepEqual(postseasonTeamCounts(badHeading, request), [], "metadata alone licensed a mismatched heading");
     assert.deepEqual(postseasonTeamCounts(scoped.map((r) => ({...r, content: r.content.replace(/제[2-5]장/, "제9장")})), request), [], "wrong chapter licensed counts");
-    const check = (text: string, source = scoped, ruleRequest = request) => validateRagResponse(JSON.stringify({status:"GROUNDED",answer:text}), {numericEvidence:true,evidence:source,ruleRequest});
+    const check = (text: string, source = scoped, ruleRequest = request) => validateRagResponse(JSON.stringify({calendarClaims:[],status:"GROUNDED",answer:text}), {numericEvidence:true,evidence:source,ruleRequest});
     assert.equal(check(answer).kind, "grounded", answer);
     for (const suffix of [" 아홉 팀이 참가합니다.", " 9개 구단이 진출합니다.", " 9구를 던집니다.", " 5개입니다.", " 10기입니다.", " 99회까지 진행합니다."]) {
       assert.equal(check(answer+suffix).kind, "insufficient", suffix);
@@ -255,7 +255,7 @@ async function verifyQuantityGrounding() {
       getCache: async () => null, setCache: async () => {}, log: async () => {}, now: () => NOW,
       searchOfficialRag: async () => ev, storeLlm: async (result) => { stored = result; },
       callLlm: async () => { throw new Error("generic fallback"); },
-      callOfficialRagLlm: async () => ({ text: JSON.stringify({status:"GROUNDED",answer}), inputTokens:1,outputTokens:1 }),
+      callOfficialRagLlm: async () => ({ text: JSON.stringify({calendarClaims:[],status:"GROUNDED",answer}), inputTokens:1,outputTokens:1 }),
     };
     const result = await answerQuestion("qa-quantity",question,deps);
     assert.equal(result.source,"rag", "pipeline omitted request context: "+question);
@@ -275,7 +275,7 @@ async function verifyQuantityGrounding() {
   assert.deepEqual(postseasonTeamCounts(wc,{...general,postseasonStage:"semi"}),["2"],"full postseason corpus failed to select semifinal clause");
   assert.deepEqual(postseasonTeamCounts(wc,undefined),[]);
   for (const answer of ["두 팀이 참가합니다.","상위 5개 구단이 진출합니다."]) {
-    assert.equal(validateRagResponse(JSON.stringify({status:"GROUNDED",answer}),{numericEvidence:true,evidence:wc}).kind,"insufficient","generic path received participant aliases");
+    assert.equal(validateRagResponse(JSON.stringify({calendarClaims:[],status:"GROUNDED",answer}),{numericEvidence:true,evidence:wc}).kind,"insufficient","generic path received participant aliases");
   }
 }
 
@@ -285,7 +285,7 @@ async function verifyWinParaphrases() {
   const request = requiredRuleEvidence(question, NOW)!;
   const scoped = selectEvidence(selectRequiredRuleEvidence(ev, request));
   const accepted = "2026시즌 와일드카드 결정전은 4위와 5위 구단 간에 치러집니다. 4위 구단은 한 번의 승리나 무승부만 기록해도 준플레이오프에 진출합니다.";
-  const check = (answer: string, source = scoped, ruleRequest: typeof request | undefined = request) => validateRagResponse(JSON.stringify({status:"GROUNDED",answer}),{numericEvidence:true,evidence:source,ruleRequest});
+  const check = (answer: string, source = scoped, ruleRequest: typeof request | undefined = request) => validateRagResponse(JSON.stringify({calendarClaims:[],status:"GROUNDED",answer}),{numericEvidence:true,evidence:source,ruleRequest});
   for (const answer of [accepted, "4위 팀은 1번의 승리 또는 무승부만 기록하면 진출합니다.", "5위 구단은 두 번의 승리를 기록해야 진출합니다."]) {
     assert.equal(check(answer).kind, "grounded", answer);
   }
@@ -300,7 +300,7 @@ async function verifyWinParaphrases() {
     "4위 구단은 상대 팀이 한 번의 승리로 진출합니다.",
   ]) assert.equal(check(answer).kind, "insufficient", answer);
   assert.equal(check(accepted, [], request).kind, "insufficient");
-  assert.equal(validateRagResponse(JSON.stringify({status:"GROUNDED",answer:accepted}),{numericEvidence:true,evidence:scoped}).kind, "insufficient");
+  assert.equal(validateRagResponse(JSON.stringify({calendarClaims:[],status:"GROUNDED",answer:accepted}),{numericEvidence:true,evidence:scoped}).kind, "insufficient");
   assert.equal(check(accepted, scoped, {...request,season:2025}).kind, "insufficient");
   assert.equal(check(accepted, scoped, {...request,postseasonStage:"semi"}).kind, "insufficient");
   assert.equal(check(accepted, scoped.map(r=>({...r,sourceGrade:"tier2"}))).kind,"insufficient");
@@ -314,7 +314,7 @@ async function verifyWinParaphrases() {
     getCache:async()=>null,setCache:async()=>{},log:async()=>{},now:()=>NOW,
     searchOfficialRag:async()=>ev,storeLlm:async(result)=>{stored=result;},
     callLlm:async()=>{throw new Error("generic fallback");},
-    callOfficialRagLlm:async()=>({text:JSON.stringify({status:"GROUNDED",answer:accepted}),inputTokens:1,outputTokens:1}),
+    callOfficialRagLlm:async()=>({text:JSON.stringify({calendarClaims:[],status:"GROUNDED",answer:accepted}),inputTokens:1,outputTokens:1}),
   };
   const result = await answerQuestion("qa-win-paraphrase", question, deps);
   assert.equal(result.source,"rag");
@@ -322,5 +322,66 @@ async function verifyWinParaphrases() {
   assert.ok(JSON.stringify(stored).includes(result.answer),"durable final mismatch");
 }
 
-async function main() { await verifyWinParaphrases(); await verifyQuantityGrounding(); verifyArtifact(); verifyLoader(); await verifyRuntime(); console.log("Required-rule corpus artifact/loader/runtime contracts PASS; live semantic/UI QA remains reviewer-owned."); }
+function verifyIsolatedRuleSupplement() {
+  const file = path.resolve("data/baseball-qa/kbo-substitution-2026.jsonl");
+  const manifest = path.resolve("data/baseball-qa/kbo-rulebook-supplement-2026.manifest.json");
+  const rows = fs.readFileSync(file, "utf8").trim().split("\n").map(s => JSON.parse(s));
+  assert.equal(rows.length, 9);
+  assert.ok(rows.every(r => r.entity === "2026 공식야구규칙 필수 조항 5.10"
+    && r.section === "5.10 선수교체 및 마운드 방문" && r.page === 93 && r.page_end === 99));
+  const text = normalized(rows.map(r => r.text).join("\n"));
+  for (const clause of ["한번경기에서물러난선수", "한이닝에서투수는한번만다른수비위치로갈수있다", "퓨처스리그에만적용"])
+    assert.ok(text.includes(clause), clause);
+  const loaded = execFileSync(process.execPath, [loader, "--corpus=" + file, "--manifest=" + manifest], {encoding: "utf8"});
+  assert.match(loaded, /총 chunk\s+: 9/);
+  assert.match(loaded, /공식야구규칙-필수-조항-510/);
+  const temp = fs.mkdtempSync(path.join(os.tmpdir(), "isolated-rule-"));
+  try {
+    for (const [name, mutate] of [
+      ["wrong-rule", (r: typeof rows) => {r[0].section = "5.09 아웃";}],
+      ["wrong-bundle", (r: typeof rows) => {r.forEach(x => {x.entity = x.title + " 필수 조항 5.11";});}],
+      ["partial", (r: typeof rows) => {r.pop();}],
+      ["duplicate", (r: typeof rows) => {r[1] = r[0];}],
+      ["wrong-pdf", (r: typeof rows) => {r[0].sourcePdfSha256 = "0".repeat(64);}],
+    ] as const) {
+      const changed = structuredClone(rows); mutate(changed);
+      const bad = path.join(temp, name + ".jsonl");
+      fs.writeFileSync(bad, changed.map(r => JSON.stringify(r)).join("\n") + "\n");
+      assert.notEqual(spawnSync(process.execPath, [loader, "--corpus=" + bad, "--manifest=" + manifest], {encoding: "utf8"}).status, 0, name);
+    }
+  } finally {fs.rmSync(temp, {recursive: true, force: true});}
+}
+
+function verifyRulebookSupplement() {
+  const file = path.resolve("data/baseball-qa/kbo-rulebook-supplement-2026.jsonl");
+  const manifestFile = path.resolve("data/baseball-qa/kbo-rulebook-supplement-2026.manifest.json");
+  const bytes = fs.readFileSync(file, "utf8");
+  assert.equal(crypto.createHash("sha256").update(bytes).digest("hex"), "9bb03ae5dc30c94c84541a5f1e0edb5c82538967dcfbfa6ba94768a6189df97e");
+  const supplement = bytes.trim().split("\n").map(s => JSON.parse(s));
+  assert.equal(supplement.length, 2);
+  assert.ok(supplement.every(r => r.entity === "2026 공식야구규칙 필수 조항" && r.page === 201 && r.page_end === 202));
+  const text = normalized(supplement.map(r => r.text).join("\n"));
+  for (const clause of ["무사또는1사", "주자1·2루또는만루", "직선타구또는번트", "볼인플레이다", "심판원이선고하여야효력이발생한다"]) assert.ok(text.includes(clause), clause);
+  const loaded = execFileSync(process.execPath, [loader, "--corpus=" + file, "--manifest=" + manifestFile], { encoding: "utf8" });
+  assert.match(loaded, /총 chunk\s+: 2/);
+  assert.match(loaded, /DRY-RUN 종료/);
+  assert.match(loaded, /공식야구규칙-필수-조항/);
+  const temp = fs.mkdtempSync(path.join(os.tmpdir(), "rulebook-supplement-"));
+  try {
+    for (const [name, mutate] of [
+      ["partial", (r: typeof supplement) => { r.pop(); }],
+      ["overwrite-original", (r: typeof supplement) => { r.forEach(x => { x.entity = x.title; }); }],
+      ["wrong-pdf", (r: typeof supplement) => { r[0].sourcePdfSha256 = "0".repeat(64); }],
+      ["duplicate", (r: typeof supplement) => { r[1] = r[0]; }],
+    ] as const) {
+      const changed = structuredClone(supplement); mutate(changed);
+      const bad = path.join(temp, name + ".jsonl");
+      fs.writeFileSync(bad, changed.map(r => JSON.stringify(r)).join("\n") + "\n");
+      const run = spawnSync(process.execPath, [loader, "--corpus=" + bad, "--manifest=" + manifestFile], { encoding: "utf8" });
+      assert.notEqual(run.status, 0, name + " accepted");
+    }
+  } finally { fs.rmSync(temp, { recursive: true, force: true }); }
+}
+
+async function main() { verifyIsolatedRuleSupplement(); verifyRulebookSupplement(); await verifyWinParaphrases(); await verifyQuantityGrounding(); verifyArtifact(); verifyLoader(); await verifyRuntime(); console.log("Required-rule corpus artifact/loader/runtime contracts PASS; live semantic/UI QA remains reviewer-owned."); }
 main().catch((error) => { console.error(error); process.exitCode = 1; });

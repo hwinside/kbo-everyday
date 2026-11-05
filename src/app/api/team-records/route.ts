@@ -1,4 +1,5 @@
 import { NextRequest, NextResponse } from "next/server";
+import { fetchRegularSeasonHtml } from "@/lib/crawler/kbo-regular-season";
 import { TEAMS } from "@/lib/constants/teams";
 
 const KBO_BASE = "https://www.koreabaseball.com";
@@ -91,21 +92,10 @@ async function fetchHtml(
   url: string,
   deadlineAt: number,
   fetchImpl: typeof fetch,
+  season: number,
 ): Promise<string> {
   return withinDeadline(
-    async (signal) => {
-      const res = await fetchImpl(url, {
-        headers: {
-          "User-Agent":
-            "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36",
-          Referer: KBO_BASE,
-        },
-        signal,
-        next: { revalidate: 0 },
-      });
-      if (!res.ok) throw new Error(`HTTP ${res.status} from ${url}`);
-      return res.text();
-    },
+    (signal) => fetchRegularSeasonHtml(url, season, signal, fetchImpl),
     deadlineAt,
     "KBO team records",
   );
@@ -175,6 +165,7 @@ function requireTeamRows(
 }
 
 async function fetchBattingRecords(
+  season: number,
   deadlineAt: number,
   fetchImpl: typeof fetch,
 ): Promise<TeamBatting[]> {
@@ -185,16 +176,19 @@ async function fetchBattingRecords(
       `${KBO_BASE}/Record/Team/Hitter/Basic1.aspx`,
       deadlineAt,
       fetchImpl,
+      season,
     ),
     fetchHtml(
       `${KBO_BASE}/Record/Team/Hitter/Basic2.aspx`,
       deadlineAt,
       fetchImpl,
+      season,
     ),
     fetchHtml(
       `${KBO_BASE}/Record/Team/Runner/Basic.aspx`,
       deadlineAt,
       fetchImpl,
+      season,
     ),
   ]);
 
@@ -229,6 +223,7 @@ async function fetchBattingRecords(
 }
 
 async function fetchPitchingRecords(
+  season: number,
   deadlineAt: number,
   fetchImpl: typeof fetch,
 ): Promise<TeamPitching[]> {
@@ -237,6 +232,7 @@ async function fetchPitchingRecords(
     `${KBO_BASE}/Record/Team/Pitcher/Basic1.aspx`,
     deadlineAt,
     fetchImpl,
+    season,
   );
   const basic1 = requireTeamRows(
     parseTable(basic1Html),
@@ -273,11 +269,12 @@ async function fetchPitchingRecords(
 export async function fetchKboTeamRecords(
   deadlineAt: number,
   fetchImpl: typeof fetch = fetch,
+  season: number = new Date().getFullYear(),
 ): Promise<{ batting: TeamBatting[]; pitching: TeamPitching[] }> {
   const kboDeadlineAt = Math.min(deadlineAt, Date.now() + KBO_SUB_BUDGET_MS);
   const [batting, pitching] = await Promise.all([
-    fetchBattingRecords(kboDeadlineAt, fetchImpl),
-    fetchPitchingRecords(kboDeadlineAt, fetchImpl),
+    fetchBattingRecords(season, kboDeadlineAt, fetchImpl),
+    fetchPitchingRecords(season, kboDeadlineAt, fetchImpl),
   ]);
   return { batting, pitching };
 }
@@ -431,7 +428,7 @@ export async function loadTeamRecords(
   ) => Promise<{
     batting: TeamBatting[];
     pitching: TeamPitching[];
-  }> = fetchKboTeamRecords,
+  }> = (deadlineAt) => fetchKboTeamRecords(deadlineAt, fetch, season),
   naverImpl: (
     year: number,
     deadlineAt: number,

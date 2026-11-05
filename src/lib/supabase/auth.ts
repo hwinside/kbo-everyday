@@ -1,5 +1,5 @@
 import { supabase } from "./client";
-import { isIOS, isNative } from "@/lib/capacitor/platform";
+import { isIosNativeRuntime, isNativeRuntime } from "@/lib/capacitor/platform";
 import { openOAuthInBrowser } from "@/lib/capacitor/auth";
 
 // Always use the canonical domain for OAuth callbacks.
@@ -15,7 +15,7 @@ const NATIVE_APP_CALLBACK_URL = "fan.keubo.app://auth/callback";
 // (= "크롬만 로그인 / 앱은 로그아웃", #cs 2026-07-09). 커스텀 스킴은 App Link 검증에
 // 의존하지 않아 appUrlOpen이 항상 가로챈다 — iOS가 이미 이 방식으로 안정 동작 중.
 function getOAuthCallbackUrl() {
-  return isNative ? NATIVE_APP_CALLBACK_URL : CALLBACK_URL;
+  return isNativeRuntime() ? NATIVE_APP_CALLBACK_URL : CALLBACK_URL;
 }
 
 /** 구글 로그인 — 네이티브: Custom Tabs, 웹: 동일 탭 OAuth */
@@ -31,7 +31,7 @@ export async function signInWithGoogle() {
     },
   });
   if (data?.url) {
-    if (isNative) {
+    if (isNativeRuntime()) {
       await openOAuthInBrowser(data.url);
     } else {
       window.location.assign(data.url);
@@ -49,8 +49,8 @@ export async function signInWithNaver() {
   // 서버 API route가 네이버 OAuth URL로 redirect.
   // 네이티브(iOS/Android)는 native 플래그를 넘겨 콜백이 앱으로 세션을 돌려주게 한다.
   // (web은 서버 쿠키로 세션 유지 — 플래그 없음)
-  if (isNative) {
-    const nativeParam = isIOS ? "ios" : "android";
+  if (isNativeRuntime()) {
+    const nativeParam = isIosNativeRuntime() ? "ios" : "android";
     await openOAuthInBrowser(`https://keubo.fan/api/auth/naver?native=${nativeParam}`);
   } else {
     window.location.assign("/api/auth/naver");
@@ -68,7 +68,7 @@ export async function signInWithApple() {
     },
   });
   if (data?.url) {
-    if (isNative) {
+    if (isNativeRuntime()) {
       await openOAuthInBrowser(data.url);
     } else {
       window.location.assign(data.url);
@@ -87,7 +87,7 @@ export async function signInWithKakao() {
     },
   });
   if (data?.url) {
-    if (isNative) {
+    if (isNativeRuntime()) {
       await openOAuthInBrowser(data.url);
     } else {
       window.location.assign(data.url);

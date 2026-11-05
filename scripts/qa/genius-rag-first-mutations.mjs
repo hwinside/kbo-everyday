@@ -104,7 +104,7 @@ const MUTATIONS = [
   {
     name: "r69 scalar handlers steal requested operations",
     file: PIPELINE,
-    from: "const operationAnswer = await answerRequestedOperation(question, context, players, deps, pickedCandidate);",
+    from: 'const operationAnswer = recordIntent.kind === "query" && recordIntent.unavailableSeasons\n      ? null : await answerRequestedOperation(question, context, players, deps, pickedCandidate);',
     to: "const operationAnswer = null;",
     smoke: "scripts/qa/genius-period-context-smoke.ts",
   },
@@ -338,8 +338,8 @@ const MUTATIONS = [
   {
     name: "r42 공식 GENERAL 주제 저장 제거 — 빈 근거 fallback 후 문맥을 잃는다",
     file: PIPELINE,
-    from: 'statRuleTermVerified: Boolean(definition),\n      definitionContext: definitionContextFor(definition),',
-    to: 'statRuleTermVerified: Boolean(definition),',
+    from: 'statRuleTermVerified: Boolean(definition) || isUnverifiedTermAnswer(validated.answer),\n      definitionContext: definitionContextFor(definition),',
+    to: 'statRuleTermVerified: Boolean(definition) || isUnverifiedTermAnswer(validated.answer),',
     smoke: "scripts/qa/genius-period-context-smoke.ts",
   },
   {
@@ -450,22 +450,22 @@ const MUTATIONS = [
   {
     name: "r22 generic 정의 대상 미전달 — 후속 지표·인용 의미를 잃는다",
     file: PIPELINE,
-    from: "rosterBlock, statNumericGuard && !statDefinition, statDefinition ?? undefined)",
-    to: "rosterBlock, statNumericGuard && !statDefinition, undefined)",
+    from: "rosterBlock, statNumericGuard && !statDefinition && !reportedTermUsage, statDefinition ?? undefined)",
+    to: "rosterBlock, statNumericGuard && !statDefinition && !reportedTermUsage, undefined)",
     smoke: "scripts/qa/genius-stat-definition-smoke.ts",
   },
   {
     name: "r23 공식 RAG 정의 대상 미전달 — 인용 숫자가 순위표로 흐른다",
     file: PIPELINE,
-    from: "{ context: definition?.context ?? context ?? undefined, definition: definition ?? undefined }",
-    to: "{ context: definition?.context ?? context ?? undefined, definition: undefined }",
+    from: "{ recordbookRequest, context: definition?.context ?? context ?? undefined, definition: definition ?? undefined, referenceTimeMs }",
+    to: "{ recordbookRequest, context: definition?.context ?? context ?? undefined, definition: undefined, referenceTimeMs }",
     smoke: "scripts/qa/genius-stat-definition-smoke.ts",
   },
   {
     name: "r18 정의 fallback을 RECORD 분류기로 복귀 — 빈 검색 4턴이 정의답을 잃는다",
     file: PIPELINE,
-    from: "rosterBlock, statNumericGuard && !statDefinition, statDefinition ?? undefined)",
-    to: "rosterBlock, statNumericGuard, statDefinition ?? undefined)",
+    from: "rosterBlock, statNumericGuard && !statDefinition && !reportedTermUsage, statDefinition ?? undefined)",
+    to: "rosterBlock, statNumericGuard && !reportedTermUsage, statDefinition ?? undefined)",
     smoke: "scripts/qa/genius-stat-definition-smoke.ts",
   },
   {
@@ -478,15 +478,15 @@ const MUTATIONS = [
   {
     name: "r20 정의 검증 표식 제거 — log crash 재생이 정상답을 되묻기로 바꾼다",
     file: PIPELINE,
-    from: "statRuleTermVerified: Boolean(statDefinition && statNumericGuard),",
-    to: "statRuleTermVerified: false,",
+    from: "statRuleTermVerified: Boolean(statDefinition && statNumericGuard) || Boolean(reportedTermUsage && isUnverifiedTermAnswer(validated.answer)),",
+    to: "statRuleTermVerified: Boolean(reportedTermUsage && isUnverifiedTermAnswer(validated.answer)),",
     smoke: "scripts/qa/genius-stat-definition-smoke.ts",
   },
   {
     name: "r16 정의 후속 문맥 전달 제거 — 직전 홀드 질문이 모델에 도달하지 않는다",
     file: PIPELINE,
-    from: "{ context: definition?.context ?? context ?? undefined, definition: definition ?? undefined }",
-    to: "{ context: undefined, definition: definition ?? undefined }",
+    from: "{ recordbookRequest, context: definition?.context ?? context ?? undefined, definition: definition ?? undefined, referenceTimeMs }",
+    to: "{ recordbookRequest, context: undefined, definition: definition ?? undefined, referenceTimeMs }",
     smoke: "scripts/qa/genius-stat-definition-smoke.ts",
   },
   {

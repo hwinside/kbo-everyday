@@ -1,3 +1,5 @@
+import { publisherRedisCommand, acquirePublisherLock } from "@/lib/game/publisher-redis";
+import { snapshotWritesEnabled } from "@/lib/game/collector-request";
 import { NextRequest, NextResponse } from "next/server";
 import { randomUUID } from "node:crypto";
 import { createClient } from "@supabase/supabase-js";
@@ -8,6 +10,7 @@ import { GET as getDetail } from "@/app/api/game-detail/route";
 import { resolveGameLiveDate } from "@/lib/game-live-date";
 import {
   deserializeState,
+  createPublisherObservations,
   listLiveGameIds,
   publishGameTick,
   serializeState,
@@ -53,7 +56,8 @@ export const maxDuration = 60;
 const LOCK_KEY = "kbo:relay:publisher:lock:v1";
 const LOCK_TTL_MS = 20_000;
 const LOCK_RENEW_EVERY_MS = 8_000;
-const LOOP_BUDGET_MS = 50_000;
+// Reserve 15s for ownership check, state writes, observability and release.
+const LOOP_BUDGET_MS = 45_000;
 // 단일 tick(모든 라이브 경기 채널)의 handler 상한. 업스트림 hang 이 이 값을 넘으면
 // tick 을 실패 집계로 끊어 loop 가 TTL·maxDuration 을 넘기지 않게 한다(삼순 3차 lease).
 const TICK_TIMEOUT_MS = 15_000;
@@ -66,29 +70,12 @@ function redisConfig(): { url: string; token: string } | null {
 }
 
 async function redisCommand(args: Array<string | number>): Promise<unknown | null> {
-  const cfg = redisConfig();
-  if (!cfg) return null;
-  try {
-    const response = await fetch(cfg.url, {
-      method: "POST",
-      headers: { Authorization: `Bearer ${cfg.token}`, "Content-Type": "application/json" },
-      body: JSON.stringify(args),
-      cache: "no-store",
-      signal: AbortSignal.timeout(3_000),
-    });
-    if (!response.ok) return null;
-    const payload = (await response.json()) as { result?: unknown; error?: unknown };
-    if (payload.error !== undefined || !("result" in payload)) return null;
-    return payload.result;
-  } catch {
-    return null;
-  }
+  const result = await publisherRedisCommand(args, redisConfig());
+  return result.ok ? result.value : null;
 }
 
-/** 토큰 락 획득. 성공 시 토큰 문자열, 실패 시 null. */
-async function acquireLock(token: string): Promise<boolean> {
-  const result = await redisCommand(["SET", LOCK_KEY, token, "NX", "PX", LOCK_TTL_MS]);
-  return result === "OK";
+function acquireLock(token: string) {
+  return acquirePublisherLock(token, LOCK_KEY, LOCK_TTL_MS, redisConfig());
 }
 
 /**
@@ -134,6 +121,7 @@ function sleep(ms: number): Promise<void> {
 }
 
 export async function GET(req: NextRequest) {
+  const invocationStartedAt = Date.now();
   const authHeader = req.headers.get("authorization");
   if (!CRON_SECRET || authHeader !== `Bearer ${CRON_SECRET}`) {
     return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
@@ -150,9 +138,14 @@ export async function GET(req: NextRequest) {
     return NextResponse.json({ error: "Redis 미설정 — 단일 writer 보장 불가(fail-close)" }, { status: 503 });
   }
 
+  const observations = createPublisherObservations();
   const token = randomUUID();
   const locked = await acquireLock(token);
-  if (!locked) {
+  if (locked === "unavailable") {
+    return NextResponse.json({ error: "redis-unavailable" }, { status: 503 });
+  }
+  if (locked === "held") {
+    console.warn("[relay-publisher] lock-held", { region: process.env.VERCEL_REGION ?? "unknown" });
     return NextResponse.json({ skipped: true, reason: "lock-held" });
   }
 
@@ -179,12 +172,24 @@ export async function GET(req: NextRequest) {
     const { error: gcError } = await supabase
       .from("game_relay_frames")
       .delete()
-      .lt("created_at", gcCutoff);
+      .lt("created_at", gcCutoff)
+      .abortSignal(AbortSignal.timeout(3_000));
 
     let gameIds: string[];
     try {
-      gameIds = await listLiveGameIds(date);
+      gameIds = await listLiveGameIds(date, snapshotWritesEnabled());
+      if (snapshotWritesEnabled()) {
+        const retained: string[] = [];
+        for (const gameId of gameIds) {
+          // Final games remain collected until all channels have settled for ten minutes.
+          const { data, error } = await supabase.rpc("archive_game_delivery_snapshot", { p_game_id: gameId })
+            .abortSignal(AbortSignal.timeout(1000));
+          if (error || data !== true) retained.push(gameId);
+        }
+        gameIds = retained;
+      }
     } catch (e) {
+      console.error("[relay-publisher] discovery-failed", { region: process.env.VERCEL_REGION ?? "unknown", elapsedMs: Date.now() - invocationStartedAt });
       return NextResponse.json(
         { error: "live-games-fetch-failed", detail: e instanceof Error ? e.message : String(e) },
         { status: 502 },
@@ -202,7 +207,7 @@ export async function GET(req: NextRequest) {
     // 삼순 3-2 확정: 인보케이션 단조 epoch 선예약. 이 인보케이션의 모든 프레임이 이 epoch 을
     // 싣고, RPC 가 (epoch, ordinal) <= cursor 를 원자 거부해 durable ordering 을 DB 가 보장한다
     // (JS 레벨 fence 로는 cross-invocation overlap 을 못 막던 것을 대체).
-    const { data: epochData, error: epochError } = await supabase.rpc("reserve_relay_epoch");
+    const { data: epochData, error: epochError } = await supabase.rpc("reserve_relay_epoch").abortSignal(AbortSignal.timeout(3_000));
     const epoch = Number(epochData);
     if (epochError || !Number.isFinite(epoch)) {
       return NextResponse.json(
@@ -237,8 +242,27 @@ export async function GET(req: NextRequest) {
     };
 
     const deps = {
+      // Production deployment URLs require Vercel SSO: use the public origin
+      // for the independent witness. Preview must never query production.
+      // No auth headers are forwarded; the live handler still runs in-process.
+      liveRequestOrigin: process.env.VERCEL_ENV === "production"
+        ? "https://keubo.fan" : req.nextUrl.origin,
+      observe: observations.observe,
       handlers: { relay: getRelay, events: getEvents, live: getLive, detail: getDetail },
       insertFrame,
+      ...(snapshotWritesEnabled() ? { publishSnapshot: async (
+        gameId: string, channel: string, payload: unknown, observedAt: string, ordinal: number, signal?: AbortSignal,
+      ) => {
+        if (lockLost || signal?.aborted) return false;
+        if (!(await ownsLock(token))) { lockLost = true; return false; }
+        if (signal?.aborted) return false;
+        const bounded = AbortSignal.any([...(signal ? [signal] : []), AbortSignal.timeout(1000)]);
+        const { data, error } = await supabase.rpc("publish_game_delivery_snapshot", {
+          p_game_id: gameId, p_channel: channel, p_payload: payload,
+          p_observed_at: observedAt, p_epoch: epoch, p_ordinal: ordinal,
+        }).abortSignal(bounded);
+        return !error && data === true;
+      } } : {}),
       epoch,
       date,
     };
@@ -264,7 +288,8 @@ export async function GET(req: NextRequest) {
     // frames-stale 발현 마커 수집 — 같은 경기가 한 인보케이션 안에서 여러 발현 지점을
     // 지나도(임계→배증) 각 지점이 한 번씩만 쌓인다(shouldEmitFramesStale 이 상한).
     const framesStaleMarkers: string[] = [];
-    const startedAt = Date.now();
+    // Include discovery/GC/epoch work in the 45s budget; reserve cleanup time.
+    const startedAt = invocationStartedAt;
     // inFlight (목적 재정의 — 삼순 확정): durable ordering 은 이제 DB RPC 가 (epoch, ordinal)
     // <= cursor 원자 거부로 보장한다(늦은 A 는 INSERT 자체가 거부돼 DB id 를 못 받으므로 역전
     // 불가). 따라서 과거의 await-outstanding(락 해제 전 전량 await)은 제거했다. inFlight 는 다른
@@ -295,7 +320,7 @@ export async function GET(req: NextRequest) {
               new Promise<TickResult>((resolve) =>
                 setTimeout(
                   () => { ac.abort(); resolve({ inserted: 0, skippedUnchanged: 0, skippedOversize: 0, framesStaleStreak: null, stale: 0, lockBusy: 0, errors: [`${gameId}:tick-timeout`] }); },
-                  TICK_TIMEOUT_MS,
+                  Math.max(1, Math.min(TICK_TIMEOUT_MS, LOOP_BUDGET_MS - (Date.now() - startedAt))),
                 ),
               ),
             ]);
@@ -385,6 +410,11 @@ export async function GET(req: NextRequest) {
     // 모든 경로에서 타이머가 새지 않도록 보장한다(이전엔 loop 내 finally 만 있어
     // 조기 return 시 renewTimer 가 간혹 남아 불필요한 renewLock 을 계속 호출했다).
     clearInterval(renewTimer);
+    // One bounded summary per invocation, including partial failure/timeout exits.
+    console.info("[relay-publisher-channels]", JSON.stringify({
+      counts: observations.counts,
+      maxBytes: observations.maxBytes,
+    }));
     await releaseLock(token);
   }
 }

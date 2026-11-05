@@ -4,6 +4,62 @@
   "source_audit": "state/prebuild-gate-audit-20260820.md",
   "gates": [
     {
+      "name": "qa:game-event-order",
+      "tier": "ci"
+    },
+    {
+      "name": "qa:postseason-preview-context",
+      "tier": "ci"
+    },
+    {
+      "name": "qa:oauth-recovery",
+      "tier": "ci"
+    },
+    {
+      "name": "qa:genius-recordbook-evidence",
+      "tier": "ci"
+    },
+    {
+      "name": "qa:genius-evidence-hold",
+      "tier": "ci"
+    },
+    {
+      "name": "qa:genius-game-conversation",
+      "tier": "ci"
+    },
+    {
+      "name": "qa:genius-correction-contract",
+      "tier": "ci"
+    },
+    {
+      "name": "qa:genius-live-score-guide",
+      "tier": "ci"
+    },
+    {
+      "name": "qa:genius-current-season-source",
+      "tier": "ci"
+    },
+    {
+      "name": "qa:genius-leaderboard-guide",
+      "tier": "ci"
+    },
+    {
+      "name": "qa:genius-current-season-metrics",
+      "tier": "ci"
+    },
+    {
+      "name": "qa:celebration-player-identity",
+      "tier": "ci"
+    },
+    {
+      "name": "qa:widget-result-pitchers",
+      "tier": "ci"
+    },
+    {
+      "name": "qa:block-management",
+      "tier": "ci"
+    },
+    {
       "name": "qa:admin-inbox",
       "tier": "ci"
     },
@@ -104,12 +160,28 @@
       "tier": "ci"
     },
     {
+      "name": "qa:news-rag-intraday",
+      "tier": "ci"
+    },
+    {
       "name": "qa:baseball-news-rag",
       "tier": "ci"
     },
     {
       "name": "qa:baseball-official-loader",
       "tier": "deploy"
+    },
+    {
+      "name": "qa:official-parenthetical-structure",
+      "tier": "ci"
+    },
+    {
+      "name": "qa:official-parenthetical-serving",
+      "tier": "ci"
+    },
+    {
+      "name": "qa:official-sibling-serving",
+      "tier": "ci"
     },
     {
       "name": "qa:baseball-official-rag",
@@ -165,6 +237,10 @@
     },
     {
       "name": "qa:home-popular-feed:hook",
+      "tier": "ci"
+    },
+    {
+      "name": "qa:home-latest-rls-plan:pg17",
       "tier": "ci"
     },
     {
@@ -349,7 +425,7 @@
     },
     {
       "name": "qa:genius-glossary-map",
-      "tier": "deploy"
+      "tier": "ci"
     },
     {
       "name": "qa:genius-untrusted-metric",
@@ -438,6 +514,14 @@
     {
       "name": "qa:genius-question-correction-db",
       "tier": "deploy"
+    },
+    {
+      "name": "qa:genius-scenario-outcome",
+      "tier": "ci"
+    },
+    {
+      "name": "qa:genius-deictic-temporal-followup",
+      "tier": "ci"
     },
     {
       "name": "qa:genius-question-normalize",
@@ -972,6 +1056,10 @@
       "tier": "deploy"
     },
     {
+      "name": "qa:next-game-scan",
+      "tier": "ci"
+    },
+    {
       "name": "qa:home-next-game-poller",
       "tier": "ci"
     },
@@ -1009,6 +1097,66 @@
     },
     {
       "name": "qa:game-review-team-slides",
+      "tier": "ci"
+    },
+    {
+      "name": "qa:classifier-observation",
+      "tier": "ci"
+    },
+    {
+      "name": "qa:genius-agent-fallback",
+      "tier": "ci"
+    },
+    {
+      "name": "qa:og-preview-cache",
+      "tier": "ci"
+    },
+    {
+      "name": "qa:post-impression-batch",
+      "tier": "ci"
+    },
+    {
+      "name": "qa:venue-story-auto-flight",
+      "tier": "ci"
+    },
+    {
+      "name": "qa:la-ack-recovery",
+      "tier": "ci"
+    },
+    {
+      "name": "qa:la-device-recovery",
+      "tier": "ci"
+    },
+    {
+      "name": "qa:postseason-operations",
+      "tier": "ci"
+    },
+    {
+      "name": "qa:postseason-series",
+      "tier": "ci"
+    },
+    {
+      "name": "qa:postseason-labels",
+      "tier": "ci"
+    },
+    {
+      "name": "qa:postseason-finalize",
+      "tier": "ci"
+    },
+    {
+      "name": "qa:season-predictions-close:pglite",
+      "tier": "ci"
+    },
+    {
+      "name": "qa:postseason-ladder",
+      "tier": "ci"
+    },
+    {
+      "name": "qa:login-error-notice",
+      "tier": "ci"
+    },
+    {
+      "name": "qa:login-error-notice:selftest",
       "tier": "ci"
     },
     {

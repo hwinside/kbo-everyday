@@ -223,3 +223,21 @@ enum ChannelMigrationOrchestrator {
     }
 
 }
+
+/// Remote start can arrive in either order. Choose the current generation first,
+/// then its retry, then a stable ID. No Activity.request effects in this policy.
+enum RecoveryCardPolicy {
+    struct Card {
+        let id: String
+        let channel: String?
+        let attempt: String?
+    }
+    static func keep(_ cards: [Card], channel: String) -> String? {
+        cards.filter { $0.channel == channel }.sorted {
+            let lhsRetry = !($0.attempt ?? "").isEmpty
+            let rhsRetry = !($1.attempt ?? "").isEmpty
+            if lhsRetry != rhsRetry { return lhsRetry }
+            return $0.id < $1.id
+        }.first?.id
+    }
+}

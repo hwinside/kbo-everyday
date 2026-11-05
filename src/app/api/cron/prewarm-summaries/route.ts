@@ -45,8 +45,8 @@ export async function GET(req: NextRequest) {
     for (const game of finalGames) {
       // Fetch boxscore + linescore
       const [boxScore, linescore] = await Promise.all([
-        fetchBoxScore(game.gameId),
-        fetchGameLinescore(game.gameId),
+        fetchBoxScore(game.gameId, undefined, { srId: game.srId }),
+        fetchGameLinescore(game.gameId, undefined, game.srId),
       ]);
 
       if (!boxScore) {

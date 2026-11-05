@@ -1,3 +1,4 @@
+import { resolveGameSeries } from "@/lib/crawler/resolve-game-series";
 /**
  * /api/contextual-stats?gameId=YYYYMMDD{HOME}{AWAY}{N}
  *
@@ -431,7 +432,7 @@ export async function GET(req: NextRequest) {
   // code straight (boxscore is fast enough that this isn't a hot path issue).
   // SR_ID isn't in the typed KboRawGame interface but is present in the
   // actual response (existing game-events route reads it the same way).
-  const srId = (rawGame as unknown as { SR_ID?: string }).SR_ID ?? "1";
+  const srId = await resolveGameSeries(gameId, { srId: rawGame.SR_ID, signal: AbortSignal.timeout(Math.max(1, deadlineAtMs - Date.now())) });
 
   const batter = batterName ? resolvePlayer({ name: batterName }) : null;
   const pitcher = pitcherName ? resolvePlayer({ name: pitcherName }) : null;

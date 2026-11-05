@@ -44,6 +44,19 @@ function findStaticForeign(): { name: string; raw: string; canonical: string } {
 }
 
 const PAGER_PREFIX = "ctl00$ctl00$ctl00$cphContents$cphContents$cphContents$ucPager$";
+const CONTROL_PREFIX = "ctl00$ctl00$ctl00$cphContents$cphContents$cphContents$";
+/**
+ * KBO 기록실은 WebForms 선택 폼으로 시즌·시리즈를 고른다. 라우트가 그 폼 흐름을
+ * 실제로 타므로(#1583), fixture 도 숨은 토큰과 시즌·시리즈 select 를 갖춰야 한다.
+ * 이게 없으면 폼 파싱이 실패해 라우트가 static fallback 으로 닫히고, live 시나리오가
+ * "fixture 가 새 흐름을 모른다"는 이유로만 깨진다.
+ */
+function webFormsControls(token: string): string {
+  return `<input type="hidden" name="__VIEWSTATE" value="vs-${token}" />` +
+    `<input type="hidden" name="__EVENTVALIDATION" value="ev-${token}" />` +
+    `<select name="${CONTROL_PREFIX}ddlSeason$ddlSeason"><option value="2026" selected>2026</option><option value="2025">2025</option></select>` +
+    `<select name="${CONTROL_PREFIX}ddlSeries$ddlSeries"><option value="0" selected>정규시즌</option><option value="1">포스트시즌</option></select>`;
+}
 
 interface RosterEntry { name: string; kboId: string; team: string }
 const ROSTER = playersRoster as unknown as RosterEntry[];
@@ -78,6 +91,9 @@ function nameCell(r: FixRow): string {
 }
 /** rank·name·team + 지정 셀 수를 채운 표 HTML. */
 function tableHtml(rows: FixRow[], totalCells: number): string {
+  return `<form>${webFormsControls("single")}` + `<a id="ucPager_btnNo1" class="on" href="#">1</a>` + tableBody(rows, totalCells) + `</form>`;
+}
+function tableBody(rows: FixRow[], totalCells: number): string {
   return `<tbody>${rows.map((r, i) => {
     const rest = [...r.cells];
     while (rest.length < totalCells - 3) rest.push("1");
@@ -92,10 +108,11 @@ function runnerPageHtml(rows: FixRow[], page: number, lastPage: number): string 
   ).join("");
   const links = [`<a id="ucPager_btnNo${page}" class="on" href="#">${page}</a>`];
   if (page < lastPage) {
-    links.push(`<a href="javascript:__doPostBack(&#39;${PAGER_PREFIX}btnNext&#39;,&#39;&#39;)">next</a>`);
+    // The collector only follows a pager link that carries KBO's real id; without
+    // it the crawl stops at page 1 and the route degrades to the static fallback.
+    links.push(`<a id="ucPager_btnNext" href="javascript:__doPostBack(&#39;${PAGER_PREFIX}btnNext&#39;,&#39;&#39;)">next</a>`);
   }
-  return `<form><input type="hidden" name="__VIEWSTATE" value="vs-${page}" />` +
-    `<input type="hidden" name="__EVENTVALIDATION" value="ev-${page}" />` +
+  return `<form>${webFormsControls(String(page))}` +
     `<tbody>${trs}</tbody>${links.join("")}</form>`;
 }
 

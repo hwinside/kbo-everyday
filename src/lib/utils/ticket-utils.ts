@@ -1,11 +1,11 @@
+import { isPostseason } from "@/lib/crawler/game-series";
 import { TICKET_OPEN_RULES } from "@/lib/constants/tickets";
 
-export type TicketOpenStatus = "countdown";
+export const POSTSEASON_TICKET_NOTICE = "포스트시즌 예매는 KBO 공지 확인";
+export const KBO_NOTICE_URL = "https://www.koreabaseball.com/MediaNews/Notice/List.aspx";
+export type TicketOpenStatus = "countdown" | "postseason";
 
-export interface NextTicketOpen {
-  status: TicketOpenStatus;
-  /** 예매 오픈 시각 */
-  openAt: Date;
+interface TicketGameInfo {
   /** 대상 경기 날짜 YYYYMMDD */
   gameDate: string;
   /** 대상 경기 시작 시각 (HH:MM) — 없으면 빈 문자열 */
@@ -16,11 +16,14 @@ export interface NextTicketOpen {
   isAway: boolean;
   buyUrl: string;
   provider: string;
-  /** 오픈까지 남은 ms (countdown only) */
-  msUntilOpen: number;
   /** 더블헤더/일정 변경 경기 → 예매 일정 확정 불가(별도 확인 안내) */
   uncertain: boolean;
 }
+
+export type NextTicketOpen = TicketGameInfo & (
+  { status: "countdown"; openAt: Date; msUntilOpen: number } |
+  { status: "postseason"; openAt: null; msUntilOpen: null }
+);
 
 /**
  * 다가오는 경기(홈+원정) 목록을 받아 "다음 예매 오픈(대기중)" 경기를 반환.
@@ -29,7 +32,7 @@ export interface NextTicketOpen {
  * - 홈/원정 통틀어 *가장 먼저 오픈되는* 대기 경기를 반환(없으면 null = 카드 미노출).
  */
 export function getNextTicketOpen(
-  upcomingGames: Array<{ date: string; time?: string; homeTeamId: number; opponentName?: string; isAway?: boolean; uncertain?: boolean }>,
+  upcomingGames: Array<{ date: string; time?: string; homeTeamId: number; opponentName?: string; isAway?: boolean; uncertain?: boolean; srId?: string }>,
   now: Date = new Date()
 ): NextTicketOpen | null {
   if (upcomingGames.length === 0) return null;
@@ -49,9 +52,16 @@ export function getNextTicketOpen(
     return new Date(y, m, d, 23, 59, 59) < now;
   };
 
-  let best: NextTicketOpen | null = null;
+  const ps = upcomingGames.filter(g => isPostseason(g.srId) && !isPastGame(g.date))
+    .sort((a, b) => a.date.localeCompare(b.date))[0];
+  if (ps) return {
+    status: "postseason", openAt: null, msUntilOpen: null, gameDate: ps.date,
+    gameTime: ps.time ?? "", opponentName: ps.opponentName ?? "", isAway: !!ps.isAway,
+    buyUrl: KBO_NOTICE_URL, provider: "KBO 공식 공지", uncertain: false,
+  };
+  let best: (TicketGameInfo & { status: "countdown"; openAt: Date; msUntilOpen: number }) | null = null;
   for (const game of upcomingGames) {
-    if (isPastGame(game.date)) continue;
+    if (isPastGame(game.date) || isPostseason(game.srId)) continue;
     const policy = TICKET_OPEN_RULES[game.homeTeamId];
     if (!policy) continue; // 주최팀 예매룰 미정의 → 스킵
     const openAt = openAtOf(game.date, game.homeTeamId);

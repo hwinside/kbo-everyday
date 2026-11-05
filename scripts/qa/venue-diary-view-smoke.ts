@@ -192,6 +192,25 @@ async function flush(): Promise<void> {
   assert.equal(diaryShowsComments(false), false);
 }
 
+// 삭제 원장 source는 썸네일 인증과 무관하게 보존하고 활성 기록으로 집계하지 않는다.
+for (const source of ["story_geofence", "diary_manual"] as const) {
+  for (const venueVerified of [true, false]) {
+    const [game] = buildDiaryHomeGames({
+      attendanceGames: [],
+      mediaGroups: [{
+        gameId: "20260521KTSS0", gameDate: "2026-05-21", stadiumName: "포항",
+        deletedAttendanceSource: source,
+        counts: { image: 1, video: 0, total: 1 },
+        thumbnails: [{ id: 1, mediaType: "image", thumbUrl: "https://cdn/1.jpg", venueVerified }],
+      }],
+    });
+    assert.equal(game.deletedAttendanceSource, source);
+    assert.equal(game.attendanceId, null);
+    assert.equal(game.attendanceSource, null);
+    assert.equal(game.result, null);
+  }
+}
+
 // 6) 홈 병합: 미디어 순서 보존 + 성적 join + 썸네일 상한/+N
 {
   const mediaGroups: DiaryMediaGroupInput[] = [
@@ -261,6 +280,27 @@ async function flush(): Promise<void> {
   assert.equal(recordOnly[0].total, 0, "기록만 추가는 미디어 0");
   assert.equal(recordOnly[0].attendanceId, 77, "CRUD 대상 원장 id 보존");
   assert.equal(recordOnly[0].label.kind, "gps", "미디어 없어도 원장 source로 GPS 라벨");
+}
+
+// 취소 원경기와 재편성 경기는 날짜/대진이 아니라 exact gameId로 분리한다.
+{
+  const cancelledId = "20260927LGHT0";
+  const replayId = "20260929LGHT0";
+  const games = buildDiaryHomeGames({
+    mediaGroups: [],
+    attendanceGames: [
+      { gameId: cancelledId, gameDate: "2026-09-27", status: "cancelled", cancelReason: "우천취소",
+        result: "L", awayTeam: { id: 1, name: "LG", score: 2 }, homeTeam: { id: 6, name: "KIA", score: 0 } },
+      { gameId: replayId, gameDate: "2026-09-29", status: "final", result: "W",
+        awayTeam: { id: 1, name: "LG", score: 0 }, homeTeam: { id: 6, name: "KIA", score: 3 } },
+    ],
+  });
+  assert.equal(games.length, 2);
+  const cancelled = games.find((g) => g.gameId === cancelledId)!;
+  assert.equal(cancelled.status, "cancelled");
+  assert.equal(cancelled.cancelReason, "우천취소");
+  assert.equal(cancelled.result, null, "취소 잔여 결과는 뷰에서도 차단");
+  assert.equal(games.find((g) => g.gameId === replayId)?.result, "W");
 }
 
 // 7) 시즌 summary 합산('전체' 세그먼트): winRate 는 합산 표본으로 재계산

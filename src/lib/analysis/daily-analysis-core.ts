@@ -472,7 +472,7 @@ export async function runDailyAnalysis(
 
     // 9a. Fetch box scores for finished games
     const boxScoreResults = await Promise.allSettled(
-      finalGames.map((g) => fetchBoxScore(g.gameId).then((bs) => [g.gameId, bs] as const)),
+      finalGames.map((g) => fetchBoxScore(g.gameId, undefined, { srId: g.srId }).then((bs) => [g.gameId, bs] as const)),
     );
     const boxScores = new Map<string, BoxScoreResult>();
     for (const r of boxScoreResults) {

@@ -23,6 +23,7 @@ export interface VenueDiaryItem {
   source: "story_geofence" | "diary_manual";
   venueVerified: boolean;
   status: AttendanceDisplayStatus;
+  cancelReason?: string | null;
   result: AttendanceResult | null;
   awayTeam: { id: number; name: string; score: number | null } | null;
   homeTeam: { id: number; name: string; score: number | null } | null;
@@ -70,12 +71,13 @@ export function buildVenueDiaryItem(
     source: row.source,
     venueVerified: row.source === "story_geofence",
     status: game?.status ?? "unavailable",
+    cancelReason: game?.status === "cancelled" ? game.cancelReason ?? null : null,
     result,
     awayTeam: game
-      ? { id: game.awayTeamId, name: game.awayName, score: game.awayScore }
+      ? { id: game.awayTeamId, name: game.awayName, score: game.status === "cancelled" ? null : game.awayScore }
       : null,
     homeTeam: game
-      ? { id: game.homeTeamId, name: game.homeName, score: game.homeScore }
+      ? { id: game.homeTeamId, name: game.homeName, score: game.status === "cancelled" ? null : game.homeScore }
       : null,
   };
 }
@@ -86,6 +88,7 @@ export function summarizeVenueAttendance(items: VenueDiaryItem[]): VenueAttendan
   let draws = 0;
 
   for (const item of items) {
+    if (item.status !== "final") continue;
     if (item.result === "W") wins += 1;
     if (item.result === "L") losses += 1;
     if (item.result === "D") draws += 1;
