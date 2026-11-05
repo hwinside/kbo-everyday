@@ -18,12 +18,14 @@ async function snapshot(db: PGlite) {
   return (await db.query<Row>('SELECT term, aliases, answer, category, source_kind, source_url, rule_version, reviewed_at::text FROM public.baseball_terms ORDER BY term')).rows;
 }
 async function main() {
-  const before = [...fixture.changes.map(c => c.before), unrelated];
+  const inventory = JSON.parse(fs.readFileSync('scripts/qa/fixtures/baseball-terms-before-innings-20261105.json', 'utf8')) as Row[];
+  for (const c of fixture.changes) assert.deepEqual(inventory.find(r => r.term === c.before.term), c.before, 'current production CAS prestate');
+  const before = [...inventory, unrelated];
   const db = await setup(before);
   const initial = await snapshot(db);
   await db.exec(migration);
   const after = await snapshot(db);
-  assert.deepEqual(after, [...fixture.changes.map(c => c.after), unrelated].sort((a,b) => initial.findIndex(r=>r.term===a.term)-initial.findIndex(r=>r.term===b.term)));
+  assert.deepEqual(after, initial.map(r => fixture.changes.find(c => c.before.term === r.term)?.after ?? r));
   await db.exec(migration);
   assert.deepEqual(await snapshot(db), after, 'reapply must be idempotent');
   let generated = 0;
@@ -34,12 +36,21 @@ async function main() {
     reserveDaily: async () => ({allowed: true, remaining: 9}), log: async () => {},
   };
   for (const question of ['연장', '연장전', '무승부']) {
+    const baseline = await answerQuestion('qa-innings-before', question, { ...deps, loadGlossary: async () => initial });
+    assert.equal(baseline.source, 'dictionary');
+    assert.match(baseline.answer, /12회/, 'current-main before reproduction');
     const result = await answerQuestion('qa-innings', question, deps);
     assert.equal(result.source, 'dictionary', question);
     assert.match(result.answer, /정규시즌 11회/);
     assert.match(result.answer, /포스트시즌 15회/);
     assert.doesNotMatch(result.answer, /12회/);
     assert.equal(result.answer, after.find(r => r.term === (question === '무승부' ? question : '연장전'))?.answer);
+  }
+  for (const question of ['APBC', '병살타', '삼중살']) {
+    const base = await answerQuestion('qa-regression', question, { ...deps, loadGlossary: async () => initial });
+    const head = await answerQuestion('qa-regression', question, deps);
+    assert.equal(head.source, base.source, question);
+    assert.equal(head.answer, base.answer, question);
   }
   assert.equal(generated, 0);
   await db.exec(rollback);
