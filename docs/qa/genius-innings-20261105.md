@@ -26,3 +26,13 @@ Q3355819는 PS15회/무승부를 답했지만 Q3355824→3355826은 한국시리
 
 ## R1 — NO-GO1회 반영
 삼식 Slack1793846282.865519: 정규11/PS15·운영167행일치·CAS/회귀/타입 PASS지만 승부치기 별칭 핵심정보 손실 NO-GO. 새 답변 두행에 ‘승부치기 없이’를 복원하고 단독별칭·KBO도 승부치기 해?를 before/after에 추가. 근거: 동일 규정 p13 제1조 및 승부치기는 올스타(p56)/퓨처스(p59) 범위라는 독립대조. 별칭/ID/타행은 불변. 미적용 migration은 `20261105023000`으로 바꾸고 reviewed_at을 오늘로 갱신. 과거 seed와 이미 적용된 migration은 불변. 역CAS/fixture도 동일 post-state로 갱신. R0 이후 재작업1, 과거GO를 새SHA에 승계하지 않는다.
+
+## R2 — R1 NO-GO 반영
+문장형 “KBO도 승부치기 해?”는 base에서도 사전 미매칭이므로 사전 전후 비교에서 제외했다. 단독 “승부치기”의 dictionary 경로·기존 핵심 설명 보존 검증은 유지한다. “KBO도 승부치기 해?”, “KBO 승부치기 있어?”, “승부치기 해?”는 머지 후 전용계정 운영 QA에서 실제 RAG/LLM 답변을 별도 관찰한다. 사전 수정의 효과로 간주하지 않는다.
+삼식의 이번 명시 요청에 따라 작성자가 push 전 `qa:genius-innings-glossary`를 직접 실행한다. 독립 QA/GO는 삼식 판정으로 별도 유지. 기존 작성자 실행0 기록은 R1까지의 이력이다. 재작업 R2, DB쓰기·머지 없음.
+
+R2 push 전 작성자 실행: `npm run qa:genius-innings-glossary` exit 0. 출력:
+```text
+PASS innings glossary: exact 2-row CAS, reapply, scoped rollback, drift atomicity, dictionary aliases 11/15
+```
+타입·lint 진단 없음, diff-check 통과. 실행 로그 `artifacts/innings-r2/`. Graphify 갱신은 `ModuleNotFoundError: No module named 'graphify'`로 미실행.

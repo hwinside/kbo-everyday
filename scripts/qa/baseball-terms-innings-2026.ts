@@ -35,7 +35,7 @@ async function main() {
     callLlm: async () => { generated++; throw new Error('dictionary must not generate'); },
     reserveDaily: async () => ({allowed: true, remaining: 9}), log: async () => {},
   };
-  for (const question of ['연장', '연장전', '무승부', '승부치기', 'KBO도 승부치기 해?']) {
+  for (const question of ['연장', '연장전', '무승부', '승부치기']) {
     const baseline = await answerQuestion('qa-innings-before', question, { ...deps, loadGlossary: async () => initial });
     assert.equal(baseline.source, 'dictionary');
     assert.match(baseline.answer, /12회/, 'current-main before reproduction');
