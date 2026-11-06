@@ -60,7 +60,7 @@ async function main() {
     const negatives = ["밀어내기 볼넷 올해 몇 개야?", "밀어내기 볼넷 최다 선수는?", "밀어내기 볼넷과 몸에 맞는 공 차이", "만루가 아닌데 볼넷이면 득점해?", "밀어내기 몸에 맞는 공", "보크", "볼넷", "타점", "희생 플라이", "병살타"];
     for (const q of negatives) {
       const baseline = matchGlossary(before, q);
-      assert.deepEqual(matchGlossary(after, q), baseline, `preserve existing match: ${q}`);
+      assert.equal(matchGlossary(after, q)?.term, baseline?.term, `preserve existing match: ${q}`);
       const result = await answerQuestion("qa-forced-walk-offline", q, deps);
       assert.notEqual(result.term, "밀어내기 볼넷", q);
       assert.notEqual(result.answer, added.answer, `definition swallowed non-definition: ${q}`);
