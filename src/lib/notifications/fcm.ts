@@ -1,3 +1,4 @@
+import { mapQueryChunks } from "@/lib/notifications/query-chunks";
 import { getMessaging } from "firebase-admin/messaging";
 import { initializeApp, getApps, cert } from "firebase-admin/app";
 import { supabaseAdmin as supabase } from "@/lib/supabase/admin";
@@ -5,7 +6,7 @@ import { DEFAULT_PREFS, type PrefKey } from "@/lib/notifications/prefs";
 import { fetchAllByKeyset } from "@/lib/db/paginate";
 import { deliverTokenChunks } from "@/lib/notifications/fcm-batch";
 import type { TokenDeliveryOutcome } from "@/lib/notifications/fcm-batch";
-import { isDeadlineExceeded, runBeforeDeadline } from "@/lib/async-deadline";
+import { DeadlineExceededError, isDeadlineExceeded, runBeforeDeadline } from "@/lib/async-deadline";
 import {
   sendDeadlineFcmChunk,
   type DeadlineFcmMessage,
@@ -133,6 +134,8 @@ export interface SendResult {
   lastError?: string | null;
   /** transient FCM 응답·deadline 미시도로 다음 fast tick 재시도가 필요한 토큰 수. */
   retryableFailed?: number;
+  prefsQueryMs?: number;
+  tokenQueryMs?: number;
   sendStartedAtMs?: number;
   sendCompletedAtMs?: number;
   /** 토큰별 FCM 접수/실패 결과. device 실도달과는 다른 서버 접수 지표다. */
@@ -140,6 +143,8 @@ export interface SendResult {
 }
 
 interface FcmSendOptions {
+  /** Opt-in for widget reads only; FCM delivery remains sequential. */
+  queryConcurrency?: 1 | 2 | 3;
   minAppBuild?: number;
   /** 이 epoch ms 이후에는 prefs/token 조회나 새 FCM chunk를 시작하지 않는다. */
   deadlineAtMs?: number;
@@ -153,8 +158,10 @@ export async function sendFcmToUsers(
   opts?: FcmSendOptions,
 ): Promise<SendResult> {
   if (userIds.length === 0) return { tokens: 0, sent: 0, failed: 0, cleaned: 0, skipped: 0, ok: true };
+  const timings: Pick<SendResult, "prefsQueryMs" | "tokenQueryMs"> = {};
   try {
-    return await sendFcmToUsersInner(userIds, payload, prefKey, platform, opts);
+    const result = await sendFcmToUsersInner(userIds, payload, prefKey, platform, opts, timings);
+    return { ...result, ...timings };
   } catch (e) {
     // getFcm()의 JSON parse/init 또는 sendEachForMulticast throw 등 —
     // ok:false로 호출자(game-status unclaim)가 재시도하게 함 (삼순 #210 재리뷰 NO-GO)
@@ -166,6 +173,7 @@ export async function sendFcmToUsers(
     return {
       tokens: 0, sent: 0, failed: 0, cleaned: 0, skipped: 0, ok: false,
       lastError,
+      ...timings,
     };
   }
 }
@@ -176,6 +184,7 @@ async function sendFcmToUsersInner(
   prefKey?: PrefKey,
   platform?: "ios" | "android",
   opts?: FcmSendOptions,
+  timings: Pick<SendResult, "prefsQueryMs" | "tokenQueryMs"> = {},
 ): Promise<SendResult> {
   if (opts?.deadlineAtMs != null && Date.now() >= opts.deadlineAtMs) {
     return { tokens: 0, sent: 0, failed: 0, cleaned: 0, skipped: 0, ok: false, lastError: "deadline_exceeded" };
@@ -189,34 +198,38 @@ async function sendFcmToUsersInner(
   const IN_CHUNK = 200;
   let targets = [...new Set(userIds)];
   let skipped = 0;
+  const prefsStartedAt = Date.now();
   if (prefKey) {
     const explicit = new Map<string, boolean>();
-    for (let i = 0; i < targets.length; i += IN_CHUNK) {
-      const slice = targets.slice(i, i + IN_CHUNK);
-      const remainingMs = opts?.deadlineAtMs == null ? null : opts.deadlineAtMs - Date.now();
-      if (remainingMs != null && remainingMs <= 0) {
-        return { tokens: 0, sent: 0, failed: 0, cleaned: 0, skipped: 0, ok: false, lastError: "deadline_exceeded" };
-      }
-      // query-guard: bounded -- outer loop caps every preference lookup to IN_CHUNK=200 user ids
-      const prefQuery = supabase
-        .from("notification_prefs")
-        .select(`user_id, ${prefKey}`)
-        .in("user_id", slice);
-      if (remainingMs != null) {
-        prefQuery.abortSignal(AbortSignal.timeout(Math.max(1, remainingMs)));
-      }
-      const { data: prefRows, error: prefErr } = await runBeforeDeadline(
-        () => prefQuery,
-        opts?.deadlineAtMs,
-      );
-      if (prefErr) {
-        console.error("[fcm] prefs query failed:", prefErr.message);
-        return { tokens: 0, sent: 0, failed: 0, cleaned: 0, skipped: 0, ok: false };
-      }
-      for (const r of prefRows ?? []) {
-        const row = r as unknown as Record<string, unknown>;
-        explicit.set(row.user_id as string, row[prefKey] as boolean);
-      }
+    try {
+      await mapQueryChunks(targets, IN_CHUNK, opts?.queryConcurrency ?? 1, async (slice) => {
+        const remainingMs = opts?.deadlineAtMs == null ? null : opts.deadlineAtMs - Date.now();
+        if (remainingMs != null && remainingMs <= 0) {
+          throw new DeadlineExceededError();
+        }
+        // query-guard: bounded -- outer loop caps every preference lookup to IN_CHUNK=200 user ids
+        const prefQuery = supabase
+          .from("notification_prefs")
+          .select(`user_id, ${prefKey}`)
+          .in("user_id", slice);
+        if (remainingMs != null) {
+          prefQuery.abortSignal(AbortSignal.timeout(Math.max(1, remainingMs)));
+        }
+        const { data: prefRows, error: prefErr } = await runBeforeDeadline(
+          () => prefQuery,
+          opts?.deadlineAtMs,
+        );
+        if (prefErr) {
+          console.error("[fcm] prefs query failed:", prefErr.message);
+          throw new Error("FCM prefs query failed");
+        }
+        for (const r of prefRows ?? []) {
+          const row = r as unknown as Record<string, unknown>;
+          explicit.set(row.user_id as string, row[prefKey] as boolean);
+        }
+      });
+    } finally {
+      timings.prefsQueryMs = Date.now() - prefsStartedAt;
     }
     const before = targets.length;
     targets = targets.filter((id) => explicit.get(id) ?? DEFAULT_PREFS[prefKey]);
@@ -224,31 +237,36 @@ async function sendFcmToUsersInner(
   }
   if (targets.length === 0) return { tokens: 0, sent: 0, failed: 0, cleaned: 0, skipped, ok: true };
 
+  const tokensStartedAt = Date.now();
   // 2. 디바이스 토큰 (동일하게 분할 조회)
-  const tokens: string[] = [];
-  for (let i = 0; i < targets.length; i += IN_CHUNK) {
-    const slice = targets.slice(i, i + IN_CHUNK);
-    const rows = await fetchAllByKeyset(
-      async (cursor, limit) => {
-        const remainingMs = opts?.deadlineAtMs == null ? null : opts.deadlineAtMs - Date.now();
-        if (remainingMs != null && remainingMs <= 0) throw new Error("FCM device token targets: deadline_exceeded");
-        let tokenQuery = supabase
-          .from("device_push_tokens")
-          .select("id, fcm_token")
-          .in("user_id", slice)
-          .order("id", { ascending: true })
-          .limit(limit);
-        if (platform) tokenQuery = tokenQuery.eq("platform", platform);
-        if (opts?.minAppBuild != null) tokenQuery = tokenQuery.gte("app_build", opts.minAppBuild);
-        if (cursor !== null) tokenQuery = tokenQuery.gt("id", cursor);
-        if (remainingMs != null) tokenQuery = tokenQuery.abortSignal(AbortSignal.timeout(Math.max(1, remainingMs)));
-        return runBeforeDeadline(() => tokenQuery, opts?.deadlineAtMs);
-      },
-      (row) => row.id,
-      { label: "FCM device token targets" },
-    );
-    for (const row of rows) tokens.push(row.fcm_token);
+  let tokenChunks: string[][];
+  try {
+    tokenChunks = await mapQueryChunks(targets, IN_CHUNK, opts?.queryConcurrency ?? 1, async (slice) => {
+      const rows = await fetchAllByKeyset(
+        async (cursor, limit) => {
+          const remainingMs = opts?.deadlineAtMs == null ? null : opts.deadlineAtMs - Date.now();
+          if (remainingMs != null && remainingMs <= 0) throw new DeadlineExceededError();
+          let tokenQuery = supabase
+            .from("device_push_tokens")
+            .select("id, fcm_token")
+            .in("user_id", slice)
+            .order("id", { ascending: true })
+            .limit(limit);
+          if (platform) tokenQuery = tokenQuery.eq("platform", platform);
+          if (opts?.minAppBuild != null) tokenQuery = tokenQuery.gte("app_build", opts.minAppBuild);
+          if (cursor !== null) tokenQuery = tokenQuery.gt("id", cursor);
+          if (remainingMs != null) tokenQuery = tokenQuery.abortSignal(AbortSignal.timeout(Math.max(1, remainingMs)));
+          return runBeforeDeadline(() => tokenQuery, opts?.deadlineAtMs);
+        },
+        (row) => row.id,
+        { label: "FCM device token targets" },
+      );
+      return rows.map((row) => row.fcm_token);
+    });
+  } finally {
+    timings.tokenQueryMs = Date.now() - tokensStartedAt;
   }
+  const tokens = tokenChunks.flat();
   if (tokens.length === 0) return { tokens: 0, sent: 0, failed: 0, cleaned: 0, skipped, ok: true };
 
   const delivery = await sendFcmToTokens(tokens, payload, { deadlineAtMs: opts?.deadlineAtMs });

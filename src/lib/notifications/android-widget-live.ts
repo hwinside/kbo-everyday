@@ -202,7 +202,9 @@ export async function pushAndroidWidgetLiveUpdates(
     const home = g.HOME_NM ?? "";
     const teamIds = [teamIdByShortName(away), teamIdByShortName(home)]
       .filter((v): v is number => v !== null);
+    const fansStartedAt = Date.now();
     const fans = await fansOf(teamIds, { deadlineAtMs });
+    const fansQueryMs = Date.now() - fansStartedAt;
     if (!fans.ok) {
       failed += 1;
       continue;
@@ -334,7 +336,7 @@ export async function pushAndroidWidgetLiveUpdates(
       payload,
       "game_start",
       "android",
-      { deadlineAtMs },
+      { deadlineAtMs, queryConcurrency: 3 },
     );
     // FCM 인프라 성공(res.ok) 확인 후에만 시그니처 기록 — 실패 시 다음 사이클이 동일 상태를
     // 재시도할 수 있게 한다(삼순 blocker③ — 실패 dedupe 오염 방지).
@@ -357,6 +359,9 @@ export async function pushAndroidWidgetLiveUpdates(
       sendStartedAtMs: res.sendStartedAtMs ?? null,
       sendCompletedAtMs: res.sendCompletedAtMs ?? null,
       sourceToFetchMs: Math.max(0, fetchedAtMs - sourceAtMs),
+      fansQueryMs,
+      prefsQueryMs: res.prefsQueryMs ?? null,
+      tokenQueryMs: res.tokenQueryMs ?? null,
       fetchToSendMs: res.sendStartedAtMs == null ? null : Math.max(0, res.sendStartedAtMs - fetchedAtMs),
       sent: res.sent,
       failed: res.failed,
