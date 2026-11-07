@@ -11,6 +11,11 @@ import { renderGameConversation, type GameConversationInput } from "../../src/li
 import { conversationTeamCandidates, mentionedTeamCanonicals, isBareTeamName, answerQuestion, type QaDeps, type LlmResult } from "../../src/lib/baseball-qa/pipeline";
 
 const cases = [
+  { id: "observed-3433658", q: "엘지가 구자욱 영입할 확률", need: "not_app" },
+  { id: "move-occurrence", q: "키움이 해외파 선수를 데려올 가능성이 얼마나 돼?", need: "not_app" },
+  { id: "return-occurrence", q: "류현진이 복귀할 가능성은 얼마나 돼?", need: "not_app" },
+  { id: "trade-occurrence", q: "삼성과 LG의 트레이드가 성사될까?", need: "not_app" },
+  { id: "conditional-championship", q: "키움이 해외파 선수를 모두 데려오면 우승할 가능성이 높아져?", need: "scenario_outcome" },
   { id: "observed-3242076", q: "키움 메이저리거 선수들이 돌아오면 몇등임", need: "scenario_outcome" },
   { id: "paraphrase", q: "해외에 있는 키움 선수들을 전부 데려온다고 치면 순위가 어떻게 돼?", need: "scenario_outcome" },
   { id: "result-change", q: "키움이 남은 경기를 모두 이기면 몇 위가 돼?", need: "qualification_or_standing" },
@@ -49,7 +54,12 @@ function plan(i: GameConversationInput, scenario: boolean) {
 }
 function check(c: Case, value: Record<string, unknown>, result: ReturnType<typeof renderGameConversation>) {
   const req = value.appRequest as Record<string, unknown>;
-  if (c.need === "not_app") { assert.notEqual(value.action, "app_facts"); return; }
+  if (c.need === "not_app") {
+    assert.equal(value.action, "other");
+    assert.notEqual(req?.informationNeed, "scenario_outcome");
+    assert.equal(result, null, "unsupported request must not render observed standings or a scenario hold");
+    return;
+  }
   assert.equal(value.action, "app_facts");
   if (c.need === "qualification_or_standing") {
     assert.ok(["qualification", "team_standing"].includes(String(req.informationNeed)));
@@ -69,11 +79,11 @@ function check(c: Case, value: Record<string, unknown>, result: ReturnType<typeo
   }
 }
 async function main() {
-  const i = input(cases[0]);
+  const i = input(cases.find(c => c.id === "observed-3242076")!);
   const before = renderGameConversation(JSON.stringify(plan(i, false)), i, { isBare: isBareTeamName });
   const after = renderGameConversation(JSON.stringify(plan(i, true)), i, { isBare: isBareTeamName });
   assert.match(before!.answer, /키움: 10위/, "old representable plan substitutes observed standings");
-  check(cases[0], plan(i, true), after);
+  check(cases.find(c => c.id === "observed-3242076")!, plan(i, true), after);
   assert.match(after!.answer, /참고 — 실제 현재 순위 \(가정의 결과가 아닙니다\)[\s\S]*키움: 10위/);
   const stale = { ...i, nowMs: now + 24 * 60 * 60 * 1000 };
   const noReference = renderGameConversation(JSON.stringify(plan(i, true)), stale, { isBare: isBareTeamName });
