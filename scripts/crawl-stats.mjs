@@ -8,6 +8,7 @@
  * 페이징: ASP.NET ViewState → Playwright 사용
  */
 
+import { ensureBatterBasic2 } from "./lib/kbo-basic2.mjs";
 import { chromium } from "playwright";
 import { readFileSync } from "fs";
 import { join, dirname } from "path";
@@ -216,6 +217,7 @@ async function crawlBatterBasic2(page) {
   );
   await page.waitForLoadState("networkidle");
   await selectSeason(page);
+  await ensureBatterBasic2(page, SEASON);
   await assertTableHeader(page, "타자 Basic2", HEADER_BATTER_BASIC2);
 
   const rows = await scrapeAllPages(page);
