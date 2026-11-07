@@ -1,0 +1,32 @@
+{
+  "observed": {
+    "questionMessageId": 3433658,
+    "question": "엘지가 구자욱 영입할 확률",
+    "previousMessages": [],
+    "actualDm": "선수 구성 변화가 전력과 경기 결과에 미칠 영향은 현재 순위표만으로 계산할 수 없습니다. 따라서 가정하신 상황의 순위는 확정할 수 없습니다.\n\n참고 — 실제 현재 순위 (가정의 결과가 아닙니다)\n2026-11-06 확인한 앱 순위표입니다.\n· LG: 4위, 78승 65패 1무",
+    "jobSource": "history_hold"
+  },
+  "sample": {
+    "windowKST": "2026-11-06 11:30–2026-11-07 11:30",
+    "logs": 28,
+    "uniqueQuestions": 27,
+    "qaExactIds": [
+      3433486,
+      3433488,
+      3433490,
+      3433492,
+      3433494,
+      3433496,
+      3433498,
+      3433500
+    ],
+    "remainingQuestions": 19,
+    "remainingActors": 11,
+    "dmPresent": 19,
+    "dmEqualsJob": 19,
+    "rawSha256": "3fb04771b6f4b22b2d3b52757547c5a459ac2446330ba3e9c4ef47f6f9bae1f1",
+    "identityCaveat": "Unmarked cohort is not proof of natural use. QA8 removed by exact IDs only.",
+    "selected": 3433658
+  },
+  "afterExpected": "Not scenario_outcome; preserve the occurrence-likelihood question for the existing evidence path. No invented transfer probability. Downstream quality requires separate independent evidence."
+}
