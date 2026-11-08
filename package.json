@@ -593,7 +593,8 @@
     "qa:season-predictions-close:pglite": "node --import tsx scripts/qa/season-predictions-close-pglite.ts",
     "qa:postseason-ladder": "node --import tsx --test tests/postseason-ladder.test.ts tests/postseason-schedule.test.ts",
     "qa:genius-innings-glossary": "tsx scripts/qa/baseball-terms-innings-2026.ts",
-    "qa:genius-forced-walk-definition": "tsx scripts/qa/genius-forced-walk-definition.ts"
+    "qa:genius-forced-walk-definition": "tsx scripts/qa/genius-forced-walk-definition.ts",
+    "qa:genius-series-definition": "tsx scripts/qa/genius-series-definition.ts"
   },
   "dependencies": {
     "@capacitor-firebase/messaging": "^8.3.0",
