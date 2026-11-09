@@ -704,6 +704,26 @@ const SCOPE_FILLER_RE = new RegExp(
 );
 
 /**
+ * 요청 어미가 겹쳐도 끝까지 분해되는 접미부를 먼저 제거한다.
+ * `알려주세요`를 긴 조각 `알려주`부터 지우면 `세요`가 유령 내용어로 남는다.
+ * 기존 어휘만 사용한 뒤쪽 동적 분해로 `알려` + `주세요`를 찾는다.
+ * 정규식 반복의 역추적 폭증 없이 O(문자 수 × 어휘 수)로 처리하며,
+ * 분해할 수 없는 실제 내용어와 메타어 위치 마커는 보존한다.
+ */
+function stripScopeFillers(marked: string): string {
+  const complete = new Uint8Array(marked.length + 1);
+  complete[marked.length] = 1;
+  let suffixStart = marked.length;
+  for (let i = marked.length - 1; i >= 0; i--) {
+    if (SCOPE_ASK_FILLERS_MULTI.some((part) => marked.startsWith(part, i) && complete[i + part.length])) {
+      complete[i] = 1;
+      suffixStart = i;
+    }
+  }
+  return marked.slice(0, suffixStart).replace(SCOPE_FILLER_RE, "");
+}
+
+/**
  * 메타어를 **긴 것부터** 떼어낸다.
  *
  * ⚠️ 삼순 2026-08-08 조건 ② — `프로야구 규칙` 누락. 선언 순서대로 떼면
@@ -814,7 +834,7 @@ export function isScopeAskPhrase(question: string): boolean {
     //   조사는 단독으로 발화되지 않으므로, 메타어와 붙어 있지 않은 토큰이 "조사뿐"일 수는 없다.
     //   이 조건이 없으면 띄어쓴 `가을 야구` 의 `가을` 토큰이 그대로 조사로 분해된다
     //   (붙여쓴 `가을야구` 만 고치고 띄어쓴 쪽을 놓치는 반쪽 수정이 된다).
-    const stripped = marked.replace(SCOPE_FILLER_RE, "");
+    const stripped = stripScopeFillers(marked);
     const lastMark = stripped.lastIndexOf(SCOPE_META_MARK);
     if (lastMark === -1) {
       // 메타어를 안 떼어낸 토큰 — 남은 게 아예 없을 때만 통과시킨다(`뭔가있어` 같은 순수 꺼풀).
