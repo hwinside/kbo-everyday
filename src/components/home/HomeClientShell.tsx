@@ -1,5 +1,4 @@
 "use client";
-import PostseasonLadder from "./PostseasonLadder";
 import { installForegroundTask } from "@/lib/foreground-task";
 
 import { useState, useEffect, useCallback, useMemo, useRef } from "react";
@@ -781,8 +780,6 @@ export default function HomeClientShell({ initialGames, initialLiveGames, initia
         const allStarLive = allLiveData.find((g) => g.gameId === allStarGame.id);
         return <AllStarGameCard game={allStarGame} live={allStarLive} />;
       })()}
-
-      <PostseasonLadder />
 
       {/* 팀 카드 (필수, 토글 없음) — 경기카드(MyTeamHero)를 안에 종속 임베드(④=B) */}
       {myTeam && (

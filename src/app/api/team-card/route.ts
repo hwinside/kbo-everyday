@@ -1,15 +1,15 @@
-import { fetchGamesUserFacing } from "@/lib/crawler/games-user-facing";
 import { NextRequest, NextResponse } from "next/server";
-import { fetchStandings, teamCardRank } from "@/lib/crawler/kbo-api";
+import { fetchStandings, teamCardRank, STANDINGS_SEASON } from "@/lib/crawler/kbo-api";
 import { getMonthGames } from "@/lib/crawler/season-games-cache";
 import { appendLiveRankIfStale } from "@/lib/analysis/rank-history-selfheal";
 import { fetchAllRows } from "@/lib/db/paginate";
 import { weeklyBattingRankMap, weeklyPitchingRankMap, type WeekGameLogRow } from "@/lib/analysis/weekly-team-rank";
 import { supabaseAdmin } from "@/lib/supabase/admin";
+import { REGULAR_SEASON_WINDOWS } from "@/lib/constants/season";
 import { TEAMS } from "@/lib/constants/teams";
 
 // GET /api/team-card?team=<slug>
-// 홈 팀 카드용 데이터 조립: 순위/게임차 + 연승연패 + 최근 5경기 폼 + 다음 경기(예고선발)
+// 홈 팀 카드용 데이터 조립: 순위/게임차 + 연승연패 + 최근 5경기 폼
 // + 시즌 순위 변동(daily_standings_snapshot). 기존 lib 재사용, 신규 크롤 없음.
 
 type FormResult = "W" | "L" | "D";
@@ -27,12 +27,6 @@ function mondayOf(iso: string): string {
   const dow = (d.getUTCDay() + 6) % 7; // 월=0
   d.setUTCDate(d.getUTCDate() - dow);
   return d.toISOString().slice(0, 10);
-}
-
-function kstDateStr(offsetDays: number): string {
-  const base = new Date(Date.now() + 9 * 60 * 60 * 1000);
-  base.setUTCDate(base.getUTCDate() + offsetDays);
-  return base.toISOString().slice(0, 10).replace(/-/g, "");
 }
 
 // 이웃 팀과의 게임차 = KBO 공식 게임차(1위 대비)의 차이. 순위(승률 기준)와
@@ -74,10 +68,15 @@ export async function GET(req: NextRequest) {
         }
       : null;
 
-    // 2) 최근 5경기 폼 — 이번 달(부족하면 지난 달까지) 종료 경기에서 산출
-    const now = new Date(Date.now() + 9 * 60 * 60 * 1000);
-    const thisMonth = now.toISOString().slice(0, 7);
-    const prev = new Date(now);
+    // 2) 종료 뒤에도 마지막 정규시즌 월을 기준으로 최근 5경기를 보존한다.
+    // 순위와 동일 시즌을 사용한다. 월말 setUTCMonth 오버플로를 막기 위해 1일로 고정.
+    const window = REGULAR_SEASON_WINDOWS[String(STANDINGS_SEASON)];
+    const today = new Date(Date.now() + 9 * 60 * 60 * 1000).toISOString().slice(0, 10);
+    const iso = (date: string) => `${date.slice(0, 4)}-${date.slice(4, 6)}-${date.slice(6, 8)}`;
+    const seasonEnd = window?.finalized ? iso(window.end) : `${STANDINGS_SEASON}-12-31`;
+    const recordDate = today < seasonEnd ? today : seasonEnd;
+    const thisMonth = recordDate.slice(0, 7);
+    const prev = new Date(`${thisMonth}-01T00:00:00Z`);
     prev.setUTCMonth(prev.getUTCMonth() - 1);
     const prevMonth = prev.toISOString().slice(0, 7);
 
@@ -104,46 +103,20 @@ export async function GET(req: NextRequest) {
       })
       .filter((r): r is FormResult => r !== null);
 
-    // 3) 다음 경기 + 예고선발 (라이브 fetchGames로 최신 예고선발 확보)
-    let nextGame: {
-      gameId: string;
-      date: string;
-      time: string;
-      stadium: string;
-      home: boolean;
-      opponentId: number;
-      myStarter: string | null;
-      oppStarter: string | null;
-    } | null = null;
-    for (let i = 0; i < 10 && !nextGame; i++) {
-      const date = kstDateStr(i);
-      const games = await fetchGamesUserFacing(date).catch(() => []);
-      const g = games.find(
-        (x) =>
-          (x.awayTeamId === team.id || x.homeTeamId === team.id) && x.status === "scheduled",
-      );
-      if (g) {
-        const isHome = g.homeTeamId === team.id;
-        nextGame = {
-          gameId: g.gameId,
-          date: g.date,
-          time: g.time,
-          stadium: g.stadium,
-          home: isHome,
-          opponentId: isHome ? g.awayTeamId : g.homeTeamId,
-          myStarter: (isHome ? g.homeStarterName : g.awayStarterName) || null,
-          oppStarter: (isHome ? g.awayStarterName : g.homeStarterName) || null,
-        };
-      }
-    }
+    // 경기 카드는 HomeClientShell의 gameSlot이 담당한다. 사용하지 않는 향후 10일
+    // 직렬 조회가 무경기 기간에 카드 전체를 막지 않도록 제거. 구 클라이언트 계약 유지.
+    const nextGame = null;
 
     // 4) 시즌 순위 변동 — daily_standings_snapshot에서 팀 rank 시계열(public read)
     let rankHistory: { date: string; rank: number }[] = [];
     try {
+      // query-guard: bounded -- One team and one calendar season; UNIQUE(date, team_id) bounds the complete history to at most 366 rows.
       const { data } = await supabaseAdmin
         .from("daily_standings_snapshot")
         .select("date, rank")
         .eq("team_id", team.id)
+        .gte("date", `${STANDINGS_SEASON}-01-01`)
+        .lte("date", recordDate)
         .order("date", { ascending: true });
       if (Array.isArray(data)) {
         rankHistory = data.map((r) => ({ date: String(r.date), rank: Number(r.rank) }));
@@ -156,8 +129,7 @@ export async function GET(req: NextRequest) {
     //     2026-06-19·2026-07-20 실사례) 그래프가 마지막 스냅샷에서 멈춰 실제 순위 하락을
     //     못 보여준다. 최신 스냅샷이 오늘(KST)보다 과거면 라이브 순위(현재 카드 헤더와 동일)로
     //     '오늘' 포인트를 덧붙인다. 저장 스냅샷은 변경하지 않음.
-    const todayKstIso = new Date(Date.now() + 9 * 60 * 60 * 1000).toISOString().slice(0, 10);
-    rankHistory = appendLiveRankIfStale(rankHistory, todayKstIso, standing?.rank ?? null);
+    rankHistory = appendLiveRankIfStale(rankHistory, recordDate, standing?.rank ?? null);
 
     // 5) 순위권 선수는 TeamCard 클라이언트가 /api/stats + rankByStat(공식 랭킹 소스)로
     //    계산한다(리더보드와 100% 동일). daily_stats_snapshot은 부문이 9개뿐이라 미사용.
