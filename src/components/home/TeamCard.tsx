@@ -212,6 +212,8 @@ export default function TeamCard({ team, gameSlot, refreshNonce = 0 }: TeamCardP
   const detailsId = useId();
   const [data, setData] = useState<TeamCardData | null>(null);
   const [loaded, setLoaded] = useState(false);
+  const [loadError, setLoadError] = useState(false);
+  const [retryNonce, setRetryNonce] = useState(0);
   const [topPlayers, setTopPlayers] = useState<TopPlayer[]>([]);
   // 괄호 순위 = team-card API가 그래프와 같은 최신 주차·10구단 competition ranking으로 반환(timebase 일치).
   // 이전 /api/team-records 시즌 누적 순위 fetch는 제거(주간 그래프↔시즌 순위 불일치 사고).
@@ -220,15 +222,31 @@ export default function TeamCard({ team, gameSlot, refreshNonce = 0 }: TeamCardP
 
   useEffect(() => {
     let cancelled = false;
-    // cache: no-store — 응답이 `cache-control: public`이라 웹봰 HTTP 캐시가 오래된 그래프를
-    // 물고 있다(당겨서 새로고침해도 fetch URL이 동일해 캐시 적중). 항상 서버
-    // 최신(순위변동/주간그래프)를 반영하도록 클라 캐시를 우회(CDN s-maxage=300이 origin 보호).
-    fetch(`/api/team-card?team=${team.slug}`, { cache: "no-store" })
-      .then((r) => (r.ok ? r.json() : null))
-      .then((d: TeamCardData | null) => { if (!cancelled) { setData(d && !("error" in d) ? d : null); setLoaded(true); } })
-      .catch(() => { if (!cancelled) setLoaded(true); });
-    return () => { cancelled = true; };
-  }, [team.slug, refreshNonce]);
+    const controller = new AbortController();
+    void Promise.resolve().then(() => {
+      if (!cancelled) { setLoaded(false); setLoadError(false); setData(null); }
+    });
+    // 응답/본문이 멈춰도 무한 스켈레톤 대신 재시도를 제공한다.
+    const timeout = setTimeout(() => {
+      controller.abort();
+      if (!cancelled) { setLoadError(true); setLoaded(true); }
+    }, 25_000);
+    fetch(`/api/team-card?team=${team.slug}`, { cache: "no-store", signal: controller.signal })
+      .then((r) => {
+        if (!r.ok) throw new Error("Team card unavailable");
+        return r.json();
+      })
+      .then((d: TeamCardData | null) => {
+        if (!d || "error" in d) throw new Error("Team card unavailable");
+        if (!cancelled && !controller.signal.aborted) setData(d);
+      })
+      .catch(() => { if (!cancelled) setLoadError(true); })
+      .finally(() => {
+        clearTimeout(timeout);
+        if (!cancelled) setLoaded(true);
+      });
+    return () => { cancelled = true; clearTimeout(timeout); controller.abort(); };
+  }, [team.slug, refreshNonce, retryNonce]);
 
   // 순위권 선수 — 공식 랭킹 소스(/api/stats + rankByStat). 리더보드와 동일.
   useEffect(() => {
@@ -272,7 +290,7 @@ export default function TeamCard({ team, gameSlot, refreshNonce = 0 }: TeamCardP
 
   // 경기 링크는 fan-out 결과와 독립이다. team-card 가 빈 응답/실패여도 gameSlot 이 있으면
   // 카드 자체를 유지해 MY TEAM 경기 진입 동선을 없애지 않는다.
-  if (loaded && !gameSlot && !data?.standing && !data?.nextGame && !data?.recentForm?.length) return null;
+  if (loaded && !loadError && !gameSlot && !data?.standing && !data?.nextGame && !data?.recentForm?.length) return null;
 
   const streak = formatStreak(data?.standing?.streak ?? null);
   const st = data?.standing;
@@ -293,6 +311,13 @@ export default function TeamCard({ team, gameSlot, refreshNonce = 0 }: TeamCardP
       {/* 1. 순위 정보 (클릭 → 순위 페이지) + 최근 5경기 2분할 — 항상 최상단 */}
       {!loaded ? (
         <div className="h-24 animate-pulse rounded-xl bg-bg-secondary" />
+      ) : loadError ? (
+        <div role="status" className="rounded-xl bg-bg-secondary px-3 py-3 text-xs text-text-secondary">
+          <p>팀 기록을 불러오지 못했어요.</p>
+          <button type="button" onClick={() => setRetryNonce((n) => n + 1)} className="mt-2 min-h-9 rounded-md border border-border px-3 font-semibold text-text-primary">
+            다시 시도
+          </button>
+        </div>
       ) : (
         <>
           {(st || (data?.recentForm?.length ?? 0) > 0) && (
