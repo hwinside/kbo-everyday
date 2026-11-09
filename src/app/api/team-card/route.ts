@@ -110,6 +110,7 @@ export async function GET(req: NextRequest) {
     // 4) 시즌 순위 변동 — daily_standings_snapshot에서 팀 rank 시계열(public read)
     let rankHistory: { date: string; rank: number }[] = [];
     try {
+      // query-guard: bounded -- One team and one calendar season; UNIQUE(date, team_id) bounds the complete history to at most 366 rows.
       const { data } = await supabaseAdmin
         .from("daily_standings_snapshot")
         .select("date, rank")

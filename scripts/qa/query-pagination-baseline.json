@@ -1,6 +1,6 @@
 {
   "version": 2,
-  "generatedFrom": "a0c7711f149a0baf8929824d344172e8478eaf02",
+  "generatedFrom": "dd3e7dff3809d09f2f1c65533a7ff62a3efb5dc8",
   "violations": {
     "0034fe9a6a6cff327c64": {
       "count": 1,
@@ -708,13 +708,6 @@
       "file": "src/app/api/admin/messages/route.ts",
       "subject": "admin_delivery_jobs",
       "detail": "growing-table limit requires an explicit bounded annotation or a structurally verified keyset helper"
-    },
-    "857d916b294de944a8f4": {
-      "count": 1,
-      "kind": "unbounded_growing_select",
-      "file": "src/app/api/team-card/route.ts",
-      "subject": "daily_standings_snapshot",
-      "detail": "add a bound, unique-key lookup, or query-guard annotation"
     },
     "877160a6e0e572ae67bc": {
       "count": 1,
