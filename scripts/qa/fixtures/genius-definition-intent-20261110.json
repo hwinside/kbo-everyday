@@ -1,0 +1,27 @@
+{
+  "qaObserved": [
+    {
+      "questionId": 3535032,
+      "question": "가을야구 알려주세요",
+      "answer": "최신 포스트시즌 대진을 확인하지 못했습니다. 미확정 대진이나 전적은 추측하지 않겠습니다.",
+      "source": "history_hold"
+    }
+  ],
+  "newUnmarked": [
+    {
+      "questionId": 3535228,
+      "question": "한국시리즈 우승팀",
+      "answer": "최신 포스트시즌 대진을 확인하지 못했습니다. 미확정 대진이나 전적은 추측하지 않겠습니다.",
+      "source": "history_hold",
+      "previous": []
+    },
+    {
+      "questionId": 3573452,
+      "question": "야구 투수 동작이나 여러 상황과 관련된 용어들과 뜻 알려주세요.",
+      "answer": "야구 규칙에 규정된 투수 동작과 관련 용어들의 의미를 설명해 드릴게요. 투구란 투수가 타자에게 던진 공을 말하며 선수가 다른 선수에게 던지는 공은 모두 송구라고 불러요. 피처스 피벗 풋은 투수가 투구할 때 투수판에 대고 있는 발을 가리켜요. 그리고 퀵 리턴 피치는 타자가 타격 준비를 갖추기 전에 던지는 투구를 뜻해요. 정규투구가 지나치게 높거나 낮거나 옆으로 빠졌거나 본루에 오기 전에 땅에 떨어져 포수가 보통의 수비로 처리할 수 없어 주자를 진루시켰을 때 폭투가 기록돼요.\n\n📄 출처: KBO 공식 자료",
+      "source": "rag",
+      "previous": []
+    }
+  ],
+  "notes": "QA observed failure is not natural-use evidence; champion result unresolved, not this patch target."
+}

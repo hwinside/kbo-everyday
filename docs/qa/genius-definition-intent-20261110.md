@@ -1,0 +1,22 @@
+# Daily quality 2026-11-10: concepts are not current event observations
+
+## Evidence and root cause
+- Fixed window Nov 9 11:30–Nov 10 11:30 KST: 9 questions / 3 actors. Exact dedicated QA7 (3535020/22/24/26/28/30/32) separated. Remaining 2 questions / 2 unmarked actors; actual DM2/2 equals job.answer, previous4 query returns empty for both. Unmarked identity is NOT proven natural use.
+- Raw SHA256: 604f8b52ab68ecb6da618ff285ad41aa55aa8e090fed30d0818ca3814e23c53a. Local collection state/genius-quality-loop-20261110/sample; redacted fixture included.
+- Existing QA Q3535032 `가을야구 알려주세요` returns history_hold: `최신 포스트시즌 대진을 확인하지 못했습니다. 미확정 대진이나 전적은 추측하지 않겠습니다.` It is an explicit QA observation, not a natural-use failure. Current DM/context cannot be fetched because QA account was cleaned; no reconstructed context presented as actual. The previous run's independent QA closure preserves the observation.
+- Fresh Q3535228 `한국시리즈 우승팀` also gets bracket hold; this result/winner axis remains unresolved, not silently treated as a definition request. Q3573452 requests pitcher terminology and gets RAG explanation; retain as regression, factual completeness not yet adjudicated.
+- Current main base f6296666f75f2d8f057f0e3cc11f5a7a65e6d1f3 keeps the same classifier contract without a concept-vs-current-observation distinction. Root hypothesis: tournament names dominate requested information. Change only the existing semantic prompt; no keyword/individual guards, enums, DB/cache, workflow or rendering edits.
+
+## Before / after and release gate
+- Before: actual prior dedicated-QA bracket hold above. After EXPECTED, not measured: concept explanation yields the existing dictionary/document evidence path instead of an unrelated current bracket hold. This is removal of irrelevant routing, not proof of a correct complete definition.
+- Independent reviewer must reproduce on current base with the supplied paired harness BEFORE GO. If no reproducible base defect, HOLD: do not merge an unevidenced improvement. Preserve failures/timeouts and all repeats.
+- Reviewer-only command: `npx tsx scripts/qa/genius-definition-intent.ts --base-root=<base isolated worktree> --out=<artifact.json>` in protected API environment. 18 cases × 3 repeats × base/head = 108 observations, real selector and renderer; answerQuestion runs with no-write deps and downstream UNSURE stub. Stubbed downstream is orchestration coverage, NOT factual-answer quality or production QA.
+- Includes original wording, explicit meaning/structure/comparison, context reset, pitcher terminology, actual bracket/schedule/single-game result, qualification, standings, event date and acquisition probability. Add independent paraphrases and full live downstream checks for original wording; retain unsupported abstentions as unresolved rather than calling them useful answers.
+- Existing scenario-outcome/history and app-fact regressions are reviewer-owned; run impacted cases, preserve base-identical failures. Actual production web-DM dedicated account QA after READY must inspect original wording, definition paraphrases and current schedule controls. Native/natural-use remains unverified.
+
+## Workflow / preserved work
+- gh pr list + git ls-remote checked; no open implementation of this axis. Worktree under OPENCLAW_REVIEW_ROOT, author implemented directly. Author executes type/lint/diff only; independent QA execution zero.
+- #1541 exact22d58f13c6827101037592d36d3fef5ea4f48728 stays NO-GO11, failed term-referent approach stopped; code and counterexamples retained, not reset or reused.
+- #1523 CLOSED (Nov8), sibling experiment exact7d58238216fa2e5fffc922686eb13cf96ba3fcd1 and remote branch retained. #1536 Draft exact7b52745f6464f4e8b07257924cfff85c675895a7 overlaps merged design, closure recommendation retained. #1537 Draft exact6696de5d37e040085701b9527325578351959933 effect HOLD/context reversal retained, excluded from product adoption. #1391 remains HOLD. No close/delete/force actions.
+- Maximum 3 review rounds. Current exact Samsik GO + required checks permits normal merge under standing Nov1 owner approval; no renewed owner gate. NO-GO/conditional do not pass. Flow plus same-thread reviewer event drives continuation; never report analysis-only as completed improvement.
+- Product/harness type and lint checks recorded in PR. Graphify Python module unavailable; no successful graph update claimed.
