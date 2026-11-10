@@ -61,6 +61,10 @@ npx wrangler deploy
 - Repeat firing notifications no more frequently than every 30 minutes; the Worker also deduplicates by Grafana fingerprint.
 - Always send resolved notifications.
 - Use the repository rule ID as the Grafana alert rule name.
+- For `supabase-realtime-lag-critical` only, set Grafana **No data → Normal** (`noDataState: "OK"` in the provisioning API). An absent lag series is not evidence of a backlog above 64 MiB. Preserve the 64 MiB threshold, three-minute pending period, query-error handling, and all other rules.
+- The catalog is not automatically deployed: manually copy this per-rule setting into the Grafana-managed rule after review/approval, then read it back. A repository merge alone does not change production alerts.
+- Keep `supabase-metrics-stale` enabled: it detects a missing `pg_up` series, not a Realtime-only outage. Normal on NoData is an alert policy, **not proof of service health**. Historical gaps and user impact still require independent verification.
+- Deployment verification: confirm a missing lag series does not fire this backlog alert, a present value above 67,108,864 bytes for three minutes still fires, and missing `pg_up` still fires the separate stale-metrics rule. Record the effective Grafana rule and results; do not mark production verified from the catalog alone. Rollback: restore this rule's previous NoData setting and read it back.
 
 ## Cost guard
 

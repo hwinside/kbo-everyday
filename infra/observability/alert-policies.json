@@ -110,6 +110,7 @@
     {
       "id": "supabase-realtime-lag-critical",
       "source": "prometheus",
+      "noDataState": "OK",
       "severity": "critical",
       "for": "3m",
       "expr": "replication_realtime_lag_bytes{supabase_project_ref=\"${SUPABASE_PROJECT_REF}\"} > 67108864"
