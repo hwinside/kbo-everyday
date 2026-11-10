@@ -29,14 +29,27 @@ function batch(over: Partial<{ claimed: number; pending: number; snapshotComplet
   return {
     claimed: over.claimed ?? 1, pending: over.pending ?? 0,
     snapshotCompleted: over.snapshotCompleted ?? true, fcmAcceptedDelta: over.fcmAcceptedDelta ?? 1,
+    deliveryStatus: (over.pending ?? 0) > 0 ? "pending" as const : "delivered" as const,
     fcmAcceptedTotal: 1, permanentFailed: over.permanentFailed ?? 0, expired: over.expired ?? 0,
   };
 }
 function fin(over: Partial<LineupDeliveryResult> = {}): LineupDeliveryResult {
+  const accepted = over.fcmAcceptedTotal ?? 0;
+  const pending = over.pending ?? 0;
+  const permanentFailed = over.permanentFailed ?? 0;
+  const expired = over.expired ?? 0;
+  const derivedStatus = pending > 0
+    ? "pending"
+    : accepted > 0 && (permanentFailed > 0 || expired > 0)
+      ? "partial"
+      : accepted === 0 && (permanentFailed > 0 || expired > 0)
+        ? "failed"
+        : "delivered";
   return {
     snapshotCompleted: over.snapshotCompleted ?? false, fcmAcceptedDelta: over.fcmAcceptedDelta ?? 0,
-    fcmAcceptedTotal: over.fcmAcceptedTotal ?? 0, pending: over.pending ?? 0,
-    permanentFailed: over.permanentFailed ?? 0, expired: over.expired ?? 0,
+    deliveryStatus: over.deliveryStatus ?? derivedStatus,
+    fcmAcceptedTotal: accepted, pending,
+    permanentFailed, expired,
   };
 }
 // 실 supabase 호출 방지 기본 fake: finalize/ listDue 는 no-op(=열화 없음). 각 테스트가 필요 시 override.
@@ -194,6 +207,23 @@ async function main() {
       }),
     });
     ok("expired>0 → status failed(경보)", r.summary.expired === 6 && r.status === "failed"); // G1 home+away 각 3
+    ok("expired terminal → failed snapshot 2건 운영표면 보존", r.summary.snapshotsFailed === 2);
+  }
+
+  // ── terminal partial: accepted 일부 + permanent 일부를 snapshotsCompleted 성공으로만 뭉개지 않음 ──
+  {
+    const r = await runLineupWatchdog({
+      dateStr: "20260729", deadlineAtMs: Date.now() + 16_000,
+      deps: base({
+        fetchGames: async () => [game("GP", "scheduled", 1, 2)],
+        fetchLineupConfirmed: async () => true,
+        openSnapshot: async () => Date.now() + 60_000,
+        deliverBatch: async () => batch({ claimed: 2, pending: 0, snapshotCompleted: true, fcmAcceptedDelta: 1, permanentFailed: 1 }),
+        finalizeSnapshot: async () => fin({ snapshotCompleted: true, fcmAcceptedTotal: 1, permanentFailed: 1 }),
+      }),
+    });
+    ok("partial terminal → status failed", r.status === "failed");
+    ok("partial terminal → snapshotsPartial 2건 운영표면 보존", r.summary.snapshotsPartial === 2);
   }
 
   // ── (re-gate ③) due-ledger drainer 2-tick: tick1 team1 drain 실패, tick2 game live 여도 due 원장 이어 drain ──
