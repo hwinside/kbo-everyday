@@ -1,0 +1,57 @@
+{
+  "question": "포스트시즌 알려줘",
+  "before": "포스트시즌은 와일드카드 결정전 승자 간 준플레이오프 5전 3선승제, 2위 팀과 준플레이오프 승자 간 플레이오프 5전 3선승제, 그리고 1위 팀과 플레이오프 승자 간 한국시리즈 7전 4선승제로 거행돼요.\n\n📄 출처: KBO 공식 자료",
+  "questionMessageId": 3573465,
+  "cohort": "exact previous production QA, deleted dedicated account",
+  "previousTurn": null,
+  "previousContextStatus": "deleted QA messages unavailable, not reconstructed",
+  "naturalUserValidation": false,
+  "nonQaControl": {
+    "question": "야구 글로벌 임팩트가 뭐여",
+    "actualReply": "이 내용은 지금 정확히 답변드리기 어렵습니다.",
+    "questionMessageId": 3573589,
+    "previousMessages": [
+      {
+        "id": 3063423,
+        "content": "와인드업과 솃업에 차이",
+        "payload": null,
+        "created_at": "2026-10-27T15:42:58.881368+00:00",
+        "same_sender": true
+      },
+      {
+        "id": 3063424,
+        "content": "정규의 투구 자세로는 와인드업 포지션과 세트 포지션의 두 가지가 있으며 투수는 이들을 수시로 사용할 수 있어요. 투수는 투수판에 발을 대고 포수로부터 사인을 받아야 해요. 자료에서는 두 가지 정규투구 자세가 존재함을 규정하고 있어요.\n\n📄 출처: KBO 공식 자료",
+        "payload": {
+          "type": "baseball_genius_reply",
+          "match_path": "rag",
+          "reply_kind": "answer",
+          "source_url": "https://www.koreabaseball.com/kbo/board/ebook/ebookpublication.aspx",
+          "question_message_id": 3063423
+        },
+        "created_at": "2026-10-27T15:43:06.162206+00:00",
+        "same_sender": false
+      },
+      {
+        "id": 3063425,
+        "content": "근데 자세에서의 와인드업과 솃업의 차에",
+        "payload": null,
+        "created_at": "2026-10-27T15:44:00.814656+00:00",
+        "same_sender": true
+      },
+      {
+        "id": 3063426,
+        "content": "정규투구 자세에는 와인드업 포지션과 세트 포지션의 두 가지가 있으며 투수는 이들을 수시로 사용할 수 있어요. 두 자세 모두 투수가 투수판에 발을 대고 포수로부터 사인을 받아야 하는 점은 같지만 명칭과 규정된 투구 동작에서 차이가 있어요.\n\n📄 출처: KBO 공식 자료",
+        "payload": {
+          "type": "baseball_genius_reply",
+          "match_path": "rag",
+          "reply_kind": "answer",
+          "source_url": "https://www.koreabaseball.com/kbo/board/ebook/ebookpublication.aspx",
+          "question_message_id": 3063425
+        },
+        "created_at": "2026-10-27T15:44:08.98958+00:00",
+        "same_sender": false
+      }
+    ],
+    "status": "unsure unchanged; not solved by this change"
+  }
+}
