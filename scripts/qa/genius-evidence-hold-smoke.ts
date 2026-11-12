@@ -4,6 +4,8 @@ import { answerQuestion, unpackStoredQaFinal, type QaDeps, type LlmResult } from
 import { RAG_DISCARD_REASONS, validateRagResponse, type RagEvidence } from "../../src/lib/baseball-qa/rag/retrieve";
 import { renderRagHold, RAG_DATE_HOLD, RAG_NUMBER_HOLD, RAG_NEUTRAL_HOLD, RAG_RESPONSE_HOLD } from "../../src/lib/baseball-qa/rag/hold-answer";
 
+import { UNVERIFIED_TERM_ANSWER } from "../../src/lib/baseball-qa/term-knowledge";
+
 const official: RagEvidence = { content: "2025년 포스트시즌은 10월 6일 시작했다.", pageTitle: "연감", sectionPath: "포스트시즌",
   canonicalUrl: "https://www.koreabaseball.com/kbo/board/ebook/ebookpublication.aspx", revision: "fixture", asOf: "2026-09-30", sourceGrade: "tier1",
   calendarSeason: { season: 2025, axis: "calendar_event", heading: "2025 포스트시즌", headingPage: 1, pageTextSha256: "a".repeat(64), sourcePdfSha256: "b".repeat(64) } };
@@ -15,7 +17,7 @@ for (const reason of RAG_DISCARD_REASONS) {
   assert.doesNotMatch(answer, /이해하지 못|구체적으로|다시 작성|공식 자료가 없/);
 }
 // The same validator result must not diagnose the user's intent or blame
-// the available evidence. No expression classifier is added to production.
+// the available evidence. The renderer itself never infers expression intent.
 for (const question of ["음 그렇구나", "응 너 야알못", "나 혈압 120나옴", "왤케 억양이 안조아", "미안한데 프사바꾸는법도 아니..?"]) {
   const value = validateRagResponse(JSON.stringify({ status: "INSUFFICIENT" }),
     { numericEvidence: true, evidence: [official], generalFallback: { question } });
@@ -32,9 +34,10 @@ for (const question of ["이해가 안돼… 예를 들어줘", "그니까 어�
 }
 assert.equal(renderRagHold({ kind: "insufficient", reason: "numeric_claim_ungrounded" }), RAG_NEUTRAL_HOLD);
 assert.doesNotMatch(RAG_NUMBER_HOLD, /필요한|질문하신|자료가 없/);
-async function run(path: "official" | "team", question: string, raw: string, expected: string, reason: string) {
+async function run(path: "official" | "team", question: string, raw: string, expected: string, reason: string, classification = '{"status":"UNSURE"}', expectedSource = "unsure") {
   let stored: LlmResult | null = null;
   let calls = 0;
+  let classificationCalls = 0;
   let lastLog: Parameters<QaDeps["log"]>[0] | undefined;
   const provider = async () => { calls++; return { text: raw, inputTokens: 7, outputTokens: 3 }; };
   const deps: QaDeps = {
@@ -44,13 +47,19 @@ async function run(path: "official" | "team", question: string, raw: string, exp
     reserveDaily: async () => ({ allowed: true, remaining: 9 }),
     searchOfficialRag: async () => path === "official" ? [official] : [], callOfficialRagLlm: provider,
     searchRag: async () => [team], callTeamRagLlm: provider,
-    callLlm: async () => { throw new Error("no second generic provider"); },
+    callLlm: async () => {
+      classificationCalls++;
+      assert.equal(classificationCalls, 1, "classification is bounded and never repeated on replay");
+      assert.equal(path, "official");
+      assert.equal(reason, "model_insufficient", "other holds must not classify");
+      return { text: classification, inputTokens: 2, outputTokens: 1 };
+    },
     getLlmState: async () => ({ started: Boolean(stored), result: stored, ownerActive: false }),
     acquireLlmStart: async () => true, storeLlm: async (value) => { stored = value; },
     log: async (entry) => { lastLog = entry; },
   };
   const result = await answerQuestion("evidence-hold-fixture", question, deps);
-  assert.equal(result.source, "unsure");
+  assert.equal(result.source, expectedSource);
   assert.equal(result.answer, expected);
   assert.equal(calls, 1);
   assert.equal(lastLog?.ragDiscardReason, reason);
@@ -62,11 +71,15 @@ async function run(path: "official" | "team", question: string, raw: string, exp
   assert.equal(saved.ragDiscardReason, reason);
   const replay = await answerQuestion("evidence-hold-fixture", question, deps);
   assert.equal(replay.answer, expected);
-  assert.equal(replay.source, "unsure");
+  assert.equal(replay.source, expectedSource);
   assert.equal(calls, 1, "durable replay must not regenerate");
   assert.equal(lastLog?.ragDiscardReason, reason);
 }
 async function main() {
+  await run("official", "야구 글로벌 임팩트가 뭐여", '{"status":"INSUFFICIENT"}', UNVERIFIED_TERM_ANSWER, "model_insufficient", '{"status":"TERM_UNVERIFIED","answer":"must not serve provider prose"}', "llm");
+  for (const classification of ['not-json', '{"status":"NOT_BASEBALL"}', '{"status":"TERM_CONTEXTUAL"}', '{"status":"BASEBALL_RULE_TERM","answer":"invented meaning"}']) {
+    await run("official", "야구 글로벌 임팩트가 뭐여", '{"status":"INSUFFICIENT"}', RAG_NEUTRAL_HOLD, "model_insufficient", classification);
+  }
   await run("official", "2026년 가을야구는 언제 시작해?", JSON.stringify({ status: "GROUNDED", answer: "10월 6일 시작합니다.", calendarClaims: [{ basis: "question", season: 2026, evidence: 1 }] }), RAG_DATE_HOLD, "event_date_unverified");
   await run("official", "인필드 플라이 규칙 알려줘", JSON.stringify({ status: "INSUFFICIENT" }), RAG_NEUTRAL_HOLD, "model_insufficient");
   await run("official", "인필드 플라이 규칙 알려줘", "not-json", RAG_RESPONSE_HOLD, "malformed_json");

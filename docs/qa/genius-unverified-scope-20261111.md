@@ -8,14 +8,32 @@ Disposable account, real POST /api/baseball-qa and delivered DM readback:
 - “보크가 뭐야”: dictionary; “야구 룰”: scope_guide.
 Account/profile/conversation and QA messages deleted by reviewer. Exclude QA message IDs 3612685–3612692 from daily samples, NOT unrelated real-user 3612684. The range includes answer IDs; do not count all eight as questions.
 
-## Change and acceptance
-Unknown meaning/domain is not evidence of non-baseball scope. Clarify only when the meaning request is clear, no supporting meaning is bound, and usage context is missing. Reuse existing TERM_UNVERIFIED + UNVERIFIED_TERM_ANSWER; no new sentinel/copy, term-specific runtime guard, routing reorder, or wholesale unsure conversion. Known terms, name suggestions, scope guides, stat clarification and explicit non-baseball remain unchanged. Shared term prompt also applies to official generation.
+## R2: deterministic post-abstention classification
+R0 prompt-only changes were independently measured as ineffective and removed.
+Before logs for original and replay: official / model_insufficient / unsure,
+question numeric count 0, top distance 0.322721360216373.
 
-Reviewer-only paired gate:
-`npx tsx scripts/qa/genius-unverified-scope.ts --base-root=<9eb4702 checkout> --out=<artifact.json>`
-Uses current same glossary/roster snapshot, real provider, in-memory answerQuestion, 9 cases × 3 × 2. No DB/cache/DM writes. Does not execute RAG or actual API delivery: R1/R2 and R3/R4 must separately pass real production-equivalent path review before claiming impact. Preserve failures and provider errors; no best-of retries. Prompt-only change is a candidate, not proven improvement.
+The generic classifier probe is NOT an upstream production classification: official
+RAG consumes the call before that generic path. Therefore this revision adds one
+bounded generic classification call only for the current durable winner after
+model_insufficient, after policy scope_guide, excluding definition/recordbook paths.
+Only exact TERM_UNVERIFIED selects the existing UNVERIFIED_TERM_ANSWER (llm).
+No provider prose is served; other statuses/invalid JSON retain the original hold;
+provider failure is error, not misreported as insufficient evidence.
+Original RAG text, discard observations and combined token costs are retained.
+Final envelope storage/replay prevents reclassification; no cache write is added.
+Numeric/date holds and grounded answers do not enter the new branch.
 
-Independent regression gates: existing genius-unbound-name, refusal/scope, stat clarification, term-knowledge cases. Confirm factual source bindings and contextual/known terms are not downgraded. Unknown-expression clarification must not assert that the term is a real baseball term.
+Reviewer gates (author has not executed them):
+- `npx tsx scripts/qa/genius-unverified-scope.ts --base-root=<9eb4702 checkout> --out=<artifact.json>`
+  Real official retrieval/generation plus generic classification; 12 non-baseball
+  controls ×3, R1 clarification, synthetic R2 blocked, dictionary/name/scope parity.
+  Not API/DM delivery. Preserve every failure, no selective retry.
+- `npx tsx scripts/qa/genius-evidence-hold-smoke.ts`: numeric/date/malformed holds,
+  original neutral hold on nonqualifying classification, storage/replay.
+- Inspect scope_guide precedence, grounded/general parity, provider failure,
+  exact-sentinel rejection and duplicate-worker behavior. Actual dedicated-account
+  DM/readback and logs remain required for GO; reviewer credentials currently blocked.
 
 ## Author checks
-Scoped TypeScript, ESLint and diff whitespace checks passed. Initial scoped TypeScript run lacked generated next-env.d.ts; restored the standard generated declaration locally and reran successfully. Graph rebuild could not run: Python graphify module unavailable. Author did not execute reviewer-only QA. No claim of after-path or factual-quality PASS.
+Scoped TypeScript passed. Independent after-effect and DM QA are not yet evaluated.

@@ -1,6 +1,6 @@
 /** Reviewer only: paired real model + answerQuestion, no DM/cache/DB writes.
  * --base-root=<exact 9eb4702 checkout> --out=<json>. Needs protected provider/DB access.
- * RAG/production delivery is NOT simulated as PASS: separate API/DM QA is required.
+ * Real official RAG is included; API/DM delivery still needs independent QA.
  */
 import assert from 'node:assert/strict';
 import fs from 'node:fs';
@@ -9,12 +9,12 @@ import { pathToFileURL } from 'node:url';
 import type { QaDeps } from '../../src/lib/baseball-qa/pipeline';
 const cases = [
   { q: '야구 글로벌 임팩트가 뭐여', clarify: true },
-  { q: '글로벌 임팩트가 뭐야', clarify: true },
+  { q: '글로벌 임팩트가 뭐야', source: 'blocked' },
   { q: '보크가 뭐야', source: 'dictionary' },
   { q: '포스트시즌이 뭐야', source: 'dictionary' },
   { q: '임창규 어떤 선수야', source: 'name_suggest' },
   { q: '야구 룰', source: 'scope_guide' },
-  { q: '오늘 날씨 알려줘', source: 'blocked' },
+  ...['오늘 날씨 알려줘', '주식 추천해줘', '비트코인 전망 알려줘', '저녁 메뉴 추천해줘', '영화 추천해줘', '파스타 만드는 법 알려줘', '제주도 여행 일정 짜줘', '노트북 추천해줘', '영어 공부 방법 알려줘', '강아지 사료 추천해줘'].map(q => ({ q, source: 'blocked' as const })),
   { q: '야구 말고 맛집 추천해줘', source: 'blocked' },
   { q: '홈런볼 과자 맛이 어때', source: 'blocked' },
 ] as const;
@@ -43,6 +43,8 @@ async function main() {
         const deps: QaDeps = {
           loadGlossary: async () => glossary, loadPlayers: async () => players,
           getCache: async () => null, setCache: async () => {},
+          searchOfficialRag: server.searchOfficialRag,
+          callOfficialRagLlm: server.callOfficialRagLlm,
           reserveDaily: async () => ({ allowed: true, remaining: 9 }), log: async () => {},
           callLlm: async (...args) => { const r = await server.callLlm(...args); calls.push(r.text); return r; },
         };
@@ -61,7 +63,7 @@ async function main() {
         }
         row.pass = true;
       } catch (error) { row.pass = false; row.error = error instanceof Error ? error.message : String(error); failures++; }
-      rows.push(row); fs.writeFileSync(out, JSON.stringify({ coverage: 'real classifier + in-memory orchestration; RAG/API/DM not covered', rows }, null, 2));
+      rows.push(row); fs.writeFileSync(out, JSON.stringify({ coverage: 'real classifier + official RAG + in-memory orchestration; API/DM not covered', rows }, null, 2));
     }
   }
   console.log(JSON.stringify({ rows: rows.length, failures }));
