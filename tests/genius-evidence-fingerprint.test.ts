@@ -66,3 +66,34 @@ test('log migration applies twice independently of RAG tables and preserves obse
     await assert.rejects(db.query('INSERT INTO public.genius_question_logs VALUES (2, $1::jsonb)', [JSON.stringify(Array(51).fill(fp![0]))]));
   } finally { await db.close(); }
 });
+
+
+test('production official RPC deployment failures close, bounded legacy succeeds, unrelated errors propagate', async () => {
+  const { readFileSync } = await import('node:fs');
+  const { loadOfficialSearch } = await import('./helpers/official-rag-harness');
+  const { RAG_DOCUMENT_MAX_DISTANCE, RAG_DOCUMENT_CANDIDATE_LIMIT } = await import('../src/lib/baseball-qa/rag/retrieve');
+  const source = readFileSync('src/lib/baseball-qa/server.ts', 'utf8');
+  for (const first of ['PGRST202', '42883']) {
+    for (const second of ['PGRST202', '42883', null]) {
+      const calls: string[] = [];
+      const search = loadOfficialSearch(source, async (name, args) => {
+        calls.push(name);
+        assert.equal(args.p_max_distance, RAG_DOCUMENT_MAX_DISTANCE);
+        assert.equal(args.p_limit, RAG_DOCUMENT_CANDIDATE_LIMIT);
+        const code = calls.length === 1 ? first : second;
+        return code ? {data: null, error: {code}} : {data: [{content: 'legacy', source_grade: 'tier1'}], error: null};
+      });
+      const result = await search('보크가 뭐야');
+      assert.deepEqual(calls, ['search_baseball_genius_official_chunks_v2', 'search_baseball_genius_official_chunks']);
+      assert.equal(result.length, second ? 0 : 1);
+      if (!second) assert.equal(fingerprintEvidence(result), null);
+    }
+  }
+  let calls = 0;
+  const search = loadOfficialSearch(source, async () => {
+    calls++;
+    return {data: null, error: {code: 'XX000'}};
+  });
+  await assert.rejects(search('보크'), (error: unknown) => (error as {code: string}).code === 'XX000');
+  assert.equal(calls, 1);
+});

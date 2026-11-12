@@ -853,6 +853,10 @@ export async function searchOfficialRag(question: string): Promise<RagEvidence[]
     //   값은 앱 상수 SSOT 이며, RPC 가 0.60 상한을 다시 강제한다(무력화 방지).
     p_max_distance: RAG_DOCUMENT_MAX_DISTANCE,
   };
+  // Deployment compatibility: v2 adds identity only. Retry v1 at most once using
+  // the SAME three arguments, including p_max_distance. Never retry the old
+  // two-argument signature: it admits unrelated evidence and breaks fail-close.
+  // Legacy v1 rows have no identity; fingerprints remain null (not fabricated).
   // query-guard: bounded -- v2 preserves v1 distance clamp and maximum 50 rows.
   let result = await supabaseAdmin.rpc("search_baseball_genius_official_chunks_v2", args);
   if (result.error?.code === "PGRST202" || result.error?.code === "42883") {
@@ -861,7 +865,7 @@ export async function searchOfficialRag(question: string): Promise<RagEvidence[]
   }
   const { data, error } = result;
   if (error) {
-    if (error.code === "PGRST202") return [];
+    if (error.code === "PGRST202" || error.code === "42883") return [];
     throw error;
   }
   return ((data ?? []) as RagOfficialChunkRow[]).map((row) => ({
