@@ -12,7 +12,7 @@ import { fallbackEligible, primaryNewsDateSupported, type FallbackAnswer } from 
 import type { ConversationInput } from "./agent/poc";
 import { parseStatIntentToken } from "./stat-intent-parser";
 import { observeQaDeps, type ClassifierObservation } from "./classifier-observation";
-import { TERM_UNVERIFIED, UNVERIFIED_TERM_ANSWER, isTermOriginFollowup, isTermOriginQuestion, hasReportedTermUsage, unverifiedTermAnswer, isUnverifiedTermAnswer, termKnowledgeCacheKey, TERM_KNOWLEDGE_CACHE_VERSION } from "./term-knowledge";
+import { isTermOriginFollowup, isTermOriginQuestion, hasReportedTermUsage, unverifiedTermAnswer, isUnverifiedTermAnswer, termKnowledgeCacheKey, TERM_KNOWLEDGE_CACHE_VERSION } from "./term-knowledge";
 import { definitionContextFor, definitionWithEvidence, definitionNumericSource, isPlainStatExplanationRequest, isReferenceMeaningQuestion, isStatDefinitionQuestion, isStatPeriodFollowupQuestion, resolveStatDefinitionIntent, type StatDefinitionFrame, type StatDefinitionIntent } from "./stats/definition-intent";
 import { readStatDefinitionContext, type StatDefinitionContext } from "./stats/definition-context";
 import { requestedOperation, isBareRankFollowup, unsupportedOperationScope, readRankRequestContext, renderAverageRank, renderRemainingGames, RANK_SCOPE_ANSWER, OPERATION_DATA_ANSWER, ELAPSED_DATA_ANSWER, type RankRequestContext } from "./stats/question-operation";
@@ -5378,32 +5378,6 @@ async function answerOfficialDocumentQuestion(
         ...ragObservation("official", question, validated, evidence),
       });
       return { status: 200, answer, source: "scope_guide", remaining };
-    }
-    // The generic classifier has NOT run before official RAG. Only the current
-    // durable winner may make one bounded classification attempt after a model
-    // abstention. Never reinterpret numeric/date holds, policy holds or grounded
-    // answers, and never serve prose produced by this classification attempt.
-    if (generatedOfficialNow && !definition && !recordbookRequest
-        && validated.kind === "insufficient" && validated.reason === "model_insufficient") {
-      let classification: LlmResult;
-      try {
-        classification = await deps.callLlm(question, context ?? undefined);
-      } catch { return failCloseError(llm); }
-      // Retain original RAG text for legacy raw replay and sum both call costs.
-      llm = { ...combineLlmAttempts(llm, classification), text: llm.text };
-      let status: unknown;
-      try { status = (JSON.parse(classification.text) as { status?: unknown } | null)?.status; }
-      catch { /* Invalid classification preserves the original hold. */ }
-      if (status === TERM_UNVERIFIED) {
-        const answer = UNVERIFIED_TERM_ANSWER;
-        const observation = ragObservation("official", question, validated, evidence);
-        if (deps.storeLlm) await deps.storeLlm(packStoredQaFinal({
-          answer, source: "llm", statRuleTermVerified: true, ...observation,
-        }, llm));
-        await deps.log({ userId, question, questionNorm, matchPath: "llm", answer,
-          inputTokens: llm.inputTokens, outputTokens: llm.outputTokens, ...observation });
-        return { status: 200, answer, source: "llm", remaining };
-      }
     }
     const final = await supplementUnavailable({
       answer: renderRagHold(validated), source: "unsure", ...ragObservation("official", question, validated, evidence),

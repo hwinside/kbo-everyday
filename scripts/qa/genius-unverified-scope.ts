@@ -39,17 +39,19 @@ async function main() {
     for (const c of cases) for (let repeat = 0; repeat < 3; repeat++) {
       const row: Record<string, unknown> = { variant, question: c.q, repeat };
       const calls: string[] = [];
+      let providerCalls = 0;
       try {
         const deps: QaDeps = {
           loadGlossary: async () => glossary, loadPlayers: async () => players,
           getCache: async () => null, setCache: async () => {},
           searchOfficialRag: server.searchOfficialRag,
-          callOfficialRagLlm: server.callOfficialRagLlm,
+          callOfficialRagLlm: async (...args) => { providerCalls++; return server.callOfficialRagLlm(...args); },
           reserveDaily: async () => ({ allowed: true, remaining: 9 }), log: async () => {},
-          callLlm: async (...args) => { const r = await server.callLlm(...args); calls.push(r.text); return r; },
+          callLlm: async (...args) => { providerCalls++; const r = await server.callLlm(...args); calls.push(r.text); return r; },
         };
         const result = await pipeline.answerQuestion('qa-unverified-scope-memory-only', c.q, deps);
-        Object.assign(row, { source: result.source, answer: result.answer, calls });
+        Object.assign(row, { source: result.source, answer: result.answer, calls, providerCalls });
+        assert.ok(providerCalls <= 1, "one message may consume at most one provider call");
         if ('clarify' in c) {
           row.clarified = result.answer === term.UNVERIFIED_TERM_ANSWER;
           if (variant === 'head') assert.equal(row.clarified, true, 'existing SSOT clarification required');
@@ -66,6 +68,8 @@ async function main() {
       rows.push(row); fs.writeFileSync(out, JSON.stringify({ coverage: 'real classifier + official RAG + in-memory orchestration; API/DM not covered', rows }, null, 2));
     }
   }
+  const baseline = rows.filter(row => row.variant === "base" && row.question === cases[0].q);
+  assert.ok(baseline.some(row => row.clarified === false), "current base must reproduce target defect; otherwise HOLD");
   console.log(JSON.stringify({ rows: rows.length, failures }));
   assert.equal(failures, 0, 'retain failures; no selective retry');
 }
