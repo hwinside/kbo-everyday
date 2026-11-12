@@ -3,7 +3,9 @@ import type { RagEvidence } from "./retrieve";
 
 export interface EvidenceFingerprint {
   chunkId: string;
+  /** App hash of RPC-returned bytes before downstream projection, not DB attestation. */
   sourceContentSha256: string;
+  /** App hash of selected evidence bytes; may equal source hash when unchanged. */
   contentSha256: string;
 }
 

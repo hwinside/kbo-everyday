@@ -856,6 +856,9 @@ export async function searchOfficialRag(question: string): Promise<RagEvidence[]
   // Deployment compatibility: v2 adds identity only. Retry v1 at most once using
   // the SAME three arguments, including p_max_distance. Never retry the old
   // two-argument signature: it admits unrelated evidence and breaks fail-close.
+  // Retirement condition: after v2 migration + schema-cache availability is verified
+  // in every serving environment and rollback no longer needs v1, remove this retry
+  // together with the D/E compatibility expectation (retain absence fail-close).
   // Legacy v1 rows have no identity; fingerprints remain null (not fabricated).
   // query-guard: bounded -- v2 preserves v1 distance clamp and maximum 50 rows.
   let result = await supabaseAdmin.rpc("search_baseball_genius_official_chunks_v2", args);
@@ -870,6 +873,9 @@ export async function searchOfficialRag(question: string): Promise<RagEvidence[]
   }
   return ((data ?? []) as RagOfficialChunkRow[]).map((row) => ({
     chunkId: row.chunk_id,
+    // Hash of the RPC-returned content bytes, NOT a DB-stored checksum. Preserved
+    // before downstream evidence projection; contentSha256 is computed after selection.
+    // They intentionally match when selection leaves content unchanged.
     sourceContentSha256: row.chunk_id ? contentSha256(row.content) : undefined,
     calendarSeason: row.calendar_season ?? null,
     content: row.content,
