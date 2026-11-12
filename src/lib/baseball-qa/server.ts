@@ -1,3 +1,4 @@
+import { contentSha256 } from "./rag/evidence-fingerprint";
 import { loadPostseasonSnapshot } from "@/lib/postseason/snapshot";
 import { loadAppLineups } from "./app-lineup";
 import { buildOfficialContextRequest } from "./rag/official-context-request";
@@ -429,6 +430,7 @@ interface RagServingChunkRow {
  * 768차원 벡터 12개를 \uc automation으로 끌어오면 응답만 무거워진다.
  */
 interface RagOfficialChunkRow {
+  chunk_id?: string;
   calendar_season?: RagEvidence["calendarSeason"];
   content: string;
   page_title: string;
@@ -841,8 +843,7 @@ async function callRagLlmWithPrompt(
 export async function searchOfficialRag(question: string): Promise<RagEvidence[]> {
   const embedded = await embedQuery(question);
   if (!embedded.ok) return [];
-  // query-guard: bounded -- RPC가 RAG_DOCUMENT_CANDIDATE_LIMIT 상한을 강제하는 정렬 조회다.
-  const { data, error } = await supabaseAdmin.rpc("search_baseball_genius_official_chunks", {
+  const args = {
     p_query_embedding: JSON.stringify(embedded.vector),
     p_limit: RAG_DOCUMENT_CANDIDATE_LIMIT,
     // 🔴 **유사도 임계**를 넘겨준다 (2026-08-27 실측 도입).
@@ -851,22 +852,21 @@ export async function searchOfficialRag(question: string): Promise<RagEvidence[]
     //   그 판정 위에 서 있으므로 임계가 없으면 전 질문이 환각 통로가 된다.
     //   값은 앱 상수 SSOT 이며, RPC 가 0.60 상한을 다시 강제한다(무력화 방지).
     p_max_distance: RAG_DOCUMENT_MAX_DISTANCE,
-  });
-  // 🔴 **배포 순서 방어** (2026-08-27 프로덕션 실측으로 확인한 실제 위험).
-  //   이 PR 은 RPC 시그니처를 바꾼다(`p_max_distance` 추가). 앱이 migration 보다 **먼저**
-  //   배포되면 PostgREST 가 함수를 못 찾아 `PGRST202` 404 를 낸다 — 실측:
-  //     구 시그니처 → HTTP 200 / 신 시그니처 → HTTP 404 PGRST202
-  //   여기서 throw 하면 공식 RAG 경로가 통째로 예외가 되어 유저에게 오류가 나간다.
-  //
-  //   ⚠️ 구 시그니처로 **재시도하지 않는다.** 구 RPC 는 임계가 없어 무슨 질문이든 상한만큼
-  //     돌려주므로, 재시도는 "근거 없음을 근거 있음으로 만드는" 바로 그 결함으로 되돌아간다.
-  //     대신 **근거 0건으로 접는다** — 라우팅은 종전 경로로 그대로 흘러 오늘과 같은 동작이
-  //     되고(기능 손실 없음), migration 이 적용되는 순간 자동으로 새 동작이 켜진다.
+  };
+  // query-guard: bounded -- v2 preserves v1 distance clamp and maximum 50 rows.
+  let result = await supabaseAdmin.rpc("search_baseball_genius_official_chunks_v2", args);
+  if (result.error?.code === "PGRST202" || result.error?.code === "42883") {
+    // query-guard: bounded -- one fallback to the distance-threshold v1, never the old unbounded signature.
+    result = await supabaseAdmin.rpc("search_baseball_genius_official_chunks", args);
+  }
+  const { data, error } = result;
   if (error) {
     if (error.code === "PGRST202") return [];
     throw error;
   }
   return ((data ?? []) as RagOfficialChunkRow[]).map((row) => ({
+    chunkId: row.chunk_id,
+    sourceContentSha256: row.chunk_id ? contentSha256(row.content) : undefined,
     calendarSeason: row.calendar_season ?? null,
     content: row.content,
     pageTitle: row.page_title,
@@ -1354,9 +1354,15 @@ export function makeDeps(
       if (error) throw error;
     },
     log: async (entry) => {
-      const { error } = await supabaseAdmin
-        .from("genius_question_logs")
-        .insert(buildQuestionLogRow(entry, messageId));
+      const row = buildQuestionLogRow(entry, messageId);
+      let { error } = await supabaseAdmin.from("genius_question_logs").insert(row);
+      // App-before-migration: only the absent new column permits one legacy insert.
+      // Other errors (including ambiguous network failures) must not retry an INSERT.
+      if (error?.code === "PGRST204" && error.message.includes("rag_evidence_fingerprints")) {
+        const legacyRow = { ...row };
+        delete legacyRow.rag_evidence_fingerprints;
+        ({ error } = await supabaseAdmin.from("genius_question_logs").insert(legacyRow));
+      }
       if (error) throw error;
     },
   };
