@@ -16,6 +16,7 @@ import type { QaDeps } from "@/lib/baseball-qa/pipeline";
 export function buildQuestionLogRow(
   entry: Parameters<NonNullable<QaDeps["log"]>>[0],
   messageId: number,
+  options: { legacyEvidenceSchema?: boolean } = {},
 ): Record<string, unknown> {
   const observation = readClassifierObservation(entry.classifierObservation);
   return {
@@ -65,7 +66,9 @@ export function buildQuestionLogRow(
     // ⚠️ null = 거리 미제공(레거시 RPC·migration 이전) 또는 거리 개념이 없는 경로.
     //   **0 과 섞지 않는다** — 0 은 완전 일치라 부재를 0 으로 적으면 분포가 왼쪽으로
     //   오염돼 임계가 실제보다 느슨해 보인다.
-    rag_evidence_fingerprints: readEvidenceFingerprints(entry.ragEvidenceFingerprints),
+    ...(options.legacyEvidenceSchema ? {} : {
+      rag_evidence_fingerprints: readEvidenceFingerprints(entry.ragEvidenceFingerprints),
+    }),
     rag_evidence_top_distance: entry.ragEvidenceTopDistance ?? null,
     match_path: entry.matchPath,
     answer: entry.answer,

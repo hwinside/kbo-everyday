@@ -104,6 +104,11 @@ async function loadSchema(): Promise<Db> {
     "supabase/migrations/20260922030000_classifier_observation.sql", "utf8",
   );
   await db.exec(observation);
+  const fingerprints = readFileSync(
+    "supabase/migrations/20261113000100_genius_question_evidence_fingerprints.sql", "utf8",
+  );
+  await db.exec(fingerprints);
+  await db.exec(fingerprints); // additive column + constraint must be reapply-safe.
   return db;
 }
 

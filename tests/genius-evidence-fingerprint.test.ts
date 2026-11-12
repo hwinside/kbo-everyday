@@ -38,3 +38,31 @@ test('durable envelope to production log preserves ordered fingerprints without 
   assert.equal(JSON.stringify(row.rag_evidence_fingerprints).includes(raw), false);
   assert.equal(unpackStoredQaFinal(packStoredQaFinal({answer:'답', source:'unsure'}, {text:'', inputTokens:null, outputTokens:null}).text)!.ragEvidenceFingerprints, null);
 });
+
+test('legacy log schema uses the same SSOT without dropping existing observations', () => {
+  const entry = {userId: 'test', question: 'q', questionNorm: 'q', matchPath: 'unsure' as const, answer: null, inputTokens: null, outputTokens: null, ragAttemptPath: 'official' as const, ragDiscardReason: 'model_insufficient' as const, ragQuestionNumericCount: 1, ragDiscardNumericCount: 2, ragEvidenceFingerprints: fingerprintEvidence([evidence])};
+  const modern = buildQuestionLogRow(entry, 42);
+  const legacy = buildQuestionLogRow(entry, 42, {legacyEvidenceSchema: true});
+  const {rag_evidence_fingerprints, ...existing} = modern;
+  assert.ok(rag_evidence_fingerprints);
+  assert.deepEqual(legacy, existing);
+  assert.equal(legacy.rag_attempt_path, 'official');
+  assert.equal(legacy.rag_discard_numeric_count, 2);
+});
+
+test('log migration applies twice independently of RAG tables and preserves observations', async () => {
+  const { PGlite } = await import('@electric-sql/pglite');
+  const { readFileSync } = await import('node:fs');
+  const db = new PGlite();
+  try {
+    await db.exec('CREATE TABLE public.genius_question_logs (id integer PRIMARY KEY)');
+    const sql = readFileSync('supabase/migrations/20261113000100_genius_question_evidence_fingerprints.sql', 'utf8');
+    await db.exec(sql);
+    const fp = fingerprintEvidence([evidence]);
+    await db.query('INSERT INTO public.genius_question_logs VALUES (1, $1::jsonb)', [JSON.stringify(fp)]);
+    await db.exec(sql);
+    const result = await db.query<{rag_evidence_fingerprints: unknown}>('SELECT rag_evidence_fingerprints FROM public.genius_question_logs WHERE id=1');
+    assert.deepEqual(result.rows[0].rag_evidence_fingerprints, fp);
+    await assert.rejects(db.query('INSERT INTO public.genius_question_logs VALUES (2, $1::jsonb)', [JSON.stringify(Array(51).fill(fp![0]))]));
+  } finally { await db.close(); }
+});

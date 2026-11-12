@@ -1,5 +1,5 @@
 -- Additive identity-bearing RPC; v1 remains available for app rollback.
-CREATE FUNCTION public.search_baseball_genius_official_chunks_v2(
+CREATE OR REPLACE FUNCTION public.search_baseball_genius_official_chunks_v2(
   p_query_embedding text,
   p_limit integer DEFAULT 12,
   p_max_distance double precision DEFAULT 0.42
@@ -67,13 +67,3 @@ COMMENT ON FUNCTION public.search_baseball_genius_official_chunks_v2(text, integ
   '유사도 거리 임계(기본 0.42, 0.05..0.60 clamp)를 넘는 chunk 는 반환하지 않는다 — '
   '임계가 없으면 무관한 질문도 항상 N건을 받아 "근거 있음"으로 오인된다(2026-08-27 실측).';
 
-ALTER TABLE public.genius_question_logs
-  ADD COLUMN IF NOT EXISTS rag_evidence_fingerprints jsonb;
-ALTER TABLE public.genius_question_logs
-  ADD CONSTRAINT genius_question_logs_evidence_fingerprints_array CHECK (
-    rag_evidence_fingerprints IS NULL OR
-    (jsonb_typeof(rag_evidence_fingerprints) = 'array'
-      AND jsonb_array_length(rag_evidence_fingerprints) <= 50)
-  );
-COMMENT ON COLUMN public.genius_question_logs.rag_evidence_fingerprints IS
-  'Selected official evidence in order: chunk ID, raw content SHA256, effective content SHA256. No passage text or numeric claim values. NULL means unobserved/legacy; not historical reconstruction.';

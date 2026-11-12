@@ -1354,14 +1354,15 @@ export function makeDeps(
       if (error) throw error;
     },
     log: async (entry) => {
-      const row = buildQuestionLogRow(entry, messageId);
-      let { error } = await supabaseAdmin.from("genius_question_logs").insert(row);
+      let { error } = await supabaseAdmin
+        .from("genius_question_logs")
+        .insert(buildQuestionLogRow(entry, messageId));
       // App-before-migration: only the absent new column permits one legacy insert.
       // Other errors (including ambiguous network failures) must not retry an INSERT.
       if (error?.code === "PGRST204" && error.message.includes("rag_evidence_fingerprints")) {
-        const legacyRow = { ...row };
-        delete legacyRow.rag_evidence_fingerprints;
-        ({ error } = await supabaseAdmin.from("genius_question_logs").insert(legacyRow));
+        ({ error } = await supabaseAdmin
+          .from("genius_question_logs")
+          .insert(buildQuestionLogRow(entry, messageId, { legacyEvidenceSchema: true })));
       }
       if (error) throw error;
     },
