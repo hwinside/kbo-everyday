@@ -241,7 +241,7 @@ export async function GET(req: NextRequest) {
           started,
           tokens,
           channelSubs,
-          // 채널 내장 출생 카드 수 — 별도 표기(오독 방지: ACK 없이도 updatable에 합산되는 분모).
+          // 현재 active 채널과 출생 세대가 일치하는 사용자 수 — 진단용 별도 표기이며, born만으로는 updatable에 합산하지 않는다.
           channelBorn: e.channelBorn.size,
           updatable,
           gap,
