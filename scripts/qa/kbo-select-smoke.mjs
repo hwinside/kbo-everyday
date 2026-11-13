@@ -108,17 +108,20 @@ function makeIo({ initial = "2025", lostClicks = 0, neverApplies = false, tableF
       hrefs: ["", `?playerId=${season === "2025" ? 70000 + i : 90000 + i}`],
     }));
 
-  const makePage = ({ postbackLost }) => {
+  const SERIES_SELECTOR = "select[name$='ddlSeries$ddlSeries']";
+  const makePage = ({ postbackLost, seriesLost = false }) => {
     let current = "2025";
+    let series = "5";
     return {
       async goto() {},
-      async $(sel) { return sel === SEASON_SELECTOR ? {} : null; },
-      async $eval(sel) { return sel === SEASON_SELECTOR ? current : null; },
+      async $(sel) { return [SEASON_SELECTOR, SERIES_SELECTOR].includes(sel) ? {} : null; },
+      async $eval(sel) { return sel === SEASON_SELECTOR ? current : series; },
       async selectOption(sel, value) {
         if (sel === SEASON_SELECTOR && !postbackLost) current = String(value);
+        if (sel === SERIES_SELECTOR && !seriesLost) series = String(value);
       },
       async $$eval(sel) {
-        if (sel === "tbody tr") return rowsOf(current);
+        if (sel === "tbody tr") return rowsOf(current).map(r => ({ ...r, texts: [...r.texts, series] }));
         if (sel === 'a[id*="ucPager_btnNo"]') return "1:";
         return "";
       },
@@ -130,6 +133,8 @@ function makeIo({ initial = "2025", lostClicks = 0, neverApplies = false, tableF
   };
 
   const ok = await collectKboPages(makePage({ postbackLost: false }), "u", "2026");
+  assert.ok([...ok.values()].every(t => t.at(-1) === "0"), "oracle must read regular season");
+  await assert.rejects(() => collectKboPages(makePage({ seriesLost: true }), "u", "2026"), /source_season_transition_incomplete/);
   const okNames = [...ok.values()].map((t) => t[1]);
   assert.ok(
     okNames.every((n) => n.startsWith("2026")),

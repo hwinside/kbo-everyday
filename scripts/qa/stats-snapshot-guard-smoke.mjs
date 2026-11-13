@@ -1,3 +1,4 @@
+import { BASIC2_HEADERS } from "../lib/kbo-basic2.mjs";
 import assert from "node:assert/strict";
 import { readFileSync } from "node:fs";
 import {
@@ -181,14 +182,21 @@ for (const call of [
   // adapter.scrapeTable 은 `{texts, hrefs}` 를 기대하므로 stub 도 그 shape 이어야 한다.
   const buildPage = (rowsByUrl) => {
     let current = [];
+    let currentUrl;
     return {
+      url: () => currentUrl,
       async goto(url) {
+        currentUrl = url;
         const key = Object.keys(rowsByUrl).find((k) => url.includes(k));
         current = rowsByUrl[key] ?? [];
       },
       async $(sel) { return null; },      // btnNext 없음 → 단일 그룹, 정상 EOF
-      async $eval() { return null; },
+      async $eval(selector, fn) {
+        const value = selector.includes('ddlSeries') ? '0' : selector.includes('ddlSeason') ? '2026' : 'GAME_CN';
+        return fn({ value });
+      },
       async $$eval(selector) {
+        if (selector === "thead th") return BASIC2_HEADERS;
         if (selector === "tbody tr") {
           return current.map((r) => ({
             texts: r.tds,
