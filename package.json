@@ -557,6 +557,7 @@
     "qa:genius-season-recency": "tsx scripts/qa/genius-season-recency-smoke.ts",
     "qa:genius-season-recency:mutations": "node scripts/qa/genius-season-recency-mutations.mjs",
     "qa:genius-live-team-block:mutations": "node scripts/qa/genius-live-team-block-mutations.mjs",
+    "qa:genius-evidence-fingerprint": "tsx --test tests/genius-evidence-fingerprint.test.ts",
     "qa:genius-rag-first": "tsx scripts/qa/genius-rag-first-routing-smoke.ts",
     "qa:genius-rag-first:mutations": "node scripts/qa/genius-rag-first-mutations.mjs",
     "qa:genius-current-season-source": "tsx scripts/qa/genius-current-season-source-smoke.ts",

@@ -1,3 +1,4 @@
+import { fingerprintEvidence, readEvidenceFingerprints, type EvidenceFingerprint } from "./rag/evidence-fingerprint";
 import { readScenarioContext, type ScenarioContext } from "./scenario-context";
 import { prepareOfficialEvidence } from "./rag/official-sibling-evidence";
 import { collectConversationTeamCandidates } from "./conversation-team-candidates";
@@ -1548,6 +1549,7 @@ export interface QaDeps {
      *   오염되고 임계가 실제보다 느슨해 보인다.
      */
     ragEvidenceTopDistance?: number | null;
+    ragEvidenceFingerprints?: EvidenceFingerprint[] | null;
     matchPath: MatchPath;
     answer: string | null;
     inputTokens: number | null;
@@ -1601,6 +1603,7 @@ export interface RagObservation {
    *   오염되고 임계가 실제보다 느슨해 보인다.
    */
   ragEvidenceTopDistance: number | null;
+  ragEvidenceFingerprints: EvidenceFingerprint[] | null;
 }
 
 /**
@@ -1632,6 +1635,7 @@ function ragObservation(
     ragDiscardReason: discardReasonOf(validated),
     ragDiscardNumericCount: discardNumericCountOf(validated),
     ragEvidenceTopDistance: evidenceTopDistanceOf(evidence),
+    ragEvidenceFingerprints: attemptPath === "official" ? fingerprintEvidence(evidence) : null,
   };
 }
 
@@ -3993,6 +3997,7 @@ export interface StoredQaFinal {
    * 여기 없으면 임계 재보정 관측이 그 턴만 조용히 null 이 된다.
    */
   ragEvidenceTopDistance?: number | null;
+  ragEvidenceFingerprints?: EvidenceFingerprint[] | null;
   /**
    * 가드 소유 질문이지만 **`RULE_TERM` 재질의 답이 정규 검증을 통과**했음 표식
    * (2026-08-22, 삼순 NO-GO P0②).
@@ -4064,6 +4069,7 @@ export function unpackStoredQaFinal(text: string): StoredQaFinal | null {
     // 🔴 `[0, 2]` **양방향** — 하한만 보면 오염 envelope 의 2 초과 값이 복원돼 로그 INSERT 가
     //   23514 로 죽는다(삼순 2026-08-27 ②). envelope 는 **이전 배포가 쓴 것**일 수 있으므로
     //   여기서 신뢰하지 않고 매번 정의역을 다시 판정한다.
+    ragEvidenceFingerprints: readEvidenceFingerprints(final.ragEvidenceFingerprints),
     ...(typeof final.ragEvidenceTopDistance === "number"
       && Number.isFinite(final.ragEvidenceTopDistance)
       && final.ragEvidenceTopDistance >= 0
@@ -4136,6 +4142,7 @@ async function replayStoredFinalResult(
     ragQuestionNumericCount: storedFinal.ragQuestionNumericCount ?? null,
     ragDiscardReason: storedFinal.ragDiscardReason ?? null,
     ragDiscardNumericCount: storedFinal.ragDiscardNumericCount ?? null,
+    ragEvidenceFingerprints: readEvidenceFingerprints(storedFinal.ragEvidenceFingerprints),
   });
   return {
     status: 200, answer: storedFinal.answer, source: storedFinal.source, remaining,

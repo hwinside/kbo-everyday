@@ -26,7 +26,7 @@
  *   B  거리 임계가 RPC 호출에 실린다 (개수 판정 폐기)
  *   C  임계는 코드 상수 — env 로 무력화 불가 + 실측 경계 안
  *   D  배포 순서 fail-close — PGRST202 는 예외가 아니라 근거 0건
- *   E  구 시그니처 재시도 금지
+ *   E  모든 호출의 거리 임계 유지·호환 재시도 1회 제한
  *   S  migration 이 상한을 SQL 에서 다시 강제한다 (앱이 임계를 풀 수 없다)
  *   W  소유권 판정 불능(거리 미제공)은 **선수 유지** — migration 이전 배포에서 뒤집히지 않는다
  *
@@ -40,6 +40,7 @@
  * 실행: npm run qa:genius-rag-first
  */
 import assert from "node:assert/strict";
+import { loadOfficialSearch } from "../../tests/helpers/official-rag-harness";
 import { verifyRuleSemantics } from "./fixtures/verify-rule-semantics";
 import { readdirSync, readFileSync } from "node:fs";
 import {
@@ -50,6 +51,7 @@ import {
 } from "../../src/lib/baseball-qa/pipeline";
 import {
   RAG_DOCUMENT_MAX_DISTANCE,
+  RAG_DOCUMENT_CANDIDATE_LIMIT,
   RAG_GROUNDED_SENTINEL,
   type RagEvidence,
 } from "../../src/lib/baseball-qa/rag/retrieve";
@@ -396,19 +398,32 @@ async function main() {
   pass(`C 임계 코드 상수 고정 (서빙 ${RAG_DOCUMENT_MAX_DISTANCE})`);
 
   // ── D·E. 배포 순서 방어 + 구 시그니처 재시도 금지 ─────────────────────────
-  const fnStart = server.indexOf("export async function searchOfficialRag");
-  assert.ok(fnStart > 0, "D0: searchOfficialRag 를 찾지 못했다");
-  const fnBody = server.slice(fnStart, fnStart + 2600);
-  assert.ok(
-    /PGRST202/.test(fnBody) && /return \[\]/.test(fnBody),
-    "D: RPC 시그니처 부재(PGRST202)를 근거 0건으로 접지 않는다 — migration 보다 앱이 먼저 "
-    + "배포되면 공식 RAG 경로가 통째로 예외가 되어 유저에게 오류가 나간다",
-  );
-  assert.ok(
-    !/p_limit[^}]*\}\s*\)\s*;[\s\S]{0,300}supabaseAdmin\.rpc\(\s*"search_baseball_genius_official_chunks"/.test(fnBody),
-    "E: 구 시그니처로 재시도한다 — 구 RPC 는 임계가 없어 무슨 질문이든 상한만큼 돌려준다",
-  );
-  pass("D·E 배포 순서 fail-close (PGRST202 → 근거 0건, 구 시그니처 재시도 없음)");
+  // Exercise the production error handler, not unrelated token occurrences.
+  for (const code of ["PGRST202", "42883"]) {
+    const calls: string[] = [];
+    const search = loadOfficialSearch(src("server.ts"), async (name, args) => {
+      calls.push(name);
+      assert.equal(args.p_max_distance, RAG_DOCUMENT_MAX_DISTANCE,
+        "E: every RPC including v1 fallback must retain the distance threshold");
+      assert.equal(args.p_limit, RAG_DOCUMENT_CANDIDATE_LIMIT, "E: bounded candidate limit");
+      return {data: null, error: {code}};
+    });
+    let result;
+    try { result = await search("보크가 뭐야"); }
+    catch { assert.fail(`D: ${code} on both RPCs escaped the error handler`); }
+    assert.deepEqual(result, [], `D: ${code} on both RPCs must fail closed`);
+    assert.deepEqual(calls, ["search_baseball_genius_official_chunks_v2", "search_baseball_genius_official_chunks"],
+      "E: only one threshold-bearing compatibility retry; never retry an unbounded signature");
+  }
+  const calls: string[] = [];
+  const unexpected = loadOfficialSearch(src("server.ts"), async (name) => {
+    calls.push(name);
+    return {data: null, error: {code: "XX000"}};
+  });
+  await assert.rejects(unexpected("보크가 뭐야"), (error: unknown) =>
+    (error as {code: string}).code === "XX000", "D: non-absence errors must not be hidden");
+  assert.equal(calls.length, 1, "E: other errors must not retry");
+  pass("D·E 실제 오류 분기 fail-close · 모든 RPC 임계 유지 · 호환 재시도 최대 1회");
 
   // ── S. SQL 이 상한을 다시 강제한다 ────────────────────────────────────────
   //   앱 상수만으로는 방어가 아니다 — 호출자가 1.0 을 넣으면 임계가 사라진다.

@@ -570,8 +570,15 @@ const MUTATIONS = [
   {
     name: "r11 PGRST202 fail-close 제거 — migration 이전 배포에서 유저에게 오류가 나간다",
     file: SERVER,
-    from: "    if (error.code === \"PGRST202\") return [];\n    throw error;",
+    from: "    if (error.code === \"PGRST202\" || error.code === \"42883\") return [];\n    throw error;",
     to: "    throw error;",
+  },
+
+  {
+    name: "r11b v1 fallback에서 거리 임계 제거 — 구 무임계 시그니처 재시도",
+    file: SERVER,
+    from: 'result = await supabaseAdmin.rpc("search_baseball_genius_official_chunks", args);',
+    to: 'result = await supabaseAdmin.rpc("search_baseball_genius_official_chunks", {p_query_embedding: args.p_query_embedding, p_limit: args.p_limit});',
   },
 
   // ── 넓히되 뺏지 않는다 ───────────────────────────────────────────────────

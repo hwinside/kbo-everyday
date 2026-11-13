@@ -46,6 +46,9 @@ export const RAG_RETRIEVAL_MODE = "vector_only" as const;
 
 /** 서빙 뷰(genius_rag_serving_chunks)에서 읽어오는 근거 1건. */
 export interface RagEvidence {
+  /** Observation only; source hash is before evidence projection. */
+  chunkId?: string;
+  sourceContentSha256?: string;
   /** Source-section calendar event year, not publication or every fact's season. */
   calendarSeason?: { season: number; axis: "calendar_event"; heading: string; headingPage: number; pageTextSha256: string; sourcePdfSha256: string } | null;
   content: string;
