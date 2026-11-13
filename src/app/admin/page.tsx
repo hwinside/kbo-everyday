@@ -339,12 +339,21 @@ function DetailModal({
   const [authors, setAuthors] = useState<{ nickname: string; count: number }[]>([]);
   const [loading, setLoading] = useState(true);
 
+  const [error, setError] = useState(false);
+  const [retry, setRetry] = useState(0);
+
   useEffect(() => {
+    let cancelled = false;
     apiFetch<{ items: DetailItem[]; topAuthors?: { nickname: string; count: number }[] }>(`/api/admin/today-detail?type=${type}`)
-      .then((d) => { setItems(d.items); setAuthors(d.topAuthors ?? []); })
-      .catch(() => {})
-      .finally(() => setLoading(false));
-  }, [type]);
+      .then((d) => {
+        if (cancelled) return;
+        setItems(d.items);
+        setAuthors(d.topAuthors ?? []);
+      })
+      .catch(() => { if (!cancelled) setError(true); })
+      .finally(() => { if (!cancelled) setLoading(false); });
+    return () => { cancelled = true; };
+  }, [type, retry]);
 
   const formatTime = (t: string) => {
     const d = new Date(t);
@@ -368,6 +377,13 @@ function DetailModal({
           {loading ? (
             <div className="flex justify-center py-10">
               <Loader2 className="w-6 h-6 animate-spin text-[#636366]" />
+            </div>
+          ) : error ? (
+            <div role="alert" className="text-center py-10">
+              <p className="text-sm text-[#FF453A]">목록을 불러오지 못했습니다. 다시 시도해 주세요.</p>
+              <button onClick={() => { setLoading(true); setError(false); setRetry((value) => value + 1); }} className="mt-3 text-sm text-[#8E8EFF] hover:underline">
+                다시 시도
+              </button>
             </div>
           ) : items.length === 0 ? (
             <p className="text-center text-[#636366] py-10">데이터 없음</p>
@@ -737,6 +753,7 @@ export default function AdminOverviewPage() {
       {/* Detail Modal */}
       {detailModal && (
         <DetailModal
+          key={detailModal.type}
           title={detailModal.title}
           type={detailModal.type}
           onClose={() => setDetailModal(null)}
