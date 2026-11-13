@@ -1,0 +1,77 @@
+{
+  "window": "2026-11-11 11:30–2026-11-12 11:30 KST",
+  "identity": "unconfirmed, not proven natural use",
+  "questions": [
+    {
+      "id": 3612697,
+      "question": "박찬호는 삼성이야?",
+      "answer": "야구 선수 박찬호는 제공된 현재 로스터 기준에 따르면 삼성 소속이 아니에요. 박찬호 선수는 현재 두산 소속의 내야수로 등록되어 활동하고 있어요. 구단의 선수 등록 상황은 공식 명단을 통해 정확하게 확인하실 수 있답니다.",
+      "path": "llm",
+      "previous": [
+        {
+          "id": 2417009,
+          "content": "투구수를 늘리면 뭐가 좋아?",
+          "payload": null,
+          "created_at": "2026-10-05T05:08:54.765526+00:00",
+          "same_sender": true
+        },
+        {
+          "id": 2417012,
+          "content": "투구수를 늘리면 투수가 타자와의 승부에서 더 많은 공을 던지게 되므로 체력적인 부담을 느끼게 되고 집중력이 흔들릴 수 있어요. 또한 상대 투수의 투구 수가 많아지면 불펜 투수를 일찍 마운드에 올려야 하므로 경기 후반에 상대 팀의 마운드 운용을 어렵게 만드는 효과가 있어요. 타자 입장에서는 투수의 공을 여러 개 보면서 구종이나 제구력을 미리 파악할 수 있는 기회를 얻게 돼요.",
+          "payload": {
+            "type": "baseball_genius_reply",
+            "match_path": "llm",
+            "reply_kind": "answer",
+            "question_message_id": 2417009
+          },
+          "created_at": "2026-10-05T05:09:00.703651+00:00",
+          "same_sender": false
+        },
+        {
+          "id": 2907784,
+          "content": "기아 삐끼삐끼랑 경적송은 각각 언제 나오는거야?",
+          "payload": null,
+          "created_at": "2026-10-18T02:58:23.82398+00:00",
+          "same_sender": true
+        },
+        {
+          "id": 2907785,
+          "content": "기아 타이거즈의 삐끼삐끼 아웃송은 수비할 때 상대 팀 타자가 삼진아웃을 당하면 축하의 의미로 연주되는 곡이에요. 경적송 역시 수비할 때 상대 팀 타자나 주자를 아웃시킬 때 나오는 아웃송 중 하나랍니다. 야구장에서 수비 상황에 타자를 잡아내는 순간마다 흥겨운 응원이 펼쳐지는 모습은 언제 봐도 정말 짜릿하지요.\n\n📄 출처: 나무위키",
+          "payload": {
+            "type": "baseball_genius_reply",
+            "match_path": "team_rag",
+            "reply_kind": "answer",
+            "source_url": "https://namu.wiki/w/KIA%20%ED%83%80%EC%9D%B4%EA%B1%B0%EC%A6%88",
+            "answer_team_id": 6,
+            "question_message_id": 2907784
+          },
+          "created_at": "2026-10-18T02:58:29.666509+00:00",
+          "same_sender": false
+        }
+      ]
+    },
+    {
+      "id": 3612719,
+      "question": "올림픽 경기 어떻게 돼고있니?",
+      "answer": "이 내용은 지금 정확히 답변드리기 어렵습니다.",
+      "path": "unsure",
+      "previous": []
+    }
+  ],
+  "actual_dm_readback": [
+    {
+      "qid": 3612697,
+      "reply_ids": [
+        3612698
+      ],
+      "equals_job_answer": true
+    },
+    {
+      "qid": 3612719,
+      "reply_ids": [
+        3612720
+      ],
+      "equals_job_answer": true
+    }
+  ]
+}
