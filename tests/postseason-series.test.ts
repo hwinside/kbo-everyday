@@ -64,7 +64,7 @@ test("all-star and doubleheader suffixes stay intact", () => {
 
 test("unknown identity fails closed and remains retryable; caller abort is respected", async () => {
   const original = globalThis.fetch;
-  globalThis.fetch = async () => Response.json({ game: [], result: { games: [] } });
+  globalThis.fetch = async () => Response.json({ code: "100", game: [], result: { games: [] } });
   try {
     await assert.rejects(resolveNaverGameId("20271014OBLG0", { signal: AbortSignal.timeout(100) }));
     const controller = new AbortController(); controller.abort();
@@ -80,7 +80,7 @@ for (const [gameId, srId] of cases) {
     const details: URLSearchParams[] = [];
     globalThis.fetch = async (input, init) => {
       const url = String(input);
-      if (url.includes("GetKboGameList")) return Response.json({ game: [{
+      if (url.includes("GetKboGameList")) return Response.json({ code: "100", game: [{
         G_ID: gameId, G_DT: gameId.slice(0,8), SR_ID: srId,
         AWAY_ID: gameId.slice(8,10), HOME_ID: gameId.slice(10,12), AWAY_NM: "원정", HOME_NM: "홈",
         GAME_STATE_SC: "1", CANCEL_SC_ID: "0",
