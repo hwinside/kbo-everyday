@@ -45,8 +45,9 @@ async function main() {
     assert.equal(a.result.source, "kbo_structured", question);
     if (!question.includes("도루")) assert.match(a.result.answer, /0\.314/, question);
     assert.doesNotMatch(a.result.answer, /0\.310|140/);
-    assert.match(a.result.answer, /앱 기록 스냅샷 09\/29 23:17 KST 갱신/);
-    assert.match(a.result.answer, /경기 반영 완료 시각은 아님/);
+    assert.match(a.result.answer, /앱 기록 조회 확인 시각 09\/29 23:17 KST/);
+    assert.match(a.result.answer, /실제 수집·경기 반영 완료 시각은 아님/);
+    assert.doesNotMatch(a.result.answer, /스냅샷 .* 갱신/);
     assert.equal(a.calls, 1); assert.equal(a.dbCalls, 0);
     assert.deepEqual(a.logs, ["kbo_structured"]);
     const counts = a.counts();
