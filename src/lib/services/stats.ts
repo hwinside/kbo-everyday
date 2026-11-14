@@ -8,7 +8,7 @@ import statsMeta from "@/lib/constants/stats-2026-meta.json";
 import { canonicalKboId } from "@/lib/utils/resolve-player";
 import { aggregateDefense, type DefenseRow } from "@/lib/utils/defense-aggregate";
 import {
-  mergeFullEntry,
+  mergeFullEntryWithFreshness,
   oldestFullEntryTimestamp,
   requireOldestFullEntryTimestamp,
   StatsFreshnessContractError,
@@ -856,7 +856,16 @@ export async function getStatsRouteResult(params: {
     const staticStats = statsType === "pitcher"
       ? (pitcherStats2026 as unknown as PlayerStat[])
       : (batterStats2026 as unknown as PlayerStat[]);
-    let stats = full ? mergeFullEntry(current.stats, staticStats) : current.stats;
+    const now = new Date().toISOString();
+    const currentUpdatedAt = current.runnerSource === "static-fallback"
+      ? current.runnerUpdatedAt
+      : now;
+    const staticGeneratedAt = statsType === "pitcher"
+      ? statsMeta.pitchersGeneratedAt
+      : statsMeta.battersGeneratedAt;
+    let stats = full
+      ? mergeFullEntryWithFreshness(current.stats, staticStats, currentUpdatedAt, staticGeneratedAt)
+      : current.stats;
     if (current.runnerMap) {
       // full=1로 static에서 추가된 선수도 같은 전페이지 live Runner map으로 마지막에 보정한다.
       stats = applyRunnerStats(stats, current.runnerMap);
@@ -867,13 +876,6 @@ export async function getStatsRouteResult(params: {
       stats = canonicalizeStatsIdentity(stats);
       assertFullEntryIdentity(stats);
     }
-    const now = new Date().toISOString();
-    const currentUpdatedAt = current.runnerSource === "static-fallback"
-      ? current.runnerUpdatedAt
-      : now;
-    const staticGeneratedAt = statsType === "pitcher"
-      ? statsMeta.pitchersGeneratedAt
-      : statsMeta.battersGeneratedAt;
     // full=1은 live 목록에 static 비규정 엔트리를 합친 응답이다. runner가 live여도
     // static 생성시각을 숨기고 `now`만 내보내면 봇의 stale 가드가 우회된다.
     const updatedAt = full
