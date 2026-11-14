@@ -796,7 +796,7 @@ export function formatAsOf(iso: string): string {
   return `${mm}/${dd}`;
 }
 
-/** Snapshot publication time, not a claim that every game on this date is included. */
+/** App record lookup time; not the collection time or game coverage cutoff. */
 export function formatSnapshotAsOf(iso: string): string {
   const date = new Date(iso);
   if (!Number.isFinite(date.getTime())) return "";
@@ -808,7 +808,7 @@ export function composeSeasonRecordAnswer(outcome: Extract<SeasonRecordOutcome, 
   const asOf = formatAsOf(outcome.asOf);
   const who = outcome.team ? `${outcome.name}(${outcome.team})` : outcome.name;
   const suffix = asOf ? appSnapshot
-    ? `\n\n📊 ${SUPPORTED_SEASON} 시즌 · 앱 기록 스냅샷 ${formatSnapshotAsOf(outcome.asOf)} 갱신 (경기 반영 완료 시각은 아님)`
+    ? `\n\n📊 ${SUPPORTED_SEASON} 시즌 · 앱 기록 조회 확인 시각 ${formatSnapshotAsOf(outcome.asOf)} (실제 수집·경기 반영 완료 시각은 아님)`
     : `\n\n📊 ${SUPPORTED_SEASON} 시즌 · ${asOf} 기준` : "";
   const syllable = outcome.label.charCodeAt(outcome.label.length - 1) - 0xac00;
   const topicParticle = syllable >= 0 && syllable <= 11171 && syllable % 28 === 0 ? "는" : "은";

@@ -4937,7 +4937,7 @@ async function answerSeasonRecordQuestion(
     }
     const who = candidate.team ? `${candidate.name}(${candidate.team})` : candidate.name;
     let answer = `${who} 선수의 ${SUPPORTED_SEASON} 시즌 기록: ${answers.join(" · ")}`;
-    if (answered) answer += `\n\n📊 ${SUPPORTED_SEASON} 시즌 · ${deps.fetchCurrentSeasonRecord ? "앱 기록 스냅샷 " : ""}${[...dates].sort().join("·")} ${deps.fetchCurrentSeasonRecord ? "갱신 (경기 반영 완료 시각은 아님)" : "기준"}`;
+    if (answered) answer += `\n\n📊 ${SUPPORTED_SEASON} 시즌 · ${deps.fetchCurrentSeasonRecord ? "앱 기록 조회 확인 시각 " : ""}${[...dates].sort().join("·")} ${deps.fetchCurrentSeasonRecord ? "(실제 수집·경기 반영 완료 시각은 아님)" : "기준"}`;
     if (intent.unavailableSeasons?.length) {
       answer += "\n\n" + `${intent.unavailableSeasons.join("·")} 시즌은 이 비교 답변에서 제공하지 못했습니다. 위 수치는 현재 시즌만이며 시즌 간 비교 결과가 아닙니다.`;
     }
