@@ -10,7 +10,7 @@ type Snapshot = { rows: SeasonRecordRow[]; updatedAt: string };
  * exact identity, team, timestamp and each raw metric before answering.
  */
 export function createCurrentSeasonRecordFetcher(
-  load: (table: Table) => Promise<Snapshot> = fetchServedCareerSnapshot,
+  load: (table: Table) => Promise<Snapshot> = (table) => fetchServedCareerSnapshot(table, true),
 ): (table: Table, kboId: string) => Promise<SeasonRecordRow[]> {
   const snapshots = new Map<Table, Promise<Snapshot>>();
   return async (table, kboId) => {

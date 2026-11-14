@@ -81,7 +81,7 @@ export interface ServedBatterSnapshot {
 }
 
 /** 앱의 최종 타자 스냅샷을 한 번만 읽는다. 선수별·리그 통산 조회가 같은 정본을 공유한다. */
-export async function fetchServedBatterSnapshot(): Promise<ServedBatterSnapshot> {
+export async function fetchServedBatterSnapshot(perPlayerFreshness = false): Promise<ServedBatterSnapshot> {
   const controller = new AbortController();
   const timer = setTimeout(() => controller.abort(), SERVED_STATS_TIMEOUT_MS);
   let payload: ServedStatsResponse;
@@ -112,7 +112,7 @@ export async function fetchServedBatterSnapshot(): Promise<ServedBatterSnapshot>
       kbo_id: canonicalKboId(row.kboId as string | number | null),
       name: String(row.name ?? ""),
       team: (row.team as string | null) ?? null,
-      updated_at: servedAt,
+      updated_at: servedRecordTimestamp(row, servedAt, perPlayerFreshness),
     })) as SeasonRecordRow[],
   };
 }
@@ -143,8 +143,9 @@ export function validateServedPitcherPayload(payload: ServedStatsResponse): Arra
 
 export async function fetchServedCareerSnapshot(
   table: "batter" | "pitcher",
+  perPlayerFreshness = false,
 ): Promise<{ rows: SeasonRecordRow[]; updatedAt: string }> {
-  if (table === "batter") return fetchServedBatterSnapshot();
+  if (table === "batter") return fetchServedBatterSnapshot(perPlayerFreshness);
 
   const controller = new AbortController();
   const timer = setTimeout(() => controller.abort(), SERVED_STATS_TIMEOUT_MS);
@@ -174,10 +175,22 @@ export async function fetchServedCareerSnapshot(
       kbo_id: id,
       name: String(row.name ?? ""),
       team: (row.team as string | null) ?? null,
-      updated_at: servedAt,
+      updated_at: servedRecordTimestamp(row, servedAt, perPlayerFreshness),
     } as SeasonRecordRow);
   }
   return { rows: mapped, updatedAt: servedAt };
+}
+
+/** Single-player reads may use explicit row provenance. Whole-league/career
+ * reads retain the oldest envelope timestamp. Older deployments/fallbacks without
+ * row provenance keep the conservative envelope; malformed metadata fails closed.
+ */
+function servedRecordTimestamp(row: Record<string, unknown>, servedAt: string, perPlayer: boolean): string {
+  if (!perPlayer || row.recordUpdatedAt === undefined) return servedAt;
+  if (typeof row.recordUpdatedAt !== "string" || !Number.isFinite(Date.parse(row.recordUpdatedAt))) {
+    throw new Error("served stats row has invalid recordUpdatedAt");
+  }
+  return row.recordUpdatedAt;
 }
 
 export async function fetchServedBatterRows(kboId: string): Promise<SeasonRecordRow[]> {

@@ -95,3 +95,19 @@ export function mergeFullEntry<T extends FullEntryRow>(live: T[], crawled: T[]):
   }
   return out;
 }
+
+/** Preserve per-player provenance without relaxing the whole-snapshot timestamp.
+ * liveAt includes the runner component; static-only rows keep the oldest of their
+ * base row and runner timestamps. Never refresh a static row just because fetched now.
+ */
+export function mergeFullEntryWithFreshness<T extends FullEntryRow>(
+  live: T[], crawled: T[], liveAt: string | undefined, staticAt: string,
+): Array<T & { recordUpdatedAt: string }> {
+  const oldest = requireOldestFullEntryTimestamp([liveAt, staticAt]);
+  const current = requireOldestFullEntryTimestamp([liveAt]);
+  const liveIds = new Set(live.map((row) => canonId(row.kboId)));
+  return mergeFullEntry(live, crawled).map((row) => ({
+    ...row,
+    recordUpdatedAt: liveIds.has(canonId(row.kboId)) ? current : oldest,
+  }));
+}
