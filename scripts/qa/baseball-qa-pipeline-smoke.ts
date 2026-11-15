@@ -3959,7 +3959,7 @@ async function verifyReplyKindMatchesActualPipelineOutcome() {
     },                                                                    // question_correction
     { question: "고마워", deps: richDeps },                                // ack
     // 범위 되묻기 — 우리 안내문에 대한 반응이라 결정론으로 범위를 안내한다.
-    { question: "야구 룰", deps: richDeps },                               // scope_guide
+    { question: "뭐 질문할 수 있어?", deps: richDeps },                    // scope_guide
     // 로스터에 없는 실명(`임창규`)을 받으면 **생성 없이** 이름을 되물는다.
     // Production 실측(2026-08-08 하린아빠 제보): generic LLM 이 없는 선수를 실존으로 만들고
     // "LG 트윈스의 주축 선수" 라고 답했다. 수치 환각보다 나쁜 — 유저는 틀렸다는 걸 모른다.

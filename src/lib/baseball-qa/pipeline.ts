@@ -1,3 +1,4 @@
+import { BASEBALL_RULES_INTRO, BASEBALL_TERMS_INTRO } from "./topic-introduction";
 import { fingerprintEvidence, readEvidenceFingerprints, type EvidenceFingerprint } from "./rag/evidence-fingerprint";
 import { readScenarioContext, type ScenarioContext } from "./scenario-context";
 import { prepareOfficialEvidence } from "./rag/official-sibling-evidence";
@@ -616,38 +617,18 @@ export function isAckPhrase(question: string): boolean {
   return ACK_SET.has(normalizeAck(question));
 }
 
-/**
- * **범위 되묻기**(메타 질문) 판정.
- *
- * 사고 — 봇이 `야구 룰·용어 질문만 답할 수 있어요` 라고 안내해 놓고, 유저가 그 안내를
- * 그대로 따라 `야구 룰` 이라고 치면 다시 되물었다. 운영 로그 실측(최근 3일 미답변
- * 196건) 중 **16건**이 이 모양이었다. 안내문을 따른 유저를 벌주는 꼴이다.
- *
- * ⚠️ **어휘 열거로 풀지 않는다.** 처음엔 문장을 폐쇄집합으로 적었는데, 게이트가 바로
- * `야구 룰은 뭔가있어?`·`야구 룰 간단하개`(오타)를 놓치는 걸 잡았다. 유저의 문장은
- * 무한히 변형되므로 열거하는 순간 지는 싸움이다(#1112 에서 사전을 손으로 채우다
- * 접은 것과 같은 이유).
- *
- * 대신 **구조**로 판정한다: "범위어와 의문문 꺼풀을 걷어냈을 때 남는 게 없는가".
- *
- *   야구 룰은 뭔가 있어?      → [야구][룰][뭔가][있어]      → 남는 것 없음  → 범위 되묻기
- *   야구 룰 중에 보크가 뭐야?  → [야구][룰][뭐야] + **보크**  → 남음        → 진짜 질문
- *
- * 즉 "무엇을 물었는가"가 비어 있을 때만 되묻기 대신 범위를 안내한다. 이 모양은
- * 오타·어미·어순이 바뀜도 유지된다 — 새 표현마다 목록을 늘리지 않아도 된다.
- *
- * ⚠️ substring 으로 `야구 룰`을 잡지 않는다 — 그러면 진짜 용어 질문까지 안내문으로
- *   덮는다(#1127 4차 NO-GO 의 `SCORE_CONTEXT_HEADS` 전역 substring 과차단과 같은 실수).
+/** Scope guidance is about the assistant's capabilities, not a broad topic.
+ * Topic words still participate in the existing residue grammar, but cannot
+ * establish a meta request by themselves: "야구 룰 알려줘" asks for content.
+ * No topic-specific answer or extra model call is introduced here.
  */
-
-/** 범위 자체를 가리키는 말 — 이것만 있으면 "뭔가 되느냐"를 물은 것이다. */
+const SCOPE_CAPABILITY_WORDS = new Set([
+  "너", "니", "봇", "야잘알봇", "답변", "대답",
+  "물어볼", "물어봐", "물어", "여쭤", "질문",
+]);
 const SCOPE_META_WORDS = [
   "야구", "구야", "룰", "규칙", "용어", "kbo", "프로야구", "야구경기",
-  "너", "니", "봇", "야잘알봇", "답변", "대답",
-  // "뭐 물어볼 수 있어" 류 — 물음 그 자체를 대상으로 삼은 메타 질문이다.
-  // 꺼풀이 아니라 메타어로 둔다 — 이게 없으면 문장이 통째로 꺼풀만 남아
-  // "범위어가 없다"로 분류돼 안내문이 안 나간다.
-  "물어볼", "물어봐", "물어", "여쭤", "질문",
+  ...SCOPE_CAPABILITY_WORDS,
 ];
 
 /**
@@ -771,7 +752,7 @@ function isParticleOnly(residue: string): boolean {
  * `SCOPE_GUIDE_ANSWER` 가 담당하고, 그 문구는 `ANSWER_PATH_SCOPE_WORD` SSOT 와
  * 게이트에서 대조된다. 범위가 늘면 문구도 같이 늘어나야 빌드가 통과한다.
  */
-export function isScopeAskPhrase(question: string): boolean {
+export function isScopeAskPhrase(question: string, requireCapability = true): boolean {
   const normalized = normalizeAck(question).replace(/[?!.,~…]/gu, " ");
   const rawTokens = normalized.split(/\s+/u).filter(Boolean);
   if (rawTokens.length === 0) return false;
@@ -798,13 +779,13 @@ export function isScopeAskPhrase(question: string): boolean {
     for (const meta of SCOPE_META_WORDS_LONGEST_FIRST) {
       if (marked.includes(meta)) {
         marked = marked.split(meta).join(SCOPE_META_MARK);
-        matchedMeta = true;
+        matchedMeta ||= !requireCapability || SCOPE_CAPABILITY_WORDS.has(meta);
       }
     }
     const token = marked.split(SCOPE_META_MARK).join("");
     if (matchedMeta) sawMeta = true;
     if (SCOPE_META_SET.has(token)) {
-      sawMeta = true;
+      sawMeta ||= !requireCapability || SCOPE_CAPABILITY_WORDS.has(token);
       continue;
     }
     // 한 글자 꺼풀은 **토큰 전체와 같을 때만** 인정한다 (`뭐 할 수 있어` 의 `할`·`수`).
@@ -3730,7 +3711,7 @@ export function routeQuestion(
   //     **의도 판정을 목적어 사전에 의존시키면 목적어마다 구멍이 난다.** 그래서 판정을
   //     "야구를 배제했다"는 **문장 구조** 쪽으로 올린다.
   if (isTopicDismissal(question)) return "blocked";
-  // 범위 되묻기(`야구 룰`·`뭐 물어볼 수 있어`)는 질문이 아니라 **우리 안내문에 대한 반응**이다.
+  // 능력 질문(`뭐 물어볼 수 있어`)만 범위 안내로 닫는다. 주제 설명 요청은 아래 답변 경로로 간다.
   // 외부 조회 없이 결정론으로 닫는다 — `ack` 과 같은 자리에 두는 이유도 같다(둘 다 대화 행위).
   // ⚠️ `ack` 보다 뒤에 둔다 — 두 집합은 서로 섞이지 않지만, 섞이게 되더라도
   // 감사 인사가 범위 안내문을 받는 쪽보다 그 반대가 덜 이상하다.
@@ -4762,6 +4743,15 @@ export function glossaryCandidatesIn(entries: GlossaryEntry[], question: string)
   return found.sort((a, b) => b.len - a.len).map((f) => f.entry);
 }
 
+/** Broad domain topic with no specific referent left by the existing grammar.
+ * Such a request needs a reviewed introduction, not an arbitrary retrieved clause.
+ * Capability requests and specific/compound questions keep their existing owners.
+ */
+function matchTopicIntroduction(question: string): GlossaryEntry | null {
+  if (isScopeAskPhrase(question) || !isScopeAskPhrase(question, false)) return null;
+  return question.includes("용어") ? BASEBALL_TERMS_INTRO : BASEBALL_RULES_INTRO;
+}
+
 export function matchGlossary(entries: GlossaryEntry[], question: string): GlossaryEntry | null {
   const index = new Map<string, GlossaryEntry>();
   for (const entry of entries) {
@@ -4773,7 +4763,7 @@ export function matchGlossary(entries: GlossaryEntry[], question: string): Gloss
   const key = normalizeQuestion(question);
   const exact = index.get(normalizeKey(question)) ?? index.get(key);
   if (exact) return exact;
-  return matchQuantityGlossary(entries, question);
+  return matchTopicIntroduction(question) ?? matchQuantityGlossary(entries, question);
 }
 
 function matchQuantityGlossary(entries: GlossaryEntry[], question: string): GlossaryEntry | null {

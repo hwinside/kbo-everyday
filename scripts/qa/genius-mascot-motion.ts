@@ -127,7 +127,7 @@ async function partMapping() {
     SMALLTALK_STREAK_LIMIT, SMALLTALK_STREAK_ANSWER,
   } = pipeline;
   check("입력 전제 (판정기 실확인)",
-    isGreetingPhrase("안녕") && isAckPhrase("고마워") && isScopeAskPhrase("야구 룰"));
+    isGreetingPhrase("안녕") && isAckPhrase("고마워") && isScopeAskPhrase("뭐 질문할 수 있어?"));
   check("매핑: 인사 → excited", geniusMotionForResult("ack", "안녕") === "excited");
   check("매핑: 감사 → headspin", geniusMotionForResult("ack", "고마워") === "headspin");
   check("매핑: scope_guide 거절 → bored", geniusMotionForResult("scope_guide", "야구 룰") === "bored");
@@ -150,7 +150,7 @@ async function partMapping() {
     check("실실행: 인사 → source ack (모션 계산 입력 결속)", res.source === "ack", `source=${res.source}`);
   }
   {
-    const res = await answerQuestion("u1", "야구 룰", deps() as never);
+    const res = await answerQuestion("u1", "뭐 질문할 수 있어?", deps() as never);
     check("실실행: 범위 재질문 → source scope_guide", res.source === "scope_guide", `source=${res.source}`);
   }
   // ⚠️ 삼순 #1197 P0: 종전에는 `고마워`만 검사하고 source 를 직접 넣어 **대표 칭찬이

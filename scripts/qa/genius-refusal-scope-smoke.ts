@@ -100,7 +100,7 @@ function makeDeps(): { deps: QaDeps; logs: { matchPath: string; answer: string |
       calls.quota += 1;
       return { allowed: true, remaining: 19 };
     },
-    log: async (entry) => {
+    log: async (entry: Parameters<QaDeps["log"]>[0]) => {
       logs.push({ matchPath: entry.matchPath, answer: entry.answer });
     },
   } as unknown as QaDeps;
@@ -117,7 +117,7 @@ async function ask(question: string) {
 // ① 문구가 실제 답변 능력을 전부 담는가 (SSOT 대조)
 // ─────────────────────────────────────────────────────────────────────────────
 
-players = loadRosterPlayers();
+players = await loadRosterPlayers();
 
 check("SSOT — ANSWER_PATH_SCOPE_WORD 는 `answer` 경로를 빠짐없이 덮는다", () => {
   const answerPaths = Object.entries(MATCH_PATH_REPLY_KIND)
@@ -197,7 +197,7 @@ check("배포 판정 프롬프트도 판정 기준을 선언 범위와 같게 �
 // ─────────────────────────────────────────────────────────────────────────────
 
 /** 운영 로그에서 실제로 관측된 범위 되묻기 문장 (최근 3일). */
-const OBSERVED_SCOPE_ASKS = [
+const OBSERVED_TOPIC_ASKS = [
   // Actual DM: informal scope guide → polite form escaped to LLM.
   "야구 용어 알려줘", "야구 용어 알려주세요.",
   "야구용어알려주세요", "야구 규칙을 알려주세요",
@@ -212,6 +212,23 @@ const OBSERVED_SCOPE_ASKS = [
   "야구 규칙에는 뭐가 있어",
   "야구 룰 간단하개",
   "야구 룰이 뭐야?",
+];
+
+// Production Q3690662/3690664: broad topics are content, not capability requests.
+for (const q of OBSERVED_TOPIC_ASKS) {
+  const { result } = await ask(q);
+  check(`topic must reach answer path: ${q}`, () => {
+    assert.equal(isScopeAskPhrase(q), false);
+    assert.notEqual(result.answer, SCOPE_GUIDE_ANSWER);
+    assert.equal(result.source, "dictionary");
+    assert.match(result.answer, /더 많은 점수/);
+    assert.match(result.answer, /아웃 3개/);
+    assert.match(result.answer, /이닝/);
+  });
+}
+const OBSERVED_SCOPE_ASKS = [
+  "너 뭐 할 수 있어", "뭐 질문할 수 있어?", "뭐 물어볼 수 있어",
+  "너는?", "질문은뭐가있어", "야잘알봇은뭐가있어",
 ];
 
 for (const q of OBSERVED_SCOPE_ASKS) {
@@ -270,12 +287,12 @@ check("과차단 0 — 한 글자 용어(`볼`·`야수`)를 꺼풀 조각으로
   });
 }
 
-check("누락 0 — `프로야구 규칙` 도 범위 되묻기로 잡힌다", () => {
+check("주제 보존 — `프로야구 규칙`은 설명 대상이다", () => {
   // 삼순 2026-08-08 조건 ② 실측 결함. 메타어를 **선언 순서**로 떼면 `프로야구` 에서
   // `야구` 가 먼저 잘려 `프로` 라는 유령 잔여가 남고, 그 잔여가 "물은 대상이 있다"로
   // 읽혀 판정이 뒤집혔다. 그래서 긴 어휘부터 떼도록 고정했다.
   for (const q of ["프로야구 규칙", "프로야구 규칙 알려줘", "프로야구 룰 뭐가 있어?"]) {
-    assert.equal(isScopeAskPhrase(q), true, `범위 되묻기를 놓쳤다: ${q}`);
+    assert.equal(isScopeAskPhrase(q), false, `topic wrongly classified as capability: ${q}`);
   }
 });
 
@@ -318,14 +335,14 @@ check("과차단 0 — 메타어 **앞**의 수식어는 조사가 아니다 (`�
   }
 });
 
-check("무회귀 — 메타어 **뒤**의 조사는 계속 조사다", () => {
+check("주제 보존 — 조사 유무와 무관하게 내용 질문이다", () => {
   // 위 위치 조건이 조사 처리 자체를 죽이면 그게 더 큰 회귀다(범위 되묻기가 통째로 샌다).
   for (const q of ["야구 룰은 뭔가있어?", "야구룰은", "규칙은 뭐가 있어", "야구 용어는?"]) {
-    assert.equal(isScopeAskPhrase(q), true, `메타어 뒤 조사 처리가 죽었다: ${q}`);
+    assert.equal(isScopeAskPhrase(q), false, `topic wrongly classified as capability: ${q}`);
   }
 });
 
-check("무회귀 — **완전 무공백** 범위 질문은 여전히 범위 되묻기다 (삼순 2026-08-17 P0)", () => {
+check("주제 보존 — 무공백 규칙 질문도 내용 질문이다", () => {
   // 🔴 1차 구현은 위치를 `raw.endsWith(residue)` 로 — 즉 **원문의 끝**으로 쟀다가
   //   이 부류를 통째로 깨뜨렸다. 띄어쓰기가 없으면 조사 뒤에 서술어까지 붙어 오기 때문이다:
   //     `야구룰은뭐가있어` → 꺼풀까지 떼면 잔여 `은` 인데 원문은 `있어` 로 끝난다 → false
@@ -337,7 +354,7 @@ check("무회귀 — **완전 무공백** 범위 질문은 여전히 범위 되�
     "야구룰은뭐야",
     "프로야구규칙은뭐가있어", // 긴-메타어 우선 제거와 같이 성립해야 한다
   ]) {
-    assert.equal(isScopeAskPhrase(q), true, `무공백 범위 질문을 놓쳤다: ${q}`);
+    assert.equal(isScopeAskPhrase(q), false, `topic wrongly classified as capability: ${q}`);
   }
 });
 
@@ -345,8 +362,8 @@ check("판정은 어휘 열거가 아니라 구조다 — 오타·어순 변형�
   // 처음엔 문장 폐쇄집합으로 적었다가 이 샘플들을 놓쳐서 구조 판정으로 바꿈.
   // 목록에 없는 변형이 동작해야 "열거가 아니다"는 주장이 증명된다.
   const variants = [
-    "야구규칙은 뭔가있어",   // 붙임 + 조사 + 띄어쓰기 무너짐
-    "kbo 규칙 전부 설명해줘",  // 영문 메타어 + 다른 꺼풀 조합
+    "질문은 뭔가있어",   // capability + particle
+    "야잘알봇 전부 설명해줘",  // assistant capability
     "너 뭐 할 수 있어",         // 범위어가 `너` 뿐인 변형
     "뭐 질문할 수 있어?",      // 물음 자체를 대상으로 삼은 변형
   ];
