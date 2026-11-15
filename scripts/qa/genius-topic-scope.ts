@@ -47,7 +47,11 @@ async function main() {
         if(variant==='base' && /^369066/.test(c.id)) {assert.equal(result.source,'scope_guide');reproduced++;}
         if(c.kind==='meta') assert.equal(result.source,'scope_guide');
         if(variant==='head' && c.kind==='topic') {
-          assert.ok(['dictionary','rag','llm'].includes(result.source),`not an answer: ${result.source}`);
+          assert.equal(result.source,'dictionary',`not reviewed introduction: ${result.source}`);
+          assert.match(result.answer,/더 많은 점수/);
+          assert.match(result.answer,/아웃 3개/);
+          assert.match(result.answer,/이닝/);
+          assert.doesNotMatch(result.answer,/상벌|벌칙내규|퀵 리턴|일리걸/);
           assert.notEqual(result.answer,pipeline.SCOPE_GUIDE_ANSWER);
         }
         row.structuralPass=true;

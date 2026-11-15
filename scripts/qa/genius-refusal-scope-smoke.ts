@@ -220,7 +220,10 @@ for (const q of OBSERVED_TOPIC_ASKS) {
   check(`topic must reach answer path: ${q}`, () => {
     assert.equal(isScopeAskPhrase(q), false);
     assert.notEqual(result.answer, SCOPE_GUIDE_ANSWER);
-    assert.notEqual(result.source, "scope_guide");
+    assert.equal(result.source, "dictionary");
+    assert.match(result.answer, /더 많은 점수/);
+    assert.match(result.answer, /아웃 3개/);
+    assert.match(result.answer, /이닝/);
   });
 }
 const OBSERVED_SCOPE_ASKS = [

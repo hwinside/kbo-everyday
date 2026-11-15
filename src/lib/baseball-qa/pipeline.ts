@@ -1,3 +1,4 @@
+import { BASEBALL_RULES_INTRO, BASEBALL_TERMS_INTRO } from "./topic-introduction";
 import { fingerprintEvidence, readEvidenceFingerprints, type EvidenceFingerprint } from "./rag/evidence-fingerprint";
 import { readScenarioContext, type ScenarioContext } from "./scenario-context";
 import { prepareOfficialEvidence } from "./rag/official-sibling-evidence";
@@ -751,7 +752,7 @@ function isParticleOnly(residue: string): boolean {
  * `SCOPE_GUIDE_ANSWER` 가 담당하고, 그 문구는 `ANSWER_PATH_SCOPE_WORD` SSOT 와
  * 게이트에서 대조된다. 범위가 늘면 문구도 같이 늘어나야 빌드가 통과한다.
  */
-export function isScopeAskPhrase(question: string): boolean {
+export function isScopeAskPhrase(question: string, requireCapability = true): boolean {
   const normalized = normalizeAck(question).replace(/[?!.,~…]/gu, " ");
   const rawTokens = normalized.split(/\s+/u).filter(Boolean);
   if (rawTokens.length === 0) return false;
@@ -778,13 +779,13 @@ export function isScopeAskPhrase(question: string): boolean {
     for (const meta of SCOPE_META_WORDS_LONGEST_FIRST) {
       if (marked.includes(meta)) {
         marked = marked.split(meta).join(SCOPE_META_MARK);
-        matchedMeta ||= SCOPE_CAPABILITY_WORDS.has(meta);
+        matchedMeta ||= !requireCapability || SCOPE_CAPABILITY_WORDS.has(meta);
       }
     }
     const token = marked.split(SCOPE_META_MARK).join("");
     if (matchedMeta) sawMeta = true;
     if (SCOPE_META_SET.has(token)) {
-      sawMeta ||= SCOPE_CAPABILITY_WORDS.has(token);
+      sawMeta ||= !requireCapability || SCOPE_CAPABILITY_WORDS.has(token);
       continue;
     }
     // 한 글자 꺼풀은 **토큰 전체와 같을 때만** 인정한다 (`뭐 할 수 있어` 의 `할`·`수`).
@@ -4742,6 +4743,15 @@ export function glossaryCandidatesIn(entries: GlossaryEntry[], question: string)
   return found.sort((a, b) => b.len - a.len).map((f) => f.entry);
 }
 
+/** Broad domain topic with no specific referent left by the existing grammar.
+ * Such a request needs a reviewed introduction, not an arbitrary retrieved clause.
+ * Capability requests and specific/compound questions keep their existing owners.
+ */
+function matchTopicIntroduction(question: string): GlossaryEntry | null {
+  if (isScopeAskPhrase(question) || !isScopeAskPhrase(question, false)) return null;
+  return question.includes("용어") ? BASEBALL_TERMS_INTRO : BASEBALL_RULES_INTRO;
+}
+
 export function matchGlossary(entries: GlossaryEntry[], question: string): GlossaryEntry | null {
   const index = new Map<string, GlossaryEntry>();
   for (const entry of entries) {
@@ -4753,7 +4763,7 @@ export function matchGlossary(entries: GlossaryEntry[], question: string): Gloss
   const key = normalizeQuestion(question);
   const exact = index.get(normalizeKey(question)) ?? index.get(key);
   if (exact) return exact;
-  return matchQuantityGlossary(entries, question);
+  return matchTopicIntroduction(question) ?? matchQuantityGlossary(entries, question);
 }
 
 function matchQuantityGlossary(entries: GlossaryEntry[], question: string): GlossaryEntry | null {

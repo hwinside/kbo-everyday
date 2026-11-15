@@ -1,3 +1,15 @@
+# R2 revision — reviewed beginner introduction (R1 NO-GO retained)
+
+Reviewer Slack1794710513.036889 / correction1794710533.930569: exact ecdff5df NO-GO, round1/3. Source unchanged from47dad0cf, paired96 head topic13/21 unsure; original first question3/3 unsure, second2/3 unsure. Some successful RAG responses describe disciplinary regulations or advanced terms. Artifact `workspace/state/qa/1636/paired.json`. **Routing-only approach failed; no improvement claimed.**
+
+R2 removes probabilistic retrieval from broad beginner-topic definitions: a small static vetted glossary extension supplies basic game goal, scoring, three outs and innings; the terms introduction also defines batter/pitcher/runner. The same existing residue grammar identifies a topic with no remaining specific referent. Capability/compound/specific/negative requests keep their existing owners. Existing DB glossary entries retain priority. This follows the existing `VERIFIED_TERM_ORIGINS` static glossary extension pattern: no migration or keyword-by-question exception, no model call for these introductions. Source remains `dictionary` (reviewed editorial definition), not official-RAG/generated evidence.
+
+Evidence: repository original official2026 rulebook page25 rules1.02–1.06 and page91 rule5.09(e), `scripts/qa/fixtures/kbo-rulebook-boundary-pages.json`; definition INNING. Third-out scoring caveat retained; no innings limit/season facts/numeric live claims. Independent reviewer must verify text and boundary overmatching. Broad-topic parsing uses the same grammar in capability-required and domain-topic modes; no duplicated parser.
+
+R2 acceptance: repeat paired96 with current head; all7 topic forms must return accurate dictionary introductions, meta3 stay scope_guide, specific/control6 unchanged. Run original fixture with previous context and no context, refusal/mascot/full CI. Added assertions check goals/outs/inning and reject disciplinary jargon. Paired numeric success still is not factual/UI PASS. Base M1/M21 mutation misses are pre-existing P1, preserved and to be tracked separately (not covered by this PR).
+
+---
+
 # Topic explanations vs capability questions — 2026-11-15
 
 ## Evidence and cause
