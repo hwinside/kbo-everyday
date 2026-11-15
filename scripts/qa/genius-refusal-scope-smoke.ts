@@ -100,7 +100,7 @@ function makeDeps(): { deps: QaDeps; logs: { matchPath: string; answer: string |
       calls.quota += 1;
       return { allowed: true, remaining: 19 };
     },
-    log: async (entry) => {
+    log: async (entry: Parameters<QaDeps["log"]>[0]) => {
       logs.push({ matchPath: entry.matchPath, answer: entry.answer });
     },
   } as unknown as QaDeps;
@@ -117,7 +117,7 @@ async function ask(question: string) {
 // ① 문구가 실제 답변 능력을 전부 담는가 (SSOT 대조)
 // ─────────────────────────────────────────────────────────────────────────────
 
-players = loadRosterPlayers();
+players = await loadRosterPlayers();
 
 check("SSOT — ANSWER_PATH_SCOPE_WORD 는 `answer` 경로를 빠짐없이 덮는다", () => {
   const answerPaths = Object.entries(MATCH_PATH_REPLY_KIND)
