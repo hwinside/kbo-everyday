@@ -25,6 +25,7 @@
 import assert from "node:assert/strict";
 import {
   answerQuestion,
+  matchGlossary,
   routeQuestion,
   isScopeAskPhrase,
   isAckPhrase,
@@ -226,6 +227,24 @@ for (const q of OBSERVED_TOPIC_ASKS) {
     assert.match(result.answer, /이닝/);
   });
 }
+// #1642: preserve the whole-token modifier contract before #1640 lands.
+// These negatives pass on main and must still pass with the introduction change.
+// Reviewer: on #1640 + this patch, removing (?=\\s|$) must fail these asserts.
+check("입문 수식어 경계 — 붙임 표현과 구체 목적어를 지우지 않는다", () => {
+  for (const q of [
+    "야구 기본룰 알려줘", "야구 기본규칙 알려줘", "야구 쉽게규칙 알려줘",
+    "야구 초보인데규칙 알려줘", "야구 기본 보크 규칙 알려줘",
+    "야구 기본 타순 알려줘", "야구 기본 규칙 날씨 알려줘",
+  ]) assert.equal(matchGlossary([], q), null, q);
+  for (const q of ["야구 룰 알려줘", "야구 규칙 알려줘"]) {
+    assert.match(matchGlossary([], q)?.answer ?? "", /아웃 3개/);
+  }
+  // Exact reviewed glossary entries still own their spelling; the fallback
+  // boundary must not suppress an explicitly registered compound term.
+  const exact = { term: "기본룰", aliases: [], answer: "검수된 사전 항목" };
+  assert.equal(matchGlossary([exact], "기본룰"), exact);
+});
+
 const OBSERVED_SCOPE_ASKS = [
   "너 뭐 할 수 있어", "뭐 질문할 수 있어?", "뭐 물어볼 수 있어",
   "너는?", "질문은뭐가있어", "야잘알봇은뭐가있어",
