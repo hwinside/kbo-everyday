@@ -66,7 +66,18 @@ async function run(path: "official" | "team", question: string, raw: string, exp
   assert.equal(calls, 1, "durable replay must not regenerate");
   assert.equal(lastLog?.ragDiscardReason, reason);
 }
+// Misattributed event evidence must not be rescued by a term sentinel.
+for (const status of ["TERM_UNVERIFIED", "TERM_CONTEXTUAL", "GENERAL"]) {
+  const value = validateRagResponse(JSON.stringify({ status, answer: "", contextMeaning: "안타 친 상황" }), {
+    numericEvidence: true, evidence: [official], officialQuestion: "WBC 선수 명단 알려줘",
+    generalFallback: { question: "WBC 선수 명단 알려줘" },
+  });
+  assert.equal(value.kind, "insufficient");
+  if (value.kind === "insufficient") assert.equal(value.reason, "model_insufficient");
+}
 async function main() {
+  // An abstention cannot authorize another generic call, including unknown terms.
+  await run("official", "야구 글로벌 임팩트가 뭐여", JSON.stringify({ status: "INSUFFICIENT" }), RAG_NEUTRAL_HOLD, "model_insufficient");
   await run("official", "2026년 가을야구는 언제 시작해?", JSON.stringify({ status: "GROUNDED", answer: "10월 6일 시작합니다.", calendarClaims: [{ basis: "question", season: 2026, evidence: 1 }] }), RAG_DATE_HOLD, "event_date_unverified");
   await run("official", "인필드 플라이 규칙 알려줘", JSON.stringify({ status: "INSUFFICIENT" }), RAG_NEUTRAL_HOLD, "model_insufficient");
   await run("official", "인필드 플라이 규칙 알려줘", "not-json", RAG_RESPONSE_HOLD, "malformed_json");
