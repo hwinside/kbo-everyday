@@ -1,4 +1,4 @@
-import { BASEBALL_RULES_INTRO, BASEBALL_TERMS_INTRO } from "./topic-introduction";
+import { BASEBALL_RULES_INTRO, BASEBALL_TERMS_INTRO, BASEBALL_LEAGUE_PROMPT } from "./topic-introduction";
 import { fingerprintEvidence, readEvidenceFingerprints, type EvidenceFingerprint } from "./rag/evidence-fingerprint";
 import { readScenarioContext, type ScenarioContext } from "./scenario-context";
 import { prepareOfficialEvidence } from "./rag/official-sibling-evidence";
@@ -4748,8 +4748,18 @@ export function glossaryCandidatesIn(entries: GlossaryEntry[], question: string)
  * Capability requests and specific/compound questions keep their existing owners.
  */
 function matchTopicIntroduction(question: string): GlossaryEntry | null {
-  if (isScopeAskPhrase(question) || !isScopeAskPhrase(question, false)) return null;
-  return question.includes("용어") ? BASEBALL_TERMS_INTRO : BASEBALL_RULES_INTRO;
+  // Presentation modifiers belong only to beginner introductions. Do not widen
+  // capability routing or strip arbitrary substrings from specific baseball terms.
+  const topic = normalizeAck(question).replace(/[?!.,~…]/gu, " ")
+    .replace(/(^|\s)(?:기본|초보인데|쉽게)(?=\s|$)/gu, "$1")
+    .replace(/뭐뭐(?=\s*(?:있어|있나요|있어요))/gu, "뭐가");
+  if (isScopeAskPhrase(topic) || !isScopeAskPhrase(topic, false)) return null;
+  // A league name alone does not tell us whether the user wants rules, teams,
+  // schedule or records. Ask for the subject instead of assuming game rules.
+  if (/(?:kbo|프로야구)/u.test(topic) && !/(?:규칙|룰|용어)/u.test(topic)) {
+    return BASEBALL_LEAGUE_PROMPT;
+  }
+  return topic.includes("용어") ? BASEBALL_TERMS_INTRO : BASEBALL_RULES_INTRO;
 }
 
 export function matchGlossary(entries: GlossaryEntry[], question: string): GlossaryEntry | null {

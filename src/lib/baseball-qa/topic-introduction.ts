@@ -17,3 +17,9 @@ export const BASEBALL_TERMS_INTRO = {
     "득점은 주자가 1루·2루·3루를 거쳐 홈까지 정상적으로 돌아와 얻는 점수입니다. 세 번째 아웃의 종류 등에 따라 인정되지 않는 경우도 있습니다.\n" +
     "아웃 3개가 쌓이면 공수를 바꿉니다. 양 팀이 한 차례씩 공격하는 단위를 이닝이라고 합니다.",
 };
+
+/** No season-dependent facts: a league-only request needs a subject first. */
+export const BASEBALL_LEAGUE_PROMPT = {
+  term: "프로야구 관심 항목", aliases: [] as string[],
+  answer: "프로야구에 대해 어떤 점이 궁금하신가요? 경기 규칙, 구단·선수, 경기 일정, 기록 중에서 골라 질문해 주세요.",
+};
