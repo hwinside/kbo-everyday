@@ -1,0 +1,115 @@
+{
+  "question": "2025 KBO 정규시즌 최종 순위 알려줘",
+  "at": "2026-11-15T09:03:19.562Z",
+  "result": {
+    "status": 200,
+    "answer": "확인한 자료로는 해당 시즌의 일정 날짜를 검증하지 못했습니다. 확인되지 않은 날짜는 안내하지 않겠습니다.",
+    "source": "unsure",
+    "remaining": 9
+  },
+  "events": [
+    {
+      "kind": "official-model-input",
+      "question": "2025 KBO 정규시즌 최종 순위 알려줘",
+      "evidence": [
+        {
+          "chunkId": "192685",
+          "sourceContentSha256": "0b8c16a4d6c72c2d01b572227aff4b1fc76e4dab4a35cdc7ca5e81d43cfaa0a3",
+          "calendarSeason": null,
+          "content": "2025 KBO 정규시즌 성적\n팀 승 패 무 승 률 게 임 차 L G 한 화 S S G 삼 성 N C K T 롯 데 K I A 두 산 키 움\nL G\n한 화\nS S G\n삼 성\nN C\nK T\n롯 데\nK I A\n두 산\n키 움\n85\n83\n75\n74\n71\n71\n66\n65\n61\n47\n56\n57\n65\n68\n67\n68\n72\n75\n77\n93\n3\n4\n4\n2\n6\n5\n6\n4\n6\n4\n0.603\n0.593\n0.536\n0.521\n0.514\n0.511\n0.478\n0.464\n0.442\n0.336\n-\n1.5\n9.5\n11.5\n12.5\n13\n17.5\n19.5\n22.5\n37.5\n◆\n7-8-1\n6-10-0\n7-9-0\n8-8-0\n5-11-0\n4-10-2\n5-11-0\n7-9-0\n7-9-0\n8-7-1\n◆\n8-8-0\n8-8-0\n6-9-1\n6-9-1\n6-10-0\n4-12-0\n9-6-1\n2-14-0\n10-6-0\n8-8-0\n◆\n8-7-1\n6-9-1\n7-9-0\n6-10-0\n8-7-1\n6-10-0\n6-9-1\n9-7-0\n8-8-0\n7-8-1\n◆\n7-9-0\n11-5-0\n8-7-1\n8-8-0\n6-10-0\n4-12-0\n8-8-0\n9-6-1\n9-6-1\n9-7-0\n◆\n6-9-1\n8-8-0\n7-9-0\n5-9-2\n6-9-1\n11-5-0\n9-6-1\n9-7-0\n5-11-0\n9-6-1\n◆\n8-6-2\n8-8-0\n4-11-1\n5-11-0\n10-4-2\n10-6-0\n10-6-0\n7-8-1\n8-8-0\n6-8-2\n◆\n8-8-0\n8-7-1\n5-11-0\n11-5-0\n12-4-0\n7-8-1\n8-8-0\n9-7-0\n8-8-0\n8-8-0\n◆\n6-9-1\n6-8-2\n9-7-0\n6-9-1\n10-6-0\n10-6",
+          "pageTitle": "2026 KBO 연감",
+          "canonicalUrl": "https://www.koreabaseball.com/kbo/board/ebook/ebookpublication.aspx",
+          "revision": "sha256:5b3ad2878dfbf830",
+          "sectionPath": "2026 KBO 연감#p196",
+          "asOf": "2026-08-01",
+          "sourceGrade": "tier1",
+          "sourceKind": "kbo_ebook",
+          "distance": 0.19263949745197
+        },
+        {
+          "chunkId": "192686",
+          "sourceContentSha256": "0e83362eac72c239f90cb25d87d570b8239d2c8a7f081eb85b8d6e597a7614cf",
+          "calendarSeason": null,
+          "content": "2025 KBO 정규시즌 팀 투수 성적\n평경 완 승 패 무 세 홀 투 투 타 타 피 피 희희4 고 사 탈 폭 보 실자\n균 구의팀자 기 봉 승 이 구 안 홈 삼 책\n책 이4\n점 수 승 리 전 부 브 드 닝 수자수타런 타 비 구구 구 진투 크 점 점\nL G 3.79 144 11 85 56 3 42 77 1279 ⅓ 21562 5508 4867 1236 91 50 38 491 (12) 62 1080 44 2 584 539\n한 화 3.55 144 13 83 57 4 41 57 1290 ⅓ 21746 5478 4852 1185 102 43 40 450 (14) 93 1339 60 9 554 509\nS S G 3.63 144 9 75 65 4 36 102 1283 ⅓ 21584 5463 4774 1164 115 62 38 510 (23) 78 1193 56 1 576 517\n삼 성 4.12 144 10 74 68 2 25 76 1268 ⅔ 21229 5491 4850 1257 132 73 43 455 (16) 70 1048 45 1 647 581\nN C 4.82 144 10 71 67 6 39 103 1270 22650 5704 4880 1279 146 59 47 621 (31) 97 1075 95 4 766 680\nK T 4.09 144 10 71 68 5 37 60 1278 ⅓ 21031 5584 4994 1362 112 60 39 433 (25) 58 1067 61 6 657 581\n롯 데 4.75 144 7 66 72 6 36 69 1280 22224 5747 5010 1351 128 54 50 560 (11) ",
+          "pageTitle": "2026 KBO 연감",
+          "canonicalUrl": "https://www.koreabaseball.com/kbo/board/ebook/ebookpublication.aspx",
+          "revision": "sha256:5b3ad2878dfbf830",
+          "sectionPath": "2026 KBO 연감#p197",
+          "asOf": "2026-08-01",
+          "sourceGrade": "tier1",
+          "sourceKind": "kbo_ebook",
+          "distance": 0.226149114829407
+        },
+        {
+          "chunkId": "192651",
+          "sourceContentSha256": "1162804f5204d08248b6d1abac47663c7b57ee28abff2919c30405b8cd2430e7",
+          "calendarSeason": null,
+          "content": "연도별 정규시즌 1위 결정일 및 경기수\n연도 팀 날짜 경기수\n우승 확정시 성적\n상대팀 自․ 他\n우승 확정시 2위 팀 및 성적\n경기수 승 패 무 팀 경기수 승 패 무\n1982 전\n후\nO B\n삼 성\n06.23\n10.02\n40\n40\n36\n40\n28\n28\n8\n12\n-\n-\n롯 데\nMBC\n自\n自\n삼 성\nO B\n38\n40\n25\n27\n13\n13\n-\n-\n1983 전\n후\n해 태\nMBC\n06.24\n09.26\n50\n50\n48\n46\n29\n28\n18\n17\n1\n1\n-\n-\n他\n他\n삼 미\n삼 미\n48\n48\n27\n25\n21\n22\n-\n1\n1984 전\n후\n삼 성\n롯 데\n06.13\n09.23\n50\n50\n48\n50\n32\n29\n16\n20\n-\n1\n-\n삼 성\n他\n自\nO B\nO B\n48\n50\n29\n28\n19\n21\n-\n1\n1985 전\n후\n삼 성\n삼 성\n06.12\n09.17\n55\n55\n52\n51\n37\n35\n14\n16\n1\n-\n롯 데\n롯 데\n自\n自\nO B\n롯 데\n48\n49\n28\n28\n19\n21\n1\n-\n1986 전\n후\n삼 성\nO B\n06.12\n10.07\n54\n54\n53\n54\n38\n33\n15\n19\n-\n2\n해 태\n해 태\n自\n自\n해 태\n해 태\n51\n54\n32\n33\n17\n19\n2\n2\n1987 전\n후\n삼 성\n삼 성\n06.30\n10.03\n54\n54\n51\n51\n33\n31\n18\n20\n-\n-\nO B\nO B\n自\n自\nO B\n해 태\n52\n53\n30\n27\n21\n23\n1\n3\n1988 전\n후\n해 태\n해 태\n06.17\n09.09\n54\n54\n54\n53\n34\n34\n19\n18\n1\n1\n-\n-\n他\n他\n빙그레\n삼 성\n54\n54\n34\n33\n20\n20\n-\n1\n1989 빙그레 10.03 120 114 69 ",
+          "pageTitle": "2026 KBO 연감",
+          "canonicalUrl": "https://www.koreabaseball.com/kbo/board/ebook/ebookpublication.aspx",
+          "revision": "sha256:5b3ad2878dfbf830",
+          "sectionPath": "2026 KBO 연감#p180",
+          "asOf": "2026-08-01",
+          "sourceGrade": "tier1",
+          "sourceKind": "kbo_ebook",
+          "distance": 0.226453158086162
+        },
+        {
+          "chunkId": "193605",
+          "sourceContentSha256": "cc3dda0b50c6d69a1414f0ed5c5a319a50ff10bf0e88889015e337fbcc09d1e7",
+          "calendarSeason": null,
+          "content": "565\n연도 참가 구단 총\n경기수\n팀당\n경기수\n팀간\n경기수\n시즌\n구분 경기제도 우승팀 비고\n2023\n〃\n720 144 16\n〃 〃\n정규시즌\n1위-LG\n2위-KT\n3위-SSG\n4위-NC\n5위-두산\nWC-NC\n준PO 진출\n준PO-NC\nPO 진출\nPO-KT\n시리즈 진출\n한국시리즈\n-LG\n2024\n〃\n720 144 16\n〃〃\n정규시즌\n1위-KIA\n2위-삼성\n3위-LG\n4위-두산\n5위-KT\nWC-KT\n준PO 진출\n준PO-LG\nPO 진출\nPO-삼성\n시리즈 진출\n한국시리즈\n-KIA\n정규시즌\nKT, SSG\n공동 5위\n-5위 결정전\n거행\n2025\n〃\n720 144 16\n〃〃\n정규시즌\n1위-LG\n2위-한화\n3위-SSG\n4위-삼성\n5위-NC\nWC-삼성\n준PO 진출\n준PO-삼성\nPO 진출\nPO-한화\n시리즈 진출\n한국시리즈\n-LG",
+          "pageTitle": "2026 KBO 연감",
+          "canonicalUrl": "https://www.koreabaseball.com/kbo/board/ebook/ebookpublication.aspx",
+          "revision": "sha256:5b3ad2878dfbf830",
+          "sectionPath": "2026 KBO 연감#p567",
+          "asOf": "2026-08-01",
+          "sourceGrade": "tier1",
+          "sourceKind": "kbo_ebook",
+          "distance": 0.23118594977813
+        },
+        {
+          "chunkId": "192654",
+          "sourceContentSha256": "b58aef1ecc610a85a6b2dbd1d994bb9d2109bfc48f7d07f2fec18fcfb476de42",
+          "calendarSeason": null,
+          "content": "76 50 2 L G 自 S K 128 70 55 3\n2013 삼 성 10.02 128 127 75 50 2 롯 데 自 넥 센 125 71 52 2\n2014 삼 성 10.15 128 127 78 46 3 L G 自 넥 센 127 77 48 2\n2015 삼 성 10.03 144 143 87 56 0 넥 센 自 N C 143 84 57 2\n2016 두 산 09.22 144 137 90 46 1 K T 自 N C 130 74 53 3\n2017 K I A 10.03 144 144 87 56 1 K T 自 두 산 144 84 57 3\n2018 두 산 09.25 144 132 86 46 0 넥 센 自 S K 131 72 58 1\n2019 두 산 10.01 144 144 88 55 1 N C 自 S K 144 88 55 1\n2020 N C 10.24 144 139 81 53 5 L G 自 L G 142 79 59 4\n2021 K T 10.31 144 144 76 59 9 삼 성 自 삼 성 144 76 59 9\n2022 S S G 10.04 144 141 88 49 4 - 他 L G 139 84 53 2\n2023 L G 10.03 144 135 82 51 2 - 他 K T 137 74 60 3\n2024 K I A 09.17 144 137 83 52 2 S S G 他 삼 성 137 75 60 2\n2025 L G 10.01 144 144 85 56 3 N C 他 한 화 143 83 57 3\n※ 2021년 : 정규시즌 종료 후 1위 결정전(10.31) 통해 1위 결정\n179",
+          "pageTitle": "2026 KBO 연감",
+          "canonicalUrl": "https://www.koreabaseball.com/kbo/board/ebook/ebookpublication.aspx",
+          "revision": "sha256:5b3ad2878dfbf830",
+          "sectionPath": "2026 KBO 연감#p181",
+          "asOf": "2026-08-01",
+          "sourceGrade": "tier1",
+          "sourceKind": "kbo_ebook",
+          "distance": 0.235364850846445
+        },
+        {
+          "chunkId": "192692",
+          "sourceContentSha256": "29765773a578fcaa42720ba8fb55f469170c941caa2c9a6302c52a363d31b610",
+          "calendarSeason": null,
+          "content": "2025 KBO 정규시즌 타격 성적\n※ 규정타석 446\n순선 타 경타타득안 2 3홈 루 타도 도 희 희 4고 사 삼 병 잔 출 장실\n의수기 루 루 살루 타4 위 ( 팀 ) 율 수석수점타타타 런 타 점루 실 타 비 구 구 구 진 타 루 율 율책\n1 양의지 (두) 0.337 130 517 454 56 153 27 1 20 242 89 4 2 0 6 50 (6) 7 63 10 108 0.406 0.53 35\n2 안현민 (KT) 0.334 112 482 395 72 132 19 4 22 225 80 7 1 0 3 75 (5) 9 72 4 121 0.448 0.570 8\n3 김성윤 (삼) 0.331 127 538 456 92 151 29 9 6 216 61 26 7 10 2 65 (0) 5 54 11 124 0.419 0.4 74 2\n4 레이예스 (롯) 0.326 144 643 573 75 187 44 1 13 272 107 7 1 0 9 58 (17) 3 66 25 133 0.386 0.475 2\n5 문현빈 (한) 0.320 141 592 528 71 169 30 2 12 239 80 17 6 5 11 38 (2) 10 82 11 120 0.370 0 .453 3\n6 구자욱 (삼) 0.319 142 616 529 106 169 43 2 19 273 96 4 1 1 8 73 (7) 5 91 9 146 0.402 0.51 63\n7 송성문 (키) 0.315 144 646 574 103 181 37 4 26 304 90 25 2 0 3 68 (5) 1 96 6 130 0.387 0.5 30 14\n8 디아즈 (삼) 0.314",
+          "pageTitle": "2026 KBO 연감",
+          "canonicalUrl": "https://www.koreabaseball.com/kbo/board/ebook/ebookpublication.aspx",
+          "revision": "sha256:5b3ad2878dfbf830",
+          "sectionPath": "2026 KBO 연감#p199",
+          "asOf": "2026-08-01",
+          "sourceGrade": "tier1",
+          "sourceKind": "kbo_ebook",
+          "distance": 0.237282622161695
+        }
+      ],
+      "extras": {
+        "recordbookRequest": false,
+        "referenceTimeMs": 1794733402051,
+        "allowRecordbookGeneral": false
+      }
+    },
+    {
+      "kind": "official-model-output",
+      "result": {
+        "text": "{\"status\":\"GROUNDED\",\"answer\":\"2025 KBO 정규시즌 최종 순위는 1위 엘지, 2위 한화, 3위 에스에스지, 4위 삼성, 5위 엔씨, 6위 케이티, 7위 롯데, 8위 기아, 9위 두산, 10위 키움으로 확정되었어요. 엘지 트윈스가 정규시즌 우승을 차지했고 한화 이글스가 그 뒤를 이어 2위에 올랐네요.\",\"calendarClaims\":[{\"basis\":\"question\",\"season\":2025,\"evidence\":4}]}",
+        "inputTokens": 7390,
+        "outputTokens": 140
+      }
+    }
+  ]
+}

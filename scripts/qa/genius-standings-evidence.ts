@@ -22,7 +22,7 @@ async function main() {
   }, null, 2));
   for (const lane of ['reduced-topic', 'app-facts-connected'] as const) {
     for (const question of ['kbo 순위 알려줘', '현재 KBO 순위 알려줘',
-      '2025 KBO 정규시즌 최종 순위 알려줘', '2025 KBO 시범경기 순위 알려줘',
+      '2025 KBO 순위 알려줘', '2025 KBO 정규시즌 최종 순위 알려줘', '2025 KBO 시범경기 순위 알려줘',
       'KBO 순위는 어떻게 정해?', '보크가 뭐야?']) {
       for (let repeat = 0; repeat < 3; repeat++) {
         let started = false, stored: LlmResult | null = null;

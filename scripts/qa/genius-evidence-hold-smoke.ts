@@ -1,5 +1,6 @@
 /** Reviewer-run: real pipeline validation, final storage and retry replay. No network. */
 import assert from "node:assert/strict";
+import fixture from "./fixtures/genius-standings-calendar-hold.json";
 import { answerQuestion, unpackStoredQaFinal, type QaDeps, type LlmResult } from "../../src/lib/baseball-qa/pipeline";
 import { RAG_DISCARD_REASONS, validateRagResponse, type RagEvidence } from "../../src/lib/baseball-qa/rag/retrieve";
 import { renderRagHold, RAG_DATE_HOLD, RAG_NUMBER_HOLD, RAG_NEUTRAL_HOLD, RAG_RESPONSE_HOLD } from "../../src/lib/baseball-qa/rag/hold-answer";
@@ -32,7 +33,7 @@ for (const question of ["이해가 안돼… 예를 들어줘", "그니까 어�
 }
 assert.equal(renderRagHold({ kind: "insufficient", reason: "numeric_claim_ungrounded" }), RAG_NEUTRAL_HOLD);
 assert.doesNotMatch(RAG_NUMBER_HOLD, /필요한|질문하신|자료가 없/);
-async function run(path: "official" | "team", question: string, raw: string, expected: string, reason: string) {
+async function run(path: "official" | "team", question: string, raw: string, expected: string, reason: string, evidence: RagEvidence[] = [official]) {
   let stored: LlmResult | null = null;
   let calls = 0;
   let lastLog: Parameters<QaDeps["log"]>[0] | undefined;
@@ -42,7 +43,7 @@ async function run(path: "official" | "team", question: string, raw: string, exp
     loadGlossary: async () => [], loadPlayers: async () => [],
     getCache: async () => null, setCache: async () => { throw new Error("hold must not cache"); },
     reserveDaily: async () => ({ allowed: true, remaining: 9 }),
-    searchOfficialRag: async () => path === "official" ? [official] : [], callOfficialRagLlm: provider,
+    searchOfficialRag: async () => path === "official" ? evidence : [], callOfficialRagLlm: provider,
     searchRag: async () => [team], callTeamRagLlm: provider,
     callLlm: async () => { throw new Error("no second generic provider"); },
     getLlmState: async () => ({ started: Boolean(stored), result: stored, ownerActive: false }),
@@ -67,6 +68,24 @@ async function run(path: "official" | "team", question: string, raw: string, exp
   assert.equal(lastLog?.ragDiscardReason, reason);
 }
 async function main() {
+  // Actual independent #1643 model output: a standings year was emitted as
+  // calendar metadata although the answer contained no schedule date.
+  const input = fixture.events.find(event => event.kind === "official-model-input")!;
+  const output = fixture.events.find(event => event.kind === "official-model-output")!;
+  const captured = output.result!.text;
+  assert.doesNotMatch(JSON.parse(captured).answer, /월|일정|개막일/);
+  assert.match(fixture.result.answer, /일정 날짜/); // immutable before evidence
+  assert.doesNotMatch(RAG_DATE_HOLD, /일정|날짜|시즌|질문/); // mutation: old copy must fail
+  await run("official", fixture.question, captured, RAG_DATE_HOLD,
+    "event_date_unverified", input.evidence as RagEvidence[]);
+  // Accepting invalid calendar metadata would hide the defect, not fix it.
+  for (const claims of [undefined, null, [{ basis: "question", season: 2026, evidence: 1 }]]) {
+    const invalid = validateRagResponse(JSON.stringify({ status: "GROUNDED", answer: "검증 대상입니다.", calendarClaims: claims }),
+      { numericEvidence: true, evidence: [official], officialQuestion: "2026년 일정", calendarContract: { referenceTimeMs: Date.parse("2026-11-17") } });
+    assert.deepEqual(invalid, { kind: "insufficient", reason: "event_date_unverified" });
+    assert.equal(renderRagHold(invalid), RAG_DATE_HOLD);
+  }
+
   await run("official", "2026년 가을야구는 언제 시작해?", JSON.stringify({ status: "GROUNDED", answer: "10월 6일 시작합니다.", calendarClaims: [{ basis: "question", season: 2026, evidence: 1 }] }), RAG_DATE_HOLD, "event_date_unverified");
   await run("official", "인필드 플라이 규칙 알려줘", JSON.stringify({ status: "INSUFFICIENT" }), RAG_NEUTRAL_HOLD, "model_insufficient");
   await run("official", "인필드 플라이 규칙 알려줘", "not-json", RAG_RESPONSE_HOLD, "malformed_json");

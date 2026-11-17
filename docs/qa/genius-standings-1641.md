@@ -22,3 +22,12 @@
 4. 확인된 소유 경로를 수정하고 새 exact에서 독립 반복·mutation·UI QA를 받는다. #1641은 이 진단 PR로 닫지 않는다.
 
 작성자 QA 실행 0. 이 PR은 진단 도구이며 제품 수정·배포 후보가 아니다.
+
+## 2026-11-17 최소 제품 수정 (기존 진단 PR 인수)
+- 범위: `event_date_unverified`의 사용자 안내만 수정. 모델 calendarClaims 검증 실패는 사용자 질문이 일정이라는 증거가 아니다. 검증기/라우팅/차단/추가 모델 호출/DB 변경 없음.
+- 실제 before: 2025 KBO 정규시즌 최종 순위 알려줘 → 일정 날짜 검증 실패 안내. 독립 원장 #1643 app-facts-connected repeat0 / 2026-11-15T09:03:20.663Z, 실제 모델 출력과 입력 passage는 `scripts/qa/fixtures/genius-standings-calendar-hold.json`. 해당 진단은 단독 질문이며 직전 대화 없음. 자연사용 DM 재현이라고 주장하지 않음.
+- after 목표: 작성한 답변을 자료와 대조해 검증하지 못해 안내를 보류했습니다. 순위 제공 복구/모델 calendarClaims 오분류 해결/모든 과거 순위 해결은 아님.
+- 독립 실행: `npx tsx scripts/qa/genius-evidence-hold-smoke.ts`. 실제 모델 출력→pipeline→로그→저장→재시도 동일 답/이유·provider 1회 검증. 날짜 요청·잘못된 연도·메타데이터 누락/null·수치·GENERAL·tier2 회귀 포함.
+- base/main에는 기존 smoke를 실행한 뒤 신규 fixture/단언을 overlay해서 RED(일정/날짜 문구) 확인. head는 전체 PASS 요구. old RAG_DATE_HOLD 문구 복원 mutation RED 필수. validator 우회는 허용하지 않음.
+- 기존 live 진단에 대회 미지정 2025 KBO 순위 알려줘 추가(7질문×3×2=42행). 내용 정확성의 확장 진단이며 이 문구 변경의 필수 실모델 재호출은 아님. 독립 전용계정 UI/DM QA에서 같은 보류가 발생하지 않으면 해당 경로는 미검증/HOLD로 표시.
+- 이번 일일 새 표본은 11/16 11:30–11/17 11:30 KST 별도 원장. QA/신원 미확정과 자연사용 효과를 분리. 작성자 QA 실행0.
