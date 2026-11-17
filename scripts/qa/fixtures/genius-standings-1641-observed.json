@@ -1,0 +1,410 @@
+{
+  "provenance": "삼식 state/qa/1640/paired-1638.json; reduced topic harness, not production UI",
+  "rows": [
+    {
+      "variant": "base",
+      "question": "kbo 순위 알려줘",
+      "repeat": 0,
+      "result": {
+        "status": 200,
+        "answer": "이 내용은 지금 정확히 답변드리기 어렵습니다.",
+        "source": "unsure",
+        "remaining": 9
+      },
+      "log": {
+        "userId": "qa-topic-scope-memory-only",
+        "question": "kbo 순위 알려줘",
+        "questionNorm": "kbo순위",
+        "matchPath": "unsure",
+        "answer": "이 내용은 지금 정확히 답변드리기 어렵습니다.",
+        "inputTokens": 6773,
+        "outputTokens": 14,
+        "ragAttemptPath": "official",
+        "ragQuestionNumericCount": 0,
+        "ragDiscardReason": "model_insufficient",
+        "ragDiscardNumericCount": null,
+        "ragEvidenceTopDistance": 0.240655956424616,
+        "ragEvidenceFingerprints": [
+          {
+            "chunkId": "192649",
+            "sourceContentSha256": "d7e4f9173da4f9b0cafaa74f2c5f02c8fda3c1a8f83057e823be342ec8757892",
+            "contentSha256": "d7e4f9173da4f9b0cafaa74f2c5f02c8fda3c1a8f83057e823be342ec8757892"
+          },
+          {
+            "chunkId": "192813",
+            "sourceContentSha256": "531bf7bd387988fc1f649b578b83b77c9e397ac0dad1fc4d6d9c387252a790ab",
+            "contentSha256": "76a4523e7a3cf21cb725d5e39a9a0d6067b5041827dba09592e7c640f411e949"
+          },
+          {
+            "chunkId": "193237",
+            "sourceContentSha256": "df4aff05f30a7050e5697d6501551505a7953c4193e12e42fcfe3432c0f42a92",
+            "contentSha256": "df4aff05f30a7050e5697d6501551505a7953c4193e12e42fcfe3432c0f42a92"
+          },
+          {
+            "chunkId": "4099",
+            "sourceContentSha256": "ce0e26c94bb50c08f498121ab22cb52b28b2258503ffaa590f99b67dfddcbc79",
+            "contentSha256": "8b0a6e628883a3b9fc2d8646c45f05d8516fa53be21d51997e776b2467b24036"
+          },
+          {
+            "chunkId": "192812",
+            "sourceContentSha256": "824de02d979e8fd7c2e5b5bee34e329c8cd7570ba0f913c8274807be41140f0c",
+            "contentSha256": "76f35dc2d6d9e40ed5a8eaefadb39bcfc43b38e030891edf8367463b094d732f"
+          },
+          {
+            "chunkId": "192792",
+            "sourceContentSha256": "8bb520f663c6353c03d85126eadc5ffd2bca7051c721d5994e559fb9b00c0091",
+            "contentSha256": "afc62d525e82b2fd43d8dfda04b70f8aa161207f68d50da51a00fe61a2a983f2"
+          }
+        ],
+        "classifierObservation": {
+          "version": 1,
+          "statIntentMode": false,
+          "contextSelected": false,
+          "agentFallbackOutcome": "not_called",
+          "providerOutcome": "ok",
+          "calls": 1,
+          "providerFailures": 0,
+          "intentOutcome": null
+        }
+      }
+    },
+    {
+      "variant": "base",
+      "question": "kbo 순위 알려줘",
+      "repeat": 1,
+      "result": {
+        "status": 200,
+        "answer": "작성한 답변의 수치를 확인한 자료로 검증하지 못해 안내를 보류했습니다.",
+        "source": "unsure",
+        "remaining": 9
+      },
+      "log": {
+        "userId": "qa-topic-scope-memory-only",
+        "question": "kbo 순위 알려줘",
+        "questionNorm": "kbo순위",
+        "matchPath": "unsure",
+        "answer": "작성한 답변의 수치를 확인한 자료로 검증하지 못해 안내를 보류했습니다.",
+        "inputTokens": 6773,
+        "outputTokens": 180,
+        "ragAttemptPath": "official",
+        "ragQuestionNumericCount": 0,
+        "ragDiscardReason": "numeric_not_in_evidence",
+        "ragDiscardNumericCount": 16,
+        "ragEvidenceTopDistance": 0.240655956424616,
+        "ragEvidenceFingerprints": [
+          {
+            "chunkId": "192649",
+            "sourceContentSha256": "d7e4f9173da4f9b0cafaa74f2c5f02c8fda3c1a8f83057e823be342ec8757892",
+            "contentSha256": "d7e4f9173da4f9b0cafaa74f2c5f02c8fda3c1a8f83057e823be342ec8757892"
+          },
+          {
+            "chunkId": "192813",
+            "sourceContentSha256": "531bf7bd387988fc1f649b578b83b77c9e397ac0dad1fc4d6d9c387252a790ab",
+            "contentSha256": "76a4523e7a3cf21cb725d5e39a9a0d6067b5041827dba09592e7c640f411e949"
+          },
+          {
+            "chunkId": "193237",
+            "sourceContentSha256": "df4aff05f30a7050e5697d6501551505a7953c4193e12e42fcfe3432c0f42a92",
+            "contentSha256": "df4aff05f30a7050e5697d6501551505a7953c4193e12e42fcfe3432c0f42a92"
+          },
+          {
+            "chunkId": "4099",
+            "sourceContentSha256": "ce0e26c94bb50c08f498121ab22cb52b28b2258503ffaa590f99b67dfddcbc79",
+            "contentSha256": "8b0a6e628883a3b9fc2d8646c45f05d8516fa53be21d51997e776b2467b24036"
+          },
+          {
+            "chunkId": "192812",
+            "sourceContentSha256": "824de02d979e8fd7c2e5b5bee34e329c8cd7570ba0f913c8274807be41140f0c",
+            "contentSha256": "76f35dc2d6d9e40ed5a8eaefadb39bcfc43b38e030891edf8367463b094d732f"
+          },
+          {
+            "chunkId": "192792",
+            "sourceContentSha256": "8bb520f663c6353c03d85126eadc5ffd2bca7051c721d5994e559fb9b00c0091",
+            "contentSha256": "afc62d525e82b2fd43d8dfda04b70f8aa161207f68d50da51a00fe61a2a983f2"
+          }
+        ],
+        "classifierObservation": {
+          "version": 1,
+          "statIntentMode": false,
+          "contextSelected": false,
+          "agentFallbackOutcome": "not_called",
+          "providerOutcome": "ok",
+          "calls": 1,
+          "providerFailures": 0,
+          "intentOutcome": null
+        }
+      }
+    },
+    {
+      "variant": "base",
+      "question": "kbo 순위 알려줘",
+      "repeat": 2,
+      "result": {
+        "status": 200,
+        "answer": "이 내용은 지금 정확히 답변드리기 어렵습니다.",
+        "source": "unsure",
+        "remaining": 9
+      },
+      "log": {
+        "userId": "qa-topic-scope-memory-only",
+        "question": "kbo 순위 알려줘",
+        "questionNorm": "kbo순위",
+        "matchPath": "unsure",
+        "answer": "이 내용은 지금 정확히 답변드리기 어렵습니다.",
+        "inputTokens": 6773,
+        "outputTokens": 14,
+        "ragAttemptPath": "official",
+        "ragQuestionNumericCount": 0,
+        "ragDiscardReason": "model_insufficient",
+        "ragDiscardNumericCount": null,
+        "ragEvidenceTopDistance": 0.240655956424616,
+        "ragEvidenceFingerprints": [
+          {
+            "chunkId": "192649",
+            "sourceContentSha256": "d7e4f9173da4f9b0cafaa74f2c5f02c8fda3c1a8f83057e823be342ec8757892",
+            "contentSha256": "d7e4f9173da4f9b0cafaa74f2c5f02c8fda3c1a8f83057e823be342ec8757892"
+          },
+          {
+            "chunkId": "192813",
+            "sourceContentSha256": "531bf7bd387988fc1f649b578b83b77c9e397ac0dad1fc4d6d9c387252a790ab",
+            "contentSha256": "76a4523e7a3cf21cb725d5e39a9a0d6067b5041827dba09592e7c640f411e949"
+          },
+          {
+            "chunkId": "193237",
+            "sourceContentSha256": "df4aff05f30a7050e5697d6501551505a7953c4193e12e42fcfe3432c0f42a92",
+            "contentSha256": "df4aff05f30a7050e5697d6501551505a7953c4193e12e42fcfe3432c0f42a92"
+          },
+          {
+            "chunkId": "4099",
+            "sourceContentSha256": "ce0e26c94bb50c08f498121ab22cb52b28b2258503ffaa590f99b67dfddcbc79",
+            "contentSha256": "8b0a6e628883a3b9fc2d8646c45f05d8516fa53be21d51997e776b2467b24036"
+          },
+          {
+            "chunkId": "192812",
+            "sourceContentSha256": "824de02d979e8fd7c2e5b5bee34e329c8cd7570ba0f913c8274807be41140f0c",
+            "contentSha256": "76f35dc2d6d9e40ed5a8eaefadb39bcfc43b38e030891edf8367463b094d732f"
+          },
+          {
+            "chunkId": "192792",
+            "sourceContentSha256": "8bb520f663c6353c03d85126eadc5ffd2bca7051c721d5994e559fb9b00c0091",
+            "contentSha256": "afc62d525e82b2fd43d8dfda04b70f8aa161207f68d50da51a00fe61a2a983f2"
+          }
+        ],
+        "classifierObservation": {
+          "version": 1,
+          "statIntentMode": false,
+          "contextSelected": false,
+          "agentFallbackOutcome": "not_called",
+          "providerOutcome": "ok",
+          "calls": 1,
+          "providerFailures": 0,
+          "intentOutcome": null
+        }
+      }
+    },
+    {
+      "variant": "head",
+      "question": "kbo 순위 알려줘",
+      "repeat": 0,
+      "result": {
+        "status": 200,
+        "answer": "이 내용은 지금 정확히 답변드리기 어렵습니다.",
+        "source": "unsure",
+        "remaining": 9
+      },
+      "log": {
+        "userId": "qa-topic-scope-memory-only",
+        "question": "kbo 순위 알려줘",
+        "questionNorm": "kbo순위",
+        "matchPath": "unsure",
+        "answer": "이 내용은 지금 정확히 답변드리기 어렵습니다.",
+        "inputTokens": 6773,
+        "outputTokens": 14,
+        "ragAttemptPath": "official",
+        "ragQuestionNumericCount": 0,
+        "ragDiscardReason": "model_insufficient",
+        "ragDiscardNumericCount": null,
+        "ragEvidenceTopDistance": 0.240655956424616,
+        "ragEvidenceFingerprints": [
+          {
+            "chunkId": "192649",
+            "sourceContentSha256": "d7e4f9173da4f9b0cafaa74f2c5f02c8fda3c1a8f83057e823be342ec8757892",
+            "contentSha256": "d7e4f9173da4f9b0cafaa74f2c5f02c8fda3c1a8f83057e823be342ec8757892"
+          },
+          {
+            "chunkId": "192813",
+            "sourceContentSha256": "531bf7bd387988fc1f649b578b83b77c9e397ac0dad1fc4d6d9c387252a790ab",
+            "contentSha256": "76a4523e7a3cf21cb725d5e39a9a0d6067b5041827dba09592e7c640f411e949"
+          },
+          {
+            "chunkId": "193237",
+            "sourceContentSha256": "df4aff05f30a7050e5697d6501551505a7953c4193e12e42fcfe3432c0f42a92",
+            "contentSha256": "df4aff05f30a7050e5697d6501551505a7953c4193e12e42fcfe3432c0f42a92"
+          },
+          {
+            "chunkId": "4099",
+            "sourceContentSha256": "ce0e26c94bb50c08f498121ab22cb52b28b2258503ffaa590f99b67dfddcbc79",
+            "contentSha256": "8b0a6e628883a3b9fc2d8646c45f05d8516fa53be21d51997e776b2467b24036"
+          },
+          {
+            "chunkId": "192812",
+            "sourceContentSha256": "824de02d979e8fd7c2e5b5bee34e329c8cd7570ba0f913c8274807be41140f0c",
+            "contentSha256": "76f35dc2d6d9e40ed5a8eaefadb39bcfc43b38e030891edf8367463b094d732f"
+          },
+          {
+            "chunkId": "192792",
+            "sourceContentSha256": "8bb520f663c6353c03d85126eadc5ffd2bca7051c721d5994e559fb9b00c0091",
+            "contentSha256": "afc62d525e82b2fd43d8dfda04b70f8aa161207f68d50da51a00fe61a2a983f2"
+          }
+        ],
+        "classifierObservation": {
+          "version": 1,
+          "statIntentMode": false,
+          "contextSelected": false,
+          "agentFallbackOutcome": "not_called",
+          "providerOutcome": "ok",
+          "calls": 1,
+          "providerFailures": 0,
+          "intentOutcome": null
+        }
+      }
+    },
+    {
+      "variant": "head",
+      "question": "kbo 순위 알려줘",
+      "repeat": 1,
+      "result": {
+        "status": 200,
+        "answer": "2025년 KBO 정규시즌 최종 순위는 1위 KT, 2위 한화, 공동 3위 KIA와 키움, 5위 LG, 6위 두산, 7위 SSG, 공동 8위 삼성과 롯데, 10위 NC로 기록되어 있어요. 구단들의 치열한 승부가 펼쳐진 한 해였네요.\n\n📄 출처: KBO 공식 자료",
+        "source": "rag",
+        "remaining": 9,
+        "sourceUrl": "https://www.koreabaseball.com/kbo/board/ebook/ebookpublication.aspx"
+      },
+      "log": {
+        "userId": "qa-topic-scope-memory-only",
+        "question": "kbo 순위 알려줘",
+        "questionNorm": "kbo순위",
+        "matchPath": "rag",
+        "answer": "2025년 KBO 정규시즌 최종 순위는 1위 KT, 2위 한화, 공동 3위 KIA와 키움, 5위 LG, 6위 두산, 7위 SSG, 공동 8위 삼성과 롯데, 10위 NC로 기록되어 있어요. 구단들의 치열한 승부가 펼쳐진 한 해였네요.\n\n📄 출처: KBO 공식 자료",
+        "inputTokens": 6773,
+        "outputTokens": 106,
+        "toneCompliant": false,
+        "ragAttemptPath": "official",
+        "ragQuestionNumericCount": 0,
+        "ragDiscardReason": null,
+        "ragDiscardNumericCount": null,
+        "ragEvidenceTopDistance": 0.240655956424616,
+        "ragEvidenceFingerprints": [
+          {
+            "chunkId": "192649",
+            "sourceContentSha256": "d7e4f9173da4f9b0cafaa74f2c5f02c8fda3c1a8f83057e823be342ec8757892",
+            "contentSha256": "d7e4f9173da4f9b0cafaa74f2c5f02c8fda3c1a8f83057e823be342ec8757892"
+          },
+          {
+            "chunkId": "192813",
+            "sourceContentSha256": "531bf7bd387988fc1f649b578b83b77c9e397ac0dad1fc4d6d9c387252a790ab",
+            "contentSha256": "76a4523e7a3cf21cb725d5e39a9a0d6067b5041827dba09592e7c640f411e949"
+          },
+          {
+            "chunkId": "193237",
+            "sourceContentSha256": "df4aff05f30a7050e5697d6501551505a7953c4193e12e42fcfe3432c0f42a92",
+            "contentSha256": "df4aff05f30a7050e5697d6501551505a7953c4193e12e42fcfe3432c0f42a92"
+          },
+          {
+            "chunkId": "4099",
+            "sourceContentSha256": "ce0e26c94bb50c08f498121ab22cb52b28b2258503ffaa590f99b67dfddcbc79",
+            "contentSha256": "8b0a6e628883a3b9fc2d8646c45f05d8516fa53be21d51997e776b2467b24036"
+          },
+          {
+            "chunkId": "192812",
+            "sourceContentSha256": "824de02d979e8fd7c2e5b5bee34e329c8cd7570ba0f913c8274807be41140f0c",
+            "contentSha256": "76f35dc2d6d9e40ed5a8eaefadb39bcfc43b38e030891edf8367463b094d732f"
+          },
+          {
+            "chunkId": "192792",
+            "sourceContentSha256": "8bb520f663c6353c03d85126eadc5ffd2bca7051c721d5994e559fb9b00c0091",
+            "contentSha256": "afc62d525e82b2fd43d8dfda04b70f8aa161207f68d50da51a00fe61a2a983f2"
+          }
+        ],
+        "classifierObservation": {
+          "version": 1,
+          "statIntentMode": false,
+          "contextSelected": false,
+          "agentFallbackOutcome": "not_called",
+          "providerOutcome": "ok",
+          "calls": 1,
+          "providerFailures": 0,
+          "intentOutcome": null
+        }
+      }
+    },
+    {
+      "variant": "head",
+      "question": "kbo 순위 알려줘",
+      "repeat": 2,
+      "result": {
+        "status": 200,
+        "answer": "KBO 리그의 정규시즌 순위는 각 구단이 치른 경기 결과에 따른 승률로 결정되어요. 시즌별 최종 순위는 한국시리즈 우승 구단이 최상위에 오르고 준우승 구단이 그다음 순위를 차지하며 그 이하 구단들은 정규시즌 승률 순서로 결정된답니다. 매 경기 치열한 승부가 펼쳐지는 야구의 세계에서 순위표는 그해의 뜨거운 열정과 노력을 고스란히 보여주는 지표예요.",
+        "source": "llm",
+        "remaining": 9
+      },
+      "log": {
+        "userId": "qa-topic-scope-memory-only",
+        "question": "kbo 순위 알려줘",
+        "questionNorm": "kbo순위",
+        "matchPath": "llm",
+        "answer": "KBO 리그의 정규시즌 순위는 각 구단이 치른 경기 결과에 따른 승률로 결정되어요. 시즌별 최종 순위는 한국시리즈 우승 구단이 최상위에 오르고 준우승 구단이 그다음 순위를 차지하며 그 이하 구단들은 정규시즌 승률 순서로 결정된답니다. 매 경기 치열한 승부가 펼쳐지는 야구의 세계에서 순위표는 그해의 뜨거운 열정과 노력을 고스란히 보여주는 지표예요.",
+        "inputTokens": 6773,
+        "outputTokens": 133,
+        "toneCompliant": false,
+        "ragAttemptPath": "official",
+        "ragQuestionNumericCount": 0,
+        "ragDiscardReason": null,
+        "ragDiscardNumericCount": null,
+        "ragEvidenceTopDistance": 0.240655956424616,
+        "ragEvidenceFingerprints": [
+          {
+            "chunkId": "192649",
+            "sourceContentSha256": "d7e4f9173da4f9b0cafaa74f2c5f02c8fda3c1a8f83057e823be342ec8757892",
+            "contentSha256": "d7e4f9173da4f9b0cafaa74f2c5f02c8fda3c1a8f83057e823be342ec8757892"
+          },
+          {
+            "chunkId": "192813",
+            "sourceContentSha256": "531bf7bd387988fc1f649b578b83b77c9e397ac0dad1fc4d6d9c387252a790ab",
+            "contentSha256": "76a4523e7a3cf21cb725d5e39a9a0d6067b5041827dba09592e7c640f411e949"
+          },
+          {
+            "chunkId": "193237",
+            "sourceContentSha256": "df4aff05f30a7050e5697d6501551505a7953c4193e12e42fcfe3432c0f42a92",
+            "contentSha256": "df4aff05f30a7050e5697d6501551505a7953c4193e12e42fcfe3432c0f42a92"
+          },
+          {
+            "chunkId": "4099",
+            "sourceContentSha256": "ce0e26c94bb50c08f498121ab22cb52b28b2258503ffaa590f99b67dfddcbc79",
+            "contentSha256": "8b0a6e628883a3b9fc2d8646c45f05d8516fa53be21d51997e776b2467b24036"
+          },
+          {
+            "chunkId": "192812",
+            "sourceContentSha256": "824de02d979e8fd7c2e5b5bee34e329c8cd7570ba0f913c8274807be41140f0c",
+            "contentSha256": "76f35dc2d6d9e40ed5a8eaefadb39bcfc43b38e030891edf8367463b094d732f"
+          },
+          {
+            "chunkId": "192792",
+            "sourceContentSha256": "8bb520f663c6353c03d85126eadc5ffd2bca7051c721d5994e559fb9b00c0091",
+            "contentSha256": "afc62d525e82b2fd43d8dfda04b70f8aa161207f68d50da51a00fe61a2a983f2"
+          }
+        ],
+        "classifierObservation": {
+          "version": 1,
+          "statIntentMode": false,
+          "contextSelected": false,
+          "agentFallbackOutcome": "not_called",
+          "providerOutcome": "ok",
+          "calls": 1,
+          "providerFailures": 0,
+          "intentOutcome": null
+        }
+      }
+    }
+  ]
+}
