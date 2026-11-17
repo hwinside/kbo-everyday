@@ -1205,6 +1205,7 @@ export function answerPlayerRoleForTarget(
 }
 
 export interface QaDeps {
+  loadHistoricalStandings?: (season: number) => Promise<import("./historical-standings").HistoricalStandings | null>;
   loadPostseason?: (season: number) => Promise<import("@/lib/postseason/snapshot").PostseasonSnapshot | null>;
   loadGameConversation?: (date: string) => Promise<Pick<GameConversationInput, "games" | "favoriteTeam" | "appFacts">>;
   loadGameLineups?: (requests: import("./app-lineup").AppLineupRequest[]) => Promise<NonNullable<GameConversationInput["lineups"]>>;
@@ -6958,12 +6959,14 @@ async function answerQuestionObserved(userId: string, rawQuestion: string, deps:
           setContextSelected(appFactContext !== null);
           const model = await deps.callGameConversation!(input);
           let postseasonRequested = false;
+          let historicalSeason: number | null = null;
           const lineupRequests: import("./app-lineup").AppLineupRequest[] = [];
           const served = renderGameConversation(model.text, input, { isBare: isBareTeamName,
             onPostseason: () => { postseasonRequested = true; },
+            onHistoricalStandings: (season) => { historicalSeason = season; },
             onLineupGames: (games, date) => lineupRequests.push(...games.map((game) => ({ game, date }))),
           });
-          return { model, served, input, lineupRequests, postseasonRequested };
+          return { model, served, input, lineupRequests, postseasonRequested, historicalSeason };
         })(),
         new Promise<null>((resolve) => { timer = setTimeout(() => resolve(null), Math.max(0, conversationDeadline - Date.now())); }),
       ]);
@@ -6971,6 +6974,17 @@ async function answerQuestionObserved(userId: string, rawQuestion: string, deps:
       if (result) {
         const { model, input, lineupRequests } = result;
         let served = result.served;
+        if (served && result.historicalSeason !== null && deps.loadHistoricalStandings && input.appFacts) {
+          let historyTimer: ReturnType<typeof setTimeout> | undefined;
+          try {
+            const historicalStandings = await Promise.race([
+              deps.loadHistoricalStandings(result.historicalSeason).catch(() => null),
+              new Promise<null>(resolve => { historyTimer = setTimeout(() => resolve(null), Math.max(0, Math.min(2800, deadline - Date.now()))); }),
+            ]);
+            if (historicalStandings) served = renderGameConversation(model.text, { ...input, nowMs: deps.now?.() ?? Date.now(),
+              appFacts: { ...input.appFacts, historicalStandings } }, { isBare: isBareTeamName }) ?? served;
+          } finally { if (historyTimer) clearTimeout(historyTimer); }
+        }
         const postseasonBudgetMs = Math.max(0, Math.min(2800, conversationDeadline - Date.now()));
         if (served && result.postseasonRequested && deps.loadPostseason && input.appFacts && postseasonBudgetMs > 0) {
           let postseasonTimer: ReturnType<typeof setTimeout> | undefined;

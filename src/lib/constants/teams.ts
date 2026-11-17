@@ -1,3 +1,9 @@
+// KBO 팀 코드 → 앱 teamId 매핑
+export const TEAM_CODE_MAP: Record<string, number> = {
+  LG: 1, OB: 2, KT: 3, SK: 4, NC: 5,
+  HT: 6, LT: 7, SS: 8, HH: 9, WO: 10,
+};
+
 export interface TeamData {
   id: number;
   name: string;
