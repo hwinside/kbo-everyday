@@ -1083,6 +1083,7 @@ export function makeDeps(
     callGameConversation,
     loadGameLineups: loadAppLineups,
     loadPostseason: loadPostseasonSnapshot,
+    loadHistoricalStandings,
     loadGameConversation: async (date) => {
       const tomorrowDate = new Date(Date.parse(`${date}T00:00:00Z`) + 86_400_000).toISOString().slice(0, 10);
       const [games, tomorrowGames, standings, favoriteTeam] = await Promise.all([
@@ -1736,3 +1737,4 @@ export async function processBaseballQaQuestion(input: {
     conversationId: sent.conversationId,
   };
 }
+import { loadHistoricalStandings } from "./historical-standings";

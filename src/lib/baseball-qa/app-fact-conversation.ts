@@ -10,6 +10,7 @@ export interface AppFactSnapshot {
   postseason?: PostseasonSnapshot | null;
   tomorrow: { date: string; games: GameConversationInput["games"] };
   standings: StandingsSnapshot | null;
+  historicalStandings?: HistoricalStandings | null;
 }
 
 export const APP_FACT_PROMPT = `앱 조회 분류는 대상 이름이 아니라 요청한 사실이 근거입니다. 먼저 발화에서 대상 명칭과 일반 요청 표현(알려줘·알려주세요·설명해줘 등)을 걷어 내고, 어떤 사실을 묻는지 판단합니다. 대상 명칭에 일반 요청만 붙어 있고, 이어받을 구체적 직전 요청도 없다면 설명 범위가 열린 주제 요청입니다. 이를 현재 대진·일정·순위 조회로 임의 구체화하지 말고 action=other, informationNeed=none으로 기존 설명 경로에 양보합니다. 이는 특정 대회 이름의 예외가 아니라 요청 사실이 없는 모든 주제 요청에 적용됩니다. 반대로 "순위", "대진", "1차전 결과"처럼 조회할 사실이 발화나 유효한 직전 요청에 있으면 아래 지원 계약에 따라 app_facts를 유지합니다.
@@ -20,7 +21,7 @@ export const APP_FACT_PROMPT = `앱 조회 분류는 대상 이름이 아니라 
 appRequest.informationNeed를 kind보다 먼저 판단합니다. 사용자가 원하는 사실은 postseason_schedule(현재 포스트시즌 등록 대진·차전·결과), game_schedule(개별 경기 일정/시간), starting_pitchers(선발투수), team_standing(순위/전적), qualification(구단의 진출 가능성), batting_order(타순), match_prediction(승패 예상), event_date(대회·행사 시작/종료 날짜), player_availability(선수의 부상·재활·복귀·등록 상태/시점), scenario_outcome(선수 구성 변경 가정의 결과), none 중 하나입니다. 대회의 시작 시점을 묻는 요청은 event_date이며 팀의 진출 가능성이나 오늘 경기 일정으로 바꾸지 않습니다. event_date와 player_availability는 action=other로 문서 근거 경로에 양보합니다. 선수가 언제 복귀하거나 등록되는지는 경기 개최 시점이나 그 경기의 선발 명단과 다른 사실입니다. 경기 일정·선발 데이터로 선수의 복귀를 대신 답하지 않습니다. 지원 사실이 아니면 야구 관련 요청이어도 app_facts로 보존하지 않습니다. 짧은 후속도 직전 질문에서 생략된 요청 사실만 보완합니다.
 선수의 복귀·영입·부재 등 구성 변화가 전력에 미칠 영향을 가정하여 순위나 성적을 묻는 요청은 informationNeed=scenario_outcome, action=app_facts, kind=none, period=unsupported입니다. 현재 순위표는 구성 변화의 효과를 계산하지 못합니다. scenario_outcome은 변화가 일어났다고 전제한 뒤의 전력·순위·성적을 묻는 요청입니다. 변화 자체가 일어날지, 그 가능성·확률·성사 여부를 묻는 요청과 구분합니다. 발생 여부를 묻는 요청에는 가정 이후의 순위를 대신 답하지 않으며 action=other, informationNeed=none으로 기존 문서 근거 경로에 양보합니다. 이 구분은 특정 선수·구단·단어가 아니라 사용자가 묻는 결과에 따릅니다. 확률을 묻더라도 구성 변화 이후의 우승 가능성을 묻는다면 scenario_outcome이고, 실제 경기 승패나 진출 가능성은 각각 match_prediction/qualification입니다. 직전 질문의 구성 가정을 이어받는 후속도 유지하되, 현재 질문이 실제 현황으로 명시 전환하면 가정을 버립니다. scenario_outcome에도 quote/intentSource/intentQuote는 원문 요청에 결속합니다. 경기 승패를 조건으로 순위·진출·확정 가능성을 묻는 요청은 선수 구성 가정이 아닙니다. 이들은 qualification 또는 team_standing으로 기존 요청을 유지합니다. 게임차가 어떻게 변하는지·와일드카드에서 패하면 어떻게 되는지 등 규칙이나 계산 원리를 묻는 요청은 action=other로 규칙·설명 경로에 양보합니다. 조건절 존재만으로 scenario_outcome으로 분류하지 않습니다. 단순 조건부 조회(등록된 경기가 있으면 시간 안내), 이미 일어난 복귀 뒤 현재 순위 조회, 예정된 경기의 승패 예상(match_prediction)도 구성 변경 가정이 아닙니다.
 직전 context.scenarioContext가 있는 경우 appRequest.scenarioRelation을 continue_scenario(동일 구성 가정 후속), actual_same_team(가정은 버리고 같은 구단의 실제 현황 조회), new_topic(다른 팀·전체 순위·새 주제), none(해당 문맥 없음)으로 구분합니다. 가정에서 실제 순위로 전환해도 대상 구단까지 버리지 않습니다. actual_same_team/continue_scenario이면 현재 명시 대상이 없을 때 target.source=context_question, target.quote=직전 사용자 질문, target.teams=직전 질문의 구단으로 결속합니다. 실제 현황 전환의 intentSource=question과 target.source=context_question은 동시에 성립합니다. 현재 다른 팀이나 전체 순위를 명시하면 new_topic이 우선합니다. 전체 구단·모든 구단·리그 전체·전체 순위표 요청은 가정 직후라도 new_topic이며 target.source=none, teams=[]입니다. relation은 대상 범위를 바꾸는 근거가 아닙니다.\nappRequest.kind는 bracket(현재 포스트시즌 대진), schedule(경기 일정), starters(특정 경기 선발투수), standings(현재 순위/전적), postseason(지금의 가을야구 진출 가능성), lineup(현재 경기 타순/타자), prediction(앞으로 경기 승패 예상), none 중 하나입니다.
-appRequest.period는 today/tomorrow/current/unsupported입니다. 명시된 오늘·내일을 보존하고, 시점 없는 일정은 current(오늘과 내일 범위), 순위·진출은 current입니다. 그 밖의 날짜/과거 시즌/주간·월간 일정은 unsupported이며 임의로 오늘로 바꾸지 않습니다. 단어 뜻·규칙·과거 기록·사건·감독·행사·불꽃놀이 정보는 app_facts가 아니라 other입니다. 포스트시즌 시작 날짜는 진출 가능성(postseason)이 아닙니다.
+appRequest.period는 today/tomorrow/current/season/unsupported입니다. 명시된 오늘·내일을 보존하고, 시점 없는 일정은 current(오늘과 내일 범위), 시점 없는 순위·진출은 current입니다. 과거 시즌의 구단 순위/전적 조회는 action=app_facts, informationNeed=team_standing, kind=standings, period=season입니다. seasonRequest에는 basis=year(명시 연도) 또는 relative(현재 연도 기준 상대 시즌), year(명시 연도, 아니면 0), offset(상대 시즌 차이, 과거는 음수, 아니면 0), source=question/context_question, quote=시즌을 지정한 원문 구절을 넣습니다. 현재 발화의 시점이 직전 문맥보다 우선합니다. seasonCompetition은 regular/preseason/postseason/unspecified이고 competitionQuote는 그 대회를 지정한 원문 구절입니다. 대회가 명시되지 않으면 unspecified로 두고 정규시즌으로 추정하지 않습니다. seasonExtent는 season_total(한 시즌 전체 순위/최종 순위), as_of(시즌 중 특정 일자/구간), unknown입니다. 시즌 중 시점 요청을 시즌 전체로 바꾸지 않습니다. 그 밖의 날짜/주간·월간 일정은 unsupported이며 임의로 오늘로 바꾸지 않습니다. 단어 뜻·규칙·과거 순위/전적 이외의 과거 기록·사건·감독·행사·불꽃놀이 정보는 app_facts가 아니라 other입니다. 포스트시즌 시작 날짜는 진출 가능성(postseason)이 아닙니다.
 팀/구장 이름만 있고 현재 또는 직전 질문에 앱 데이터 요청이 없으면 action=other입니다. 프로필·games의 존재는 요청 근거가 아닙니다. 단독 구단 소개·이름 정정은 일정 요청이 아닙니다.
 appRequest.intentSource는 question/context_question/none이며 intentQuote에는 일정·선발·순위 등 원하는 사실을 드러내는 원문 구절을 복사합니다. 구단명만은 요청 근거가 아닙니다. 생략된 후속의 요청 목적은 직전 질문의 실제 요청에서만 가져오며 이 경우 context_question으로 표시합니다. 요청 근거가 없으면 none, 빈 문자열이며 app_facts로 처리하지 않습니다. 현재 발화가 원하는 사실이 바뀌면 현재 요청이 우선합니다. 출전 선수 전체를 묻는 요청은 선발투수만으로 축소하지 않고 lineup으로 분류합니다.
 appRequest.quote는 현재 발화에서 요청 의도를 드러내는 원문 그대로입니다. 후속이면 생략된 목적만 직전 질문으로 해석하되 quote에는 현재 발화를 인용합니다.
@@ -38,7 +39,15 @@ export const APP_REQUEST_SCHEMA = { type: "OBJECT", properties: {
   scenarioRelation: { type: "STRING", enum: ["continue_scenario", "actual_same_team", "new_topic", "none"] },
   informationNeed: { type: "STRING", enum: ["postseason_schedule", "game_schedule", "starting_pitchers", "team_standing", "qualification", "batting_order", "match_prediction", "event_date", "player_availability", "scenario_outcome", "none"] },
   kind: { type: "STRING", enum: ["bracket", "schedule", "starters", "standings", "postseason", "lineup", "prediction", "none"] },
-  period: { type: "STRING", enum: ["today", "tomorrow", "current", "unsupported"] },
+  period: { type: "STRING", enum: ["today", "tomorrow", "current", "season", "unsupported"] },
+  seasonRequest: { type: "OBJECT", properties: {
+    basis: { type: "STRING", enum: ["year", "relative", "none"] },
+    year: { type: "INTEGER" }, offset: { type: "INTEGER" },
+    source: { type: "STRING", enum: ["question", "context_question", "none"] }, quote: { type: "STRING" },
+  }, required: ["basis", "year", "offset", "source", "quote"] },
+  seasonCompetition: { type: "STRING", enum: ["regular", "preseason", "postseason", "unspecified"] },
+  competitionQuote: { type: "STRING" },
+  seasonExtent: { type: "STRING", enum: ["season_total", "as_of", "unknown"] },
   quote: { type: "STRING" },
   intentSource: { type: "STRING", enum: ["question", "context_question", "none"] },
   intentQuote: { type: "STRING" },
@@ -91,7 +100,7 @@ export function renderAppFacts(value: Record<string, unknown>, input: GameConver
       : "\n참고할 현재 순위도 확인하지 못했습니다.") };
   }
   if (!["bracket", "schedule", "starters", "standings", "postseason", "lineup", "prediction"].includes(String(req.kind))
-    || !["today", "tomorrow", "current", "unsupported"].includes(String(req.period))) return null;
+    || !["today", "tomorrow", "current", "season", "unsupported"].includes(String(req.period))) return null;
   // Project the requested fact onto the app capability. A date request cannot
   // be served by standings even if the model proposes kind=postseason.
   const capability: Record<string, string> = {
@@ -148,6 +157,29 @@ export function renderAppFacts(value: Record<string, unknown>, input: GameConver
   const currentVenues = [...new Set([...(input.games ?? []), ...(input.appFacts?.tomorrow.games ?? [])].map((g) => g.stadium))]
     .filter((s) => s && input.question.includes(s));
   if (currentVenues.some((s) => s !== stadium && !excludedStadiums.includes(s))) return clarify();
+  if (req.period === "season") {
+    if (req.kind !== "standings") return hold("과거 시즌의 해당 정보는 확인하지 못했습니다. 현재 자료로 대신 답하지 않겠습니다.");
+    const season = requestedHistoricalSeason(req, input);
+    if (season === null) return hold("요청하신 시즌을 지원하는 과거 순위 자료에 결속하지 못했습니다. 현재 순위로 대신 답하지 않겠습니다.");
+    if (req.seasonCompetition === "unspecified" || !req.seasonCompetition) return {
+      source: "context_missing", answer: `${season}년 어느 대회의 순위인가요? 정규시즌·시범경기·포스트시즌을 구분해 주세요.`,
+    };
+    if (req.seasonCompetition !== "regular") return hold(`${season}년 요청하신 대회의 순위 자료는 확인하지 못했습니다. 정규시즌 순위로 대신 답하지 않겠습니다.`);
+    if (typeof req.competitionQuote !== "string" || !req.competitionQuote.trim()
+      || ![input.question, input.context?.question].some(text => text?.includes(req.competitionQuote as string))) return hold("순위의 대회 근거를 확인하지 못했습니다. 정규시즌인지 알려 주세요.");
+    if (req.seasonExtent !== "season_total" || stadium || excludedStadiums.length) return hold("시즌 중 특정 시점·구장별 순위는 시즌 최종 순위로 대신 답하지 않겠습니다.");
+    entities?.onHistoricalStandings?.(season);
+    const snapshot = input.appFacts?.historicalStandings;
+    if (!snapshot || snapshot.season !== season || snapshot.competition !== "REGULAR_SEASON"
+      || snapshot.sourceUrl !== historicalStandingsUrl(season) || input.nowMs === undefined
+      || !Number.isFinite(snapshot.fetchedAt) || snapshot.fetchedAt > input.nowMs
+      || input.nowMs - snapshot.fetchedAt > 300_000 || snapshot.rows.length !== 10) return hold(`${season}년 정규시즌 순위 자료를 확인하지 못했습니다. 다른 시즌이나 대회 자료로 대신 답하지 않겠습니다.`);
+    const selected = snapshot.rows.filter(r => (!teams.length || teams.includes(r.teamName)) && !excluded.includes(r.teamName));
+    if (!selected.length || teams.some(t => !selected.some(r => r.teamName === t))) return hold("요청한 구단을 해당 시즌 순위표에서 확인하지 못했습니다.");
+    return { source: "kbo_structured", answer: `${season}년 KBO 정규시즌 최종 순위입니다. 포스트시즌 결과를 포함한 순위가 아닙니다.\n`
+      + selected.map(r => `· ${r.displayName}: ${r.ranking}위, ${r.wins}승 ${r.losses}패 ${r.draws}무`).join("\n")
+      + `\n출처: 네이버 스포츠 · ${season} 정규시즌 팀 통계\n${snapshot.sourceUrl}` };
+  }
   if (req.kind === "bracket") {
     if (req.period !== "current" && req.period !== "today") return hold("포스트시즌은 현재 공식 등록된 대진만 확인할 수 있습니다.");
     entities?.onPostseason?.();
@@ -228,3 +260,4 @@ export function renderAppFacts(value: Record<string, unknown>, input: GameConver
   }
   return { answer: lines.join("\n"), source: partial ? "history_hold" : "kbo_structured" };
 }
+import { historicalStandingsUrl, requestedHistoricalSeason, type HistoricalStandings } from "./historical-standings";

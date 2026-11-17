@@ -1,4 +1,5 @@
 import { checkAppLineup } from "./genius-app-lineup";
+import { checkHistoricalStandings } from "./genius-historical-standings";
 import "./genius-grounded-team-followup";
 import { checkAppFactConversation } from "./genius-app-fact-conversation";
 import assert from "node:assert/strict";
@@ -277,6 +278,7 @@ async function main() {
   assert.equal(replayedAck.answer, acknowledged.answer);
   assert.equal(replayedAck.source, "ack");
   await checkAppFactConversation();
+  await checkHistoricalStandings();
   await checkAppLineup();
   for (const row of r1Cases) {
     const testDeps = deps([]);
