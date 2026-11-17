@@ -6978,8 +6978,14 @@ async function answerQuestionObserved(userId: string, rawQuestion: string, deps:
           let historyTimer: ReturnType<typeof setTimeout> | undefined;
           try {
             const historicalStandings = await Promise.race([
-              deps.loadHistoricalStandings(result.historicalSeason).catch(() => null),
-              new Promise<null>(resolve => { historyTimer = setTimeout(() => resolve(null), Math.max(0, Math.min(2800, deadline - Date.now()))); }),
+              deps.loadHistoricalStandings(result.historicalSeason).catch(() => {
+                console.warn("[historical-standings]", { season: result.historicalSeason, outcome: "loader_error" });
+                return null;
+              }),
+              new Promise<null>(resolve => { historyTimer = setTimeout(() => {
+                console.warn("[historical-standings]", { season: result.historicalSeason, outcome: "pipeline_deadline" });
+                resolve(null);
+              }, Math.max(0, Math.min(2800, deadline - Date.now()))); }),
             ]);
             if (historicalStandings) served = renderGameConversation(model.text, { ...input, nowMs: deps.now?.() ?? Date.now(),
               appFacts: { ...input.appFacts, historicalStandings } }, { isBare: isBareTeamName }) ?? served;

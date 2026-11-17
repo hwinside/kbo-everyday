@@ -98,17 +98,42 @@ export async function checkHistoricalStandings() {
   // Real loader contract: request year+competition, no redirects/current fallback.
   const originalFetch = globalThis.fetch;
   let fetches = 0;
+  const originalWarn = console.warn, originalInfo = console.info;
+  const events: { season: number; outcome: string; status?: number; elapsedMs: number }[] = [];
+  console.warn = console.info = (_tag, event) => { events.push(event); };
   try {
     globalThis.fetch = async (url, options) => {
       fetches++; assert.match(String(url), /\/2025\/teams\?gameType=REGULAR_SEASON$/);
-      assert.equal(options?.redirect, "error");
+      assert.equal(options?.redirect, "manual");
+      assert.equal(new Headers(options?.headers).get("User-Agent"), "Mozilla/5.0 (compatible; KboEveryday/1.0)");
       return new Response(JSON.stringify(payload), { status: 200 });
     };
     assert.equal((await loadHistoricalStandings(2025))?.rows.length, 10);
     globalThis.fetch = async () => { fetches++; return new Response("unavailable", { status: 502 }); };
     assert.equal(await loadHistoricalStandings(2025), null);
     assert.equal(fetches, 2, "no current-year fallback request");
-  } finally { globalThis.fetch = originalFetch; }
+    assert.equal(events[0].outcome, "success");
+    assert.equal(events[1].outcome, "http_error");
+    assert.equal(events[1].status, 502);
+    const failures = [
+      { outcome: "redirect", response: () => new Response(null, { status: 302, headers: { Location: "https://example.com/private" } }) },
+      { outcome: "invalid_json", response: () => new Response("private upstream body", { status: 200 }) },
+      { outcome: "parse_rejected", response: () => new Response(JSON.stringify(naverObserved[2019]), { status: 200 }) },
+      { outcome: "network_error", response: () => { throw new TypeError("private network details"); } },
+      { outcome: "timeout", response: () => { throw new DOMException("private timeout details", "TimeoutError"); } },
+    ];
+    for (const failure of failures) {
+      const before = fetches;
+      globalThis.fetch = async () => { fetches++; return failure.response(); };
+      assert.equal(await loadHistoricalStandings(2025), null);
+      assert.equal(fetches, before + 1, "no redirect follow, retry or current-season fallback");
+      assert.equal(events.at(-1)?.outcome, failure.outcome);
+      assert.equal(events.at(-1)?.season, 2025);
+      assert.ok(events.at(-1)!.elapsedMs >= 0);
+    }
+    assert.equal(events.length, 7, "one terminal event per request");
+    assert.doesNotMatch(JSON.stringify(events), /private|example.com/);
+  } finally { globalThis.fetch = originalFetch; console.warn = originalWarn; console.info = originalInfo; }
 
   for (const unavailable of [false, true]) {
     let stored: LlmResult | null = null, started = false, loads = 0, calls = 0;
