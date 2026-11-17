@@ -1,5 +1,4 @@
-import { getTeamById } from "@/lib/constants/teams";
-import { resolveTeamId } from "@/lib/crawler/kbo-api";
+import { getTeamById, TEAM_CODE_MAP } from "@/lib/constants/teams";
 import type { GameConversationInput } from "./game-conversation";
 
 export interface HistoricalStandings {
@@ -52,7 +51,7 @@ export function parseHistoricalStandings(body: unknown, season: number, fetchedA
     if ((r.season !== undefined && String(r.season) !== String(season))
       || (r.seasonId !== undefined && String(r.seasonId) !== String(season))
       || (r.gameType !== undefined && r.gameType !== "REGULAR_SEASON")) return null;
-    const teamId = resolveTeamId(r.teamId, "");
+    const teamId = TEAM_CODE_MAP[r.teamId] ?? 0;
     const teamName = getTeamById(teamId)?.shortName;
     if (!teamName) return null;
     // Current canonical names bind user entities; provider names preserve the

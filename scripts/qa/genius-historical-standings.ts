@@ -52,6 +52,14 @@ export async function checkHistoricalStandings() {
   const realRendered = render(proposal, { ...input, appFacts: { ...input.appFacts!, historicalStandings: real2025 } });
   assert.equal(realRendered?.source, "kbo_structured");
   assert.match(realRendered!.answer, /LG: 1위/);
+  // Bare KBO season standings may use regular-season scope, disclosed in answer.
+  for (const question of ["2025 KBO 순위", "2025 KBO 최종 순위"]) {
+    const scoped = render({ ...proposal, appRequest: { ...proposal.appRequest,
+      quote: question, intentQuote: question, competitionQuote: "KBO" } }, { ...input, question });
+    assert.equal(scoped?.source, "kbo_structured");
+    assert.match(scoped!.answer, /정규시즌 최종 순위/);
+    assert.match(scoped!.answer, /포스트시즌 결과를 포함한 순위가 아닙니다/);
+  }
   const unspecified = { ...proposal, appRequest: { ...proposal.appRequest, seasonCompetition: "unspecified", competitionQuote: "" } };
   assert.equal(render(unspecified)?.source, "context_missing");
   for (const seasonCompetition of ["preseason", "postseason"]) {

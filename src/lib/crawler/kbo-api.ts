@@ -11,7 +11,7 @@ import { decodeBroadcast, type BroadcastChannel } from "@/lib/broadcast-channels
 import { isKboGameCancelled, parseCancelReason } from "@/lib/crawler/kbo-status";
 // 순수 상태 헬퍼 재노출 — 스모크가 supabase 의존 없이 import.
 export { isKboGameCancelled, parseCancelReason } from "@/lib/crawler/kbo-status";
-import { ALLSTAR_CODE_TO_ID, allstarTeamIdByName } from "@/lib/constants/teams";
+import { TEAM_CODE_MAP, ALLSTAR_CODE_TO_ID, allstarTeamIdByName } from "@/lib/constants/teams";
 import { runBeforeDeadline } from "@/lib/async-deadline";
 
 /** 숫자 kboId로 로스터 조회 — 외국인 숫자→영문 변환 포함 */
@@ -34,12 +34,6 @@ const KBO_JSON_HEADERS = {
 const KBO_HTML_HEADERS = {
   "User-Agent": KBO_BROWSER_UA,
   "Referer": "https://www.koreabaseball.com/",
-};
-
-// KBO 팀 코드 → 앱 teamId 매핑
-const TEAM_CODE_MAP: Record<string, number> = {
-  LG: 1, OB: 2, KT: 3, SK: 4, NC: 5,
-  HT: 6, LT: 7, SS: 8, HH: 9, WO: 10,
 };
 
 /** KBO 팀 코드 → 앱 teamId. 정규 10구단에 없으면 올스타(코드 → 팀명 순)로 해석,
