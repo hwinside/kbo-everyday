@@ -13,8 +13,8 @@ export interface HistoricalStandings {
 export const historicalStandingsUrl = (season: number) =>
   `https://api-gw.sports.naver.com/statistics/categories/kbo/seasons/${season}/teams?gameType=REGULAR_SEASON`;
 
-/** Semantic time interpretation is quoted to the user, not inferred from the
- * retrieved document. Relative seasons are computed by code in KST. */
+/** Explicit season is quoted to the user, not inferred from the retrieved
+ * document. Relative season references require year clarification. */
 export function requestedHistoricalSeason(req: Record<string, unknown>, input: GameConversationInput): number | null {
   const s = req.seasonRequest as Record<string, unknown> | undefined;
   if (!s) return null;
@@ -24,7 +24,6 @@ export function requestedHistoricalSeason(req: Record<string, unknown>, input: G
   const current = Number(input.date.slice(0, 4));
   let season: number;
   if (s.basis === "year" && Number.isInteger(s.year) && s.quote.includes(String(s.year))) season = Number(s.year);
-  else if (s.basis === "relative" && Number.isInteger(s.offset) && Number(s.offset) < 0) season = current + Number(s.offset);
   else return null;
   // Ten-team, 144-game format only. Older formats need their own data contract.
   return season >= 2015 && season < current ? season : null;
@@ -64,8 +63,18 @@ export function parseHistoricalStandings(body: unknown, season: number, fetchedA
   if (new Set(rows.map(r => r.teamId)).size !== 10
     || rows.reduce((n,r) => n + r.wins - r.losses, 0) !== 0
     || rows.reduce((n,r) => n + r.draws, 0) % 2 !== 0) return null;
+  // REGULAR_SEASON selects the record totals, but the provider's ranking can
+  // still mean postseason finishing order. Validate against exact W/(W+L),
+  // never rounded wra. Equal rates need an independent tie-break source; we
+  // cannot establish the final order from these totals and must hold.
+  const byRate = [...rows].sort((a, b) => b.wins * (a.wins + a.losses) - a.wins * (b.wins + b.losses));
+  for (let i = 0; i < byRate.length; i++) {
+    const row = byRate[i], previous = byRate[i - 1];
+    if (row.wins + row.losses === 0 || row.ranking !== i + 1) return null;
+    if (previous && previous.wins * (row.wins + row.losses) === row.wins * (previous.wins + previous.losses)) return null;
+  }
   return { season, competition: "REGULAR_SEASON", sourceUrl: historicalStandingsUrl(season), fetchedAt,
-    rows: rows.sort((a,b) => a.ranking - b.ranking) };
+    rows: byRate };
 }
 
 export async function loadHistoricalStandings(season: number): Promise<HistoricalStandings | null> {

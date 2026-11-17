@@ -1,4 +1,5 @@
 import assert from "node:assert/strict";
+import naverObserved from "./fixtures/genius-historical-standings-naver-20261117.json";
 import { answerQuestion, type QaDeps, type LlmResult } from "../../src/lib/baseball-qa/pipeline";
 import { renderGameConversation, type GameConversationInput } from "../../src/lib/baseball-qa/game-conversation";
 import { parseHistoricalStandings, requestedHistoricalSeason, loadHistoricalStandings } from "../../src/lib/baseball-qa/historical-standings";
@@ -21,6 +22,24 @@ const input: GameConversationInput = { question, date: "2026-11-17", nowMs: now,
 
 export async function checkHistoricalStandings() {
   assert.ok(archived);
+  // Raw browser responses captured 2026-11-17, not repaired/reordered fixtures.
+  // On R1 these return non-null and falsely label postseason ranks as regular.
+  for (const season of [2015, 2019, 2021, 2022] as const) {
+    assert.equal(parseHistoricalStandings(naverObserved[season], season, now), null,
+      `${season}: unverified regular-season order must HOLD`);
+  }
+  const real2025 = parseHistoricalStandings(naverObserved[2025], 2025, now);
+  assert.ok(real2025, "do not blanket-block historical seasons");
+  assert.equal(real2025.rows[0].displayName, "LG");
+  assert.equal(real2025.rows[0].ranking, 1);
+  // Corrected rank order still cannot resolve tied records without tie-break evidence.
+  for (const season of [2019, 2021] as const) {
+    const tied = structuredClone(naverObserved[season]);
+    tied.result.seasonTeamStats.sort((a, b) =>
+      b.winGameCount * (a.winGameCount + a.loseGameCount) - a.winGameCount * (b.winGameCount + b.loseGameCount));
+    tied.result.seasonTeamStats.forEach((row, index) => { row.ranking = index + 1; });
+    assert.equal(parseHistoricalStandings(tied, season, now), null, `${season}: tie cannot be resolved by array order`);
+  }
   const renamed = structuredClone(payload);
   renamed.result.seasonTeamStats[2].teamName = "SK";
   assert.equal(parseHistoricalStandings(renamed, 2019, now)?.rows[2].displayName, "SK");
@@ -30,6 +49,9 @@ export async function checkHistoricalStandings() {
   assert.match(render()!.answer, /LG: 1위, 81승 63패 0무/);
   assert.match(render()!.answer, /출처: 네이버 스포츠/);
   assert.doesNotMatch(render()!.answer, /KBO 공식 자료/);
+  const realRendered = render(proposal, { ...input, appFacts: { ...input.appFacts!, historicalStandings: real2025 } });
+  assert.equal(realRendered?.source, "kbo_structured");
+  assert.match(realRendered!.answer, /LG: 1위/);
   const unspecified = { ...proposal, appRequest: { ...proposal.appRequest, seasonCompetition: "unspecified", competitionQuote: "" } };
   assert.equal(render(unspecified)?.source, "context_missing");
   for (const seasonCompetition of ["preseason", "postseason"]) {
@@ -42,7 +64,10 @@ export async function checkHistoricalStandings() {
     assert.equal(render(proposal, { ...input, appFacts: { ...input.appFacts!, historicalStandings: changed } })?.source, "history_hold");
   }
   assert.equal(requestedHistoricalSeason({ seasonRequest: { basis: "relative", offset: -1, source: "question", quote: "지난 시즌" } },
-    { ...input, question: "지난 시즌 정규시즌 순위" }), 2025);
+    { ...input, question: "지난 시즌 정규시즌 순위" }), null);
+  assert.equal(render({ ...proposal, appRequest: { ...proposal.appRequest,
+    seasonRequest: { basis: "relative", year: 0, offset: -1, source: "question", quote: question } } })?.source, "context_missing");
+  assert.doesNotMatch(render()!.answer, /api-gw|REGULAR_SEASON/);
   assert.equal(requestedHistoricalSeason({ seasonRequest: { basis: "year", year: 2024, source: "question", quote: "2025" } }, input), null);
   assert.equal(requestedHistoricalSeason({ seasonRequest: { basis: "year", year: 2027, source: "question", quote: "2027" } },
     { ...input, question: "2027 정규시즌 순위" }), null);
@@ -53,6 +78,11 @@ export async function checkHistoricalStandings() {
     (p: typeof payload) => { p.result.seasonTeamStats[0].ranking = 0; },
     (p: typeof payload) => { p.result.seasonTeamStats[0].teamId = "HH"; },
     (p: typeof payload) => { p.result.seasonTeamStats[0].winGameCount = 82; },
+    // Complete, balanced totals and unique ranks still allow postseason order.
+    (p: typeof payload) => { p.result.seasonTeamStats[0].ranking = 2; p.result.seasonTeamStats[1].ranking = 1; },
+    (p: typeof payload) => {
+      for (const row of p.result.seasonTeamStats.slice(0, 2)) { row.winGameCount = 80; row.loseGameCount = 64; }
+    },
     (p: typeof payload) => { Object.assign(p.result.seasonTeamStats[0], { seasonId: "2024" }); },
     (p: typeof payload) => { Object.assign(p.result.seasonTeamStats[0], { gameType: "PRESEASON" }); },
   ]) { const p = structuredClone(payload); mutation(p); assert.equal(parseHistoricalStandings(p, 2025, now), null); }

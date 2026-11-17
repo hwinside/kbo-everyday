@@ -159,6 +159,10 @@ export function renderAppFacts(value: Record<string, unknown>, input: GameConver
   if (currentVenues.some((s) => s !== stadium && !excludedStadiums.includes(s))) return clarify();
   if (req.period === "season") {
     if (req.kind !== "standings") return hold("과거 시즌의 해당 정보는 확인하지 못했습니다. 현재 자료로 대신 답하지 않겠습니다.");
+    const seasonRequest = req.seasonRequest as Record<string, unknown> | undefined;
+    if (seasonRequest?.basis === "relative") return {
+      source: "context_missing", answer: "말씀하신 시즌은 몇 년도인가요? 시즌 종료 전후에는 상대적인 시즌 표현의 기준이 달라질 수 있어 연도를 확인하고 안내하겠습니다.",
+    };
     const season = requestedHistoricalSeason(req, input);
     if (season === null) return hold("요청하신 시즌을 지원하는 과거 순위 자료에 결속하지 못했습니다. 현재 순위로 대신 답하지 않겠습니다.");
     if (req.seasonCompetition === "unspecified" || !req.seasonCompetition) return {
@@ -178,7 +182,7 @@ export function renderAppFacts(value: Record<string, unknown>, input: GameConver
     if (!selected.length || teams.some(t => !selected.some(r => r.teamName === t))) return hold("요청한 구단을 해당 시즌 순위표에서 확인하지 못했습니다.");
     return { source: "kbo_structured", answer: `${season}년 KBO 정규시즌 최종 순위입니다. 포스트시즌 결과를 포함한 순위가 아닙니다.\n`
       + selected.map(r => `· ${r.displayName}: ${r.ranking}위, ${r.wins}승 ${r.losses}패 ${r.draws}무`).join("\n")
-      + `\n출처: 네이버 스포츠 · ${season} 정규시즌 팀 통계\n${snapshot.sourceUrl}` };
+      + `\n출처: 네이버 스포츠 · ${season} 정규시즌 팀 통계` };
   }
   if (req.kind === "bracket") {
     if (req.period !== "current" && req.period !== "today") return hold("포스트시즌은 현재 공식 등록된 대진만 확인할 수 있습니다.");
