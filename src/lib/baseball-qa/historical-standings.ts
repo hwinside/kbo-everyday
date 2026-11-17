@@ -79,12 +79,37 @@ export function parseHistoricalStandings(body: unknown, season: number, fetchedA
 export async function loadHistoricalStandings(season: number): Promise<HistoricalStandings | null> {
   const current = Number(new Date(Date.now() + 9 * 3_600_000).toISOString().slice(0,4));
   if (!Number.isInteger(season) || season < 2015 || season >= current) return null;
+  const startedAt = Date.now();
+  const signal = AbortSignal.timeout(2500);
+  // No response body, Location, user question or raw error text in logs.
+  const report = (outcome: string, status?: number) => {
+    const event = { season, outcome, status, elapsedMs: Date.now() - startedAt };
+    if (outcome === "success") console.info("[historical-standings]", event);
+    else console.warn("[historical-standings]", event);
+  };
+  let phase: "fetch" | "json" = "fetch";
   try {
     const response = await fetch(historicalStandingsUrl(season), {
-      headers: { Referer: "https://sports.news.naver.com/" },
-      signal: AbortSignal.timeout(2500), cache: "no-store", redirect: "error",
+      headers: {
+        Referer: "https://sports.news.naver.com/",
+        "User-Agent": "Mozilla/5.0 (compatible; KboEveryday/1.0)",
+      },
+      // Observe redirects without following them to a different season/source.
+      signal, cache: "no-store", redirect: "manual",
     });
-    if (!response.ok) return null;
-    return parseHistoricalStandings(await response.json(), season, Date.now());
-  } catch { return null; }
+    if (!response.ok) {
+      report(response.status >= 300 && response.status < 400 ? "redirect" : "http_error", response.status);
+      await response.body?.cancel().catch(() => {});
+      return null;
+    }
+    phase = "json";
+    const body: unknown = await response.json();
+    const snapshot = parseHistoricalStandings(body, season, Date.now());
+    report(snapshot ? "success" : "parse_rejected", response.status);
+    return snapshot;
+  } catch (error) {
+    report(signal.aborted || (error instanceof Error && error.name === "TimeoutError") ? "timeout"
+      : phase === "json" && error instanceof SyntaxError ? "invalid_json" : "network_error");
+    return null;
+  }
 }

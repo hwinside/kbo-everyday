@@ -35,3 +35,13 @@
 - P1 선택: bare KBO 시즌 전체 순위의 정규시즌 답변을 유지하고 분류 지침·문서·회귀 assertion을 일치시킨다. 표현 목록 런타임 분기 없음.
 - 독립 재검증: Supabase env 없이 game-conversation/evidence-hold/evidence-fingerprint/current-season-metrics 4종, 새 SHA CI 전체, bare KBO 2문장 실모델 paired 및 시범/포스트/가을야구 경계. 작성자는 QA 실행하지 않는다.
 - P2 특정 팀 과거 순위가 팀 기록 안내로 보류되는 공백은 미해결. 현재 순위의 승률/순위 불일치는 기존 경로 별건이며 이 PR 수정 범위가 아니다. 후속 #1648에 원문·코드 근거를 등록했다.
+
+## #1647 배포 후 QA FAIL 후속 (2026-11-17)
+- 삼식 운영 전용계정 실제 UI→DM: 7턴/15축 중 11 PASS, 4 FAIL. 2025 정규/리그 생략 두 문형 모두 history_hold(DM 3769002/3769004). #1641 미종결. 배포 93d32812, dpl_bYMosB7N. 원장 state/qa/1647/e2e/.
+- 원인은 미확정. UA를 기존 현재 순위 호출과 일치시킨다. redirect:error를 manual로 변경해 리다이렉트를 따라가지 않고 HTTP 상태를 관측한다. 2500ms loader/최대 2800ms pipeline 예산은 유지한다.
+- 요청별 고정 형식 로그: season/outcome/status/elapsedMs. success, http_error, redirect, invalid_json, parse_rejected, timeout, network_error를 구분한다. pipeline_deadline/loader_error는 바깥 경계 이벤트다. body/Location/질문/원문 error는 기록하지 않는다. 후행 loader success가 있어도 pipeline_deadline이면 사용자 복구가 아니다.
+- 로컬 직접 HTTP 비교는 UA 유무 모두 TimeoutError(2505ms/2501ms). 운영 원인의 증거가 아니며 UA 원인 확정 금지. redirect 거부·시즌/대회·승률/동률 검증·무 fallback 유지.
+- QA 스크립트에 헤더·redirect 계약, 정상/HTTP/redirect/JSON/데이터 거부/네트워크/timeout, 각 호출 1회·민감 원문 미기록 assertion 추가. 삼순 실행 0, 삼식 독립 실행 요청.
+- 독립 리뷰: env 없는 qa:genius-game-conversation와 영향 게이트, 기존 head에서 새 assertion RED, 새 head PASS. UA 제거·로그 무효화 mutation 검출 확인. 운영에서는 두 2025 문형의 결과와 해당 호출 로그를 함께 대조한다. 2019 parse_rejected와 네트워크 실패를 구분하고 경계/현재 순위/보크 회귀 확인. pipeline_deadline도 별도 재현하여 성공 로그로 복구를 오판하지 않는다.
+- 기존 diff-changing 재작업 2회에서 이번 후속은 3회째로 계승한다. 추가 diff-changing NO-GO는 3회 초과 에스컬레이션 대상. 복구는 실제 운영 QA 전까지 미검증.
+- 작성자 tsc exit 0, lint 오류 0(기존 pipeline 경고 5). graphify는 모듈 부재로 갱신 실패, 기존 산출물 보존.
