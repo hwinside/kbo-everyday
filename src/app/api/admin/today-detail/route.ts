@@ -76,7 +76,7 @@ export async function GET(req: NextRequest) {
     // query-guard: bounded -- KST 오늘 원글의 최신 100건만 표시하는 관리자 상세 목록.
     const { data, error } = await supabase
       .from("game_reviews")
-      .select("id, game_id, team_id, content, created_at, is_hidden, profiles(nickname)")
+      .select("id, game_id, team_id, content, created_at, is_hidden, profiles!game_reviews_author_id_fkey(nickname)")
       .is("deleted_at", null)
       .gte("created_at", start)
       .lt("created_at", endExclusive)
