@@ -10,7 +10,7 @@
 - 기존 지표 패턴을 재사용하여 겹치지 않는 모든 요청 지표를 수집, 중복 제거. 새 질문별 regex/모델 호출 없음.
 - 단일 팀·동일 snapshot 조회 후 모든 결과 조립, 빠진 지표는 자료 미확인 명시. 단일 metric 문구 유지.
 - 두 팀의 복합 항목은 지원하지 않으므로 단일 pair 지표로 조용히 축소하지 않고 기존 HOLD.
-- null/빈 count를 값으로 렌더하지 않음. 시점 하단 및 기존 단일 팀의 freshness/시즌 계약은 별도 범위이며 이 PR이 이를 해결한다고 주장하지 않음.
+- null/빈 count를 값으로 렌더하지 않음. 시점 하단 및 기존 단일 팀 snapshot의 freshness 계약은 별도 범위이며 이 PR이 이를 해결한다고 주장하지 않음.
 
 ## 삼식 독립 실행
 `npx tsx scripts/qa/genius-team-metrics-smoke.ts`
@@ -24,3 +24,9 @@
 - 작성자 제품 타입검사와 lint 수행, QA 실행 0. Graphify는 모듈 부재로 갱신 불가, 산출물 보존.
 - #1641/#1647/#1649 과거 순위 timeout 수정과 독립 축. 기존 재작업3/승인대기 및 #1541 NO-GO11/#1629 NO-GO3 유지.
 - DB/워크플로 변경 없음. 롤백은 PR revert. 독립 exact GO·필수 checks 후 cron 상시승인으로 머지, 전용계정 프로드 QA 후 효과 판정.
+
+## R2 — NO-GO1/3 반영
+- 리뷰1794969363.681149: base/head 모두 명시 과거 연도에 현재 팀 snapshot을 답하는 결함 확인. 단언 제거하지 않고 기존 scanTemporalRefs를 공유하여 과거/복수/범위 요청은 current snapshot 진입 전 HOLD. 단일 현재연도 회귀 포함.
+- package qa:genius-team-metrics 및 gate-tiers ci 등록. workflow 변경 없음.
+- R1 원질문3종 before RED/head 승패 응답은 독립 확인됨. 다만 전체 head gate가 RED였으므로 mutation 판별력은 R2에서 재판정 필요.
+- 알려진 기존 P2: ‘LG 홈런 몇 개고 패배 이유는?’ 서술형 혼합의 패배를 수치로 해석·질문 아닌 패턴 순서로 출력. 이번에 해결했다고 하지 않음. #1646 후속으로 보존.

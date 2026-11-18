@@ -1,3 +1,4 @@
+import { scanTemporalRefs } from "./stats/season-record";
 import { BASEBALL_RULES_INTRO, BASEBALL_TERMS_INTRO, BASEBALL_LEAGUE_PROMPT } from "./topic-introduction";
 import { fingerprintEvidence, readEvidenceFingerprints, type EvidenceFingerprint } from "./rag/evidence-fingerprint";
 import { readScenarioContext, type ScenarioContext } from "./scenario-context";
@@ -6596,6 +6597,16 @@ async function answerQuestionObserved(userId: string, rawQuestion: string, deps:
       await deps.log({ userId, question, questionNorm, matchPath, answer, inputTokens: null, outputTokens: null });
       return { status: 200, answer, source: matchPath, remaining };
     };
+    // A current snapshot cannot answer a historical/ranged request. Reuse the
+    // existing temporal scanner instead of introducing a second year grammar.
+    const temporal = scanTemporalRefs(question);
+    const currentSeason = kstSeasonOf(deps.now ? deps.now() : Date.now());
+    if (temporal.refTotal > 1 || temporal.pastDelta !== null
+      || (temporal.explicitYear !== null && temporal.explicitYear !== currentSeason)
+      || temporal.recentRange || temporal.rangeMarker || temporal.seriesWord
+      || temporal.careerWord || temporal.debutScope !== "none") {
+      return settleTeam(TEAM_STAT_HOLD_ANSWER, "history_hold");
+    }
     const intent = resolveTeamRecordIntent(question);
     const canonicalTeam = resolveMentionedTeam(question);
     // ── 두 구단 질문 (2026-08-16 삼순 NO-GO 반영) ──────────────────────────────

@@ -42,6 +42,7 @@ async function main() {
     const intent = resolveTeamRecordIntent(q); assert.equal(intent.kind, "query", q);
     if (intent.kind === "query") assert.deepEqual(intent.metrics, metrics, q);
   }
+  assert.equal((await ask("LG 2026년 몇 승 몇 패")).result.source, "kbo_structured");
   assert.equal((await ask("LG 몇 승")).result.answer, "LG 승은 78입니다.");
   assert.equal((await ask("LG 몇 패")).result.answer, "LG 패는 61입니다.");
   const missing = await ask("LG 몇 승 몇 패", [{ ...row, losses: undefined } as unknown as StandingsRow]);
@@ -52,7 +53,7 @@ async function main() {
   assert.ok(nullValue.result.answer.includes("패 자료는 확인하지 못했습니다"));
   assert.equal((await ask("LG 몇 승 몇 패", [])).result.source, "history_hold");
   assert.equal((await ask("삼성 몇 승 몇 패", [{ ...row, teamId: teamIdOfCanonical("삼성")! }])).result.answer, "삼성 승은 78입니다.\n삼성 패는 61입니다.");
-  for (const q of ["LG 2025년 몇 승 몇 패", "LG와 두산 몇 승 몇 패", "LG와 두산 상대전적 알려줘"]) {
+  for (const q of ["LG 2025년 몇 승 몇 패", "LG 2025년 몇 승", "LG 작년 몇 승 몇 패", "LG 2025년과 2026년 몇 승 몇 패", "LG와 두산 몇 승 몇 패", "LG와 두산 상대전적 알려줘"]) {
     const { result } = await ask(q);
     assert.notEqual(result.source, "kbo_structured", q);
     assert.ok(!result.answer.includes("78"), q);
