@@ -1,3 +1,4 @@
+import { scanTemporalRefs } from "./stats/season-record";
 import { BASEBALL_RULES_INTRO, BASEBALL_TERMS_INTRO, BASEBALL_LEAGUE_PROMPT } from "./topic-introduction";
 import { fingerprintEvidence, readEvidenceFingerprints, type EvidenceFingerprint } from "./rag/evidence-fingerprint";
 import { readScenarioContext, type ScenarioContext } from "./scenario-context";
@@ -140,6 +141,7 @@ import {
   resolveTeamPairRecord,
   resolveTeamRecord,
   resolveTeamRecordIntent,
+  TEAM_METRICS,
   type TeamRecordFetchers,
 } from "./stats/team-record";
 import {
@@ -6595,6 +6597,16 @@ async function answerQuestionObserved(userId: string, rawQuestion: string, deps:
       await deps.log({ userId, question, questionNorm, matchPath, answer, inputTokens: null, outputTokens: null });
       return { status: 200, answer, source: matchPath, remaining };
     };
+    // A current snapshot cannot answer a historical/ranged request. Reuse the
+    // existing temporal scanner instead of introducing a second year grammar.
+    const temporal = scanTemporalRefs(question);
+    const currentSeason = kstSeasonOf(deps.now ? deps.now() : Date.now());
+    if (temporal.refTotal > 1 || temporal.pastDelta !== null
+      || (temporal.explicitYear !== null && temporal.explicitYear !== currentSeason)
+      || temporal.recentRange || temporal.rangeMarker || temporal.seriesWord
+      || temporal.careerWord || temporal.debutScope !== "none") {
+      return settleTeam(TEAM_STAT_HOLD_ANSWER, "history_hold");
+    }
     const intent = resolveTeamRecordIntent(question);
     const canonicalTeam = resolveMentionedTeam(question);
     // ── 두 구단 질문 (2026-08-16 삼순 NO-GO 반영) ──────────────────────────────
@@ -6625,6 +6637,7 @@ async function answerQuestionObserved(userId: string, rawQuestion: string, deps:
     // 같은 판정을 두 곳에서 하면 한쪽만 고쳤을 때 조용히 갈라진다.
     if (
       intent.kind === "query"
+      && intent.metrics.length === 1
       && isTeamPairMetric(intent.metric)
       && !mentionsUnservedTeamTopic(question)
       && !canonicalTeam
@@ -6690,9 +6703,14 @@ async function answerQuestionObserved(userId: string, rawQuestion: string, deps:
       // 조회 실패를 "기록 없음"으로 둔갓하지 않는다 — 재시도 가능한 실패다.
       return settleTeam(SYSTEM_ERROR_ANSWER, "error");
     }
-    const outcome = resolveTeamRecord(intent.metric, canonicalTeam, standings.rows, records, teamIdOfCanonical);
-    if (outcome.kind === "ok") {
-      return settleTeam(composeTeamRecordAnswer(outcome), "kbo_structured");
+    const outcomes = intent.metrics.map((metric) => ({
+      metric, outcome: resolveTeamRecord(metric, canonicalTeam, standings.rows, records, teamIdOfCanonical),
+    }));
+    if (outcomes.some(({ outcome }) => outcome.kind === "ok")) {
+      const answer = outcomes.map(({ metric, outcome }) => outcome.kind === "ok"
+        ? composeTeamRecordAnswer(outcome)
+        : `${canonicalTeam} ${TEAM_METRICS[metric].label} 자료는 확인하지 못했습니다.`).join("\n");
+      return settleTeam(answer, "kbo_structured");
     }
     return settleTeam(TEAM_STAT_HOLD_ANSWER, "history_hold");
   }

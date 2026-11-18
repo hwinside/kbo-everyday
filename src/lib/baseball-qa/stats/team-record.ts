@@ -228,7 +228,7 @@ export type TeamRecordIntent =
   | { kind: "none" }
   /** 지표는 맞는데 앱이 그 값을 서빙하지 않는다 — 안내로 닫는다. */
   | { kind: "unserved" }
-  | { kind: "query"; metric: TeamMetricKey; label: string };
+  | { kind: "query"; metric: TeamMetricKey; label: string; metrics: TeamMetricKey[] };
 
 export function resolveTeamRecordIntent(question: string): TeamRecordIntent {
   const normalized = question.normalize("NFKC").toLowerCase().replace(/\s+/g, " ").trim();
@@ -258,9 +258,23 @@ export function resolveTeamRecordIntent(question: string): TeamRecordIntent {
   //   시점·순위 등 스탯 스코프 오답은 이 A안 범위 밖(B 트랙).
   if (isCulturalTopicQuestion(question)) return { kind: "none" };
 
-  const hit = TEAM_PATTERNS.find((entry) => entry.pattern.test(normalized));
-  if (!hit) return { kind: "none" };
-  return { kind: "query", metric: hit.metric, label: TEAM_METRICS[hit.metric].label };
+  // Keep every disjoint requested metric. Pattern priority still owns overlapping
+  // words (e.g. 무승부 is not 승, 탈삼진 is not a second 삼진).
+  const spans: Array<[number, number]> = [];
+  const metrics: TeamMetricKey[] = [];
+  for (const entry of TEAM_PATTERNS) {
+    const matches = normalized.matchAll(new RegExp(entry.pattern.source, entry.pattern.flags + "g"));
+    for (const match of matches) {
+      const start = match.index!;
+      const end = start + match[0].length;
+      if (spans.some(([a, b]) => start < b && end > a)) continue;
+      spans.push([start, end]);
+      if (!metrics.includes(entry.metric)) metrics.push(entry.metric);
+    }
+  }
+  if (!metrics.length) return { kind: "none" };
+  const metric = metrics[0];
+  return { kind: "query", metric, label: TEAM_METRICS[metric].label, metrics };
 }
 
 async function getJson<T>(path: string): Promise<T> {
@@ -377,7 +391,7 @@ export function resolveTeamRecord(
       return { kind: "ok", team: canonicalTeam, label, value: gb === 0 ? "0.0 (선두)" : `${gb.toFixed(1)}` };
     }
     const raw = (row as unknown as Record<string, unknown>)[metric];
-    if (!Number.isFinite(Number(raw))) return { kind: "missing" };
+    if (raw === undefined || raw === null || raw === "" || !Number.isFinite(Number(raw))) return { kind: "missing" };
     return { kind: "ok", team: canonicalTeam, label, value: String(raw) };
   }
 

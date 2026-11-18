@@ -266,7 +266,7 @@ interface TemporalScan {
  * 중복 집계가 없고(`작년과 재작년` = 2), `이전시즌`(지원 상대어)을 소거한 뒤에 남는
  * `이전`(범위 표지)만 range 로 판정할 수 있다.
  */
-function scanTemporalRefs(question: string): TemporalScan {
+export function scanTemporalRefs(question: string): TemporalScan {
   const spaced = normalizeWithSpaces(question);
   let rest = spaced.replace(/\s+/g, "");
   // ── 데뷔/입단 한정 — literal A′ (삼순 10차 frozen contract) ─────────────────
