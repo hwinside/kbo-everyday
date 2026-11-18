@@ -1,3 +1,4 @@
+import { BOUNDARY_CONTRACT } from '../baseball-qa/rag/experimental-scope-boundary';
 /** Reviewer-run diagnostic, not a blocking build gate or semantic PASS.
  * --out=/absolute/path --reps=3 [--supplement=/absolute/path.jsonl]
  * --annotations=/absolute/path.json adds source-bound derived notes at model input.
@@ -39,9 +40,10 @@ async function main() {
   const suite = option("suite") ?? "original";
   if (!["fair-catch", "context-rules", "original", "exclusions", "exclusion-focus", "flyout-regression", "flyout-context", "official-documents", "official81"].includes(suite)) throw new Error("unknown suite");
   const scopeMode = option("scope-spans");
-  if (scopeMode && scopeMode !== "candidate" && scopeMode !== "base") throw new Error("unknown scope-spans mode");
+  if (scopeMode && scopeMode !== "candidate" && scopeMode !== "base" && scopeMode !== "closed") throw new Error("unknown scope-spans mode");
   if (scopeMode && ["routing", "selection", "annotations", "supplement"].some(k => option(k)))
     throw new Error("scope-spans experiment must be isolated");
+  const scopeCandidate = scopeMode === "candidate" || scopeMode === "closed";
   const snapshotFile = option("scope-snapshot-file");
   if (Boolean(scopeMode) !== Boolean(snapshotFile)) throw new Error("scope mode requires frozen retrieval snapshot");
   const scopeSnapshot: {version: number; referenceTimeMs: number; queries: Record<string, RagEvidence[]>} | undefined
@@ -143,7 +145,7 @@ async function main() {
   }
   let scopeEligibleCalls = 0;
   const runs: unknown[] = [];
-  const save = () => fs.writeFileSync(out, JSON.stringify({ suite, scopeEligibleCalls, snapshotSha256, referenceTimeMs: scopeSnapshot?.referenceTimeMs, plannedRuns: QUESTIONS.length * reps, mode: scopeMode ? `scope-spans-${scopeMode}` : routingMode ? "context-routing-experiment" : selectionMode ? "contextual-selection-experiment" : file ? "local-ranked-supplement" : annotationFile ? "source-bound-annotation-experiment" : "production-read-only", reps, previousTurn, annotations, annotatedCalls, experimentCalls, questions: QUESTIONS, runs }, null, 2));
+  const save = () => fs.writeFileSync(out, JSON.stringify({ suite, boundaryContract: scopeMode === "closed" || scopeMode === "base" ? BOUNDARY_CONTRACT : undefined, scopeEligibleCalls, snapshotSha256, referenceTimeMs: scopeSnapshot?.referenceTimeMs, plannedRuns: QUESTIONS.length * reps, mode: scopeMode ? `scope-spans-${scopeMode}` : routingMode ? "context-routing-experiment" : selectionMode ? "contextual-selection-experiment" : file ? "local-ranked-supplement" : annotationFile ? "source-bound-annotation-experiment" : "production-read-only", reps, previousTurn, annotations, annotatedCalls, experimentCalls, questions: QUESTIONS, runs }, null, 2));
   for (let rep = 0; rep < reps; rep++) for (const question of QUESTIONS) {
     const trace: unknown[] = [];
     let observedBundle: OfficialEvidenceBundle | undefined;
@@ -195,11 +197,11 @@ async function main() {
         });
         if (matched.length) experimentCalls++;
         const baseRequest = routingMode && extras?.context ? contextRoutingRequest(q, modelEvidence, extras) : server.buildProductionRagRequest(q, modelEvidence, RAG_OFFICIAL_SYSTEM_PROMPT, extras);
-        const scope = scopeMode ? scopeRequest(baseRequest, modelEvidence, observedBundle) : undefined;
+        const scope = scopeMode ? scopeRequest(baseRequest, modelEvidence, observedBundle, scopeMode === "closed" ? "closed" : "labels") : undefined;
         if (scope?.applied) scopeEligibleCalls++;
-        const request = scopeMode === "candidate" && scope ? scope.request : baseRequest;
-        if (scopeMode) trace.push({stage: "scope-spans", mode: scopeMode, applied: scopeMode === "candidate" ? scope?.applied : 0,
-          eligible: scope?.applied, addedUnits: scopeMode === "candidate" ? scope?.addedUnits : 0,
+        const request = scopeCandidate && scope ? scope.request : baseRequest;
+        if (scopeMode) trace.push({stage: "scope-spans", mode: scopeMode, applied: scopeCandidate ? scope?.applied : 0,
+          eligible: scope?.applied, addedUnits: scopeCandidate ? scope?.addedUnits : 0,
           reason: scope?.reason, spans: scope?.trace,
           basePayloadSha256: createHash("sha256").update(JSON.stringify(baseRequest)).digest("hex"),
           candidatePayloadSha256: createHash("sha256").update(JSON.stringify(request)).digest("hex")});
