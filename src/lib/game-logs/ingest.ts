@@ -5,7 +5,7 @@
  * 네이버 record 박스스코어 → `player_game_logs` 행 매핑. 순수 매핑(buildGameLogRows)과
  * 네트워크 페치(fetchGameBoxscore)를 분리해 테스트 가능하게 둔다.
  */
-import { resolvePlayer } from "@/lib/utils/resolve-player";
+import { resolveBoxscorePlayer } from "@/lib/game-logs/resolve-boxscore-player";
 import type { KboGame } from "@/lib/crawler/kbo-api";
 
 /** teamId(1-10) → KBO 2글자 코드 (gameId·공식 코드 기준). */
@@ -31,10 +31,12 @@ export interface PlayerGameLogRow {
 }
 
 interface RawBatter {
+  playerCode?: unknown;
   name?: unknown; ab?: unknown; hit?: unknown; hr?: unknown;
   rbi?: unknown; bb?: unknown; kk?: unknown;
 }
 interface RawPitcher {
+  pcode?: unknown;
   name?: unknown; inn?: unknown; hit?: unknown;
   er?: unknown; kk?: unknown; bb?: unknown;
 }
@@ -147,7 +149,7 @@ export function buildGameLogRows(
     for (const b of side.batters) {
       const name = String(b.name ?? "").trim();
       if (!name) continue;
-      const resolved = resolvePlayer({ name, teamId: side.teamId }, undefined, { context: "game-logs:batter" });
+      const resolved = resolveBoxscorePlayer({ name, teamId: side.teamId, sourceId: b.playerCode });
       if (!resolved) {
         unresolvedSink?.push({ name, teamId: side.teamId, teamCode, playerType: "batter" });
         continue;
@@ -165,7 +167,7 @@ export function buildGameLogRows(
     for (const p of side.pitchers) {
       const name = String(p.name ?? "").trim();
       if (!name) continue;
-      const resolved = resolvePlayer({ name, teamId: side.teamId }, undefined, { context: "game-logs:pitcher" });
+      const resolved = resolveBoxscorePlayer({ name, teamId: side.teamId, sourceId: p.pcode });
       if (!resolved) {
         unresolvedSink?.push({ name, teamId: side.teamId, teamCode, playerType: "pitcher" });
         continue;

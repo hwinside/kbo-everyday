@@ -12,7 +12,7 @@
  *    바로 그 경로다. 완료 증거 파이프라인은 반드시 이 모듈의 strict 빌더를 쓴다.
  */
 import { createHash } from "node:crypto";
-import { resolvePlayer } from "@/lib/utils/resolve-player";
+import { resolveBoxscorePlayer } from "@/lib/game-logs/resolve-boxscore-player";
 import type { KboGame } from "@/lib/crawler/kbo-api";
 import {
   TEAM_ID_TO_CODE,
@@ -98,7 +98,7 @@ export interface MissingRequiredField {
 }
 
 /** 테스트/특수 경로용 resolver 주입 지점 — 기본은 SSOT resolvePlayer. */
-export type PlayerResolver = (q: { name: string; teamId: number }) => { kboId: string } | null;
+export type PlayerResolver = (q: { name: string; teamId: number; sourceId?: unknown }) => { kboId: string } | null;
 
 export interface GameIngestionBuild {
   /** strict 검증·resolve를 통과한 canonical row set. missingFields가 있으면 비운다(부분 적재 금지). */
@@ -133,8 +133,7 @@ function resultFor(myScore: number, oppScore: number): "W" | "L" | "D" {
 export function buildGameIngestion(
   game: KboGame,
   box: GameBoxscore,
-  resolver: PlayerResolver = (q) =>
-    resolvePlayer({ name: q.name, teamId: q.teamId }, undefined, { context: "venue-stats:ledger" }),
+  resolver: PlayerResolver = resolveBoxscorePlayer,
 ): GameIngestionBuild {
   const build: GameIngestionBuild = {
     rows: [], rawRowCount: 0, resolvedRowCount: 0, unresolved: [], missingFields: [],
@@ -182,7 +181,7 @@ export function buildGameIngestion(
         }
         continue;
       }
-      const resolved = resolver({ name, teamId: side.teamId });
+      const resolved = resolver({ name, teamId: side.teamId, sourceId: b.playerCode });
       if (!resolved) {
         build.unresolved.push({ name, teamId: side.teamId, teamCode, playerType: "batter" });
         continue;
@@ -213,7 +212,7 @@ export function buildGameIngestion(
         }
         continue;
       }
-      const resolved = resolver({ name, teamId: side.teamId });
+      const resolved = resolver({ name, teamId: side.teamId, sourceId: p.pcode });
       if (!resolved) {
         build.unresolved.push({ name, teamId: side.teamId, teamCode, playerType: "pitcher" });
         continue;
