@@ -24,6 +24,8 @@ async function main() {
   const databaseOrigin = new URL(process.env.NEXT_PUBLIC_SUPABASE_URL!).origin;
   const readRpcs = new Set(["search_baseball_genius_official_chunks_v2",
     "search_baseball_genius_official_chunks", "search_baseball_genius_news_articles"]);
+  const kboReadOrigins = new Set(["https://www.koreabaseball.com", "http://www.koreabaseball.com"]);
+  const kboReadPaths = new Set(["/ws/Main.asmx/GetKboGameList", "/ws/Main.asmx/GetKboGameDate"]);
   // App adapters can emit monitoring writes on failure. Block them too, before
   // constructing Supabase clients; never serialize query strings or headers.
   globalThis.fetch = async (input, init) => {
@@ -33,7 +35,9 @@ async function main() {
     const model = method === "POST" && url.hostname === "generativelanguage.googleapis.com";
     const rpc = method === "POST" && url.origin === databaseOrigin
       && url.pathname.startsWith("/rest/v1/rpc/") && readRpcs.has(url.pathname.slice("/rest/v1/rpc/".length));
-    if (!read && !model && !rpc) {
+    const kboRead = method === "POST" && kboReadOrigins.has(url.origin)
+      && kboReadPaths.has(url.pathname);
+    if (!read && !model && !rpc && !kboRead) {
       blockedRequests.push({ method, host: url.hostname, path: url.pathname });
       throw new Error("diagnostic_write_or_unlisted_request_blocked");
     }
@@ -59,16 +63,33 @@ async function main() {
     for (const question of cases) for (let repeat = 1; repeat <= 3; repeat++) {
       let started = false, stored: LlmResult | null = null;
       const events: Record<string, unknown>[] = [];
+      let sequence = 0;
+      const timeouts: { seam: string; eventIndex: number; sequence: number }[] = [];
       const row: Record<string, unknown> = { lane, question, repeat,
         fallbackEligible: fallbackEligible(question), startedAt: new Date().toISOString(), events };
       rows.push(row);
       const trace = <A extends unknown[], R>(name: string, fn: (...args: A) => Promise<R>) =>
         async (...args: A): Promise<R> => {
           // These whitelisted seams receive only synthetic questions/public evidence.
-          const event: Record<string, unknown> = { name, input: args };
+          const eventIndex = events.length;
+          const event: Record<string, unknown> = { name, input: args, startSequence: ++sequence };
+          const seamStart = performance.now();
           events.push(event); save();
-          try { const result = await fn(...args); event.result = result; save(); return result; }
-          catch (error) { event.error = error instanceof Error ? error.name : "UnknownError"; save(); throw error; }
+          try {
+            const result = await fn(...args);
+            event.result = result;
+            event.status = "returned";
+            return result;
+          } catch (error) {
+            event.error = error instanceof Error ? error.name : "UnknownError";
+            event.status = event.error === "TimeoutError" ? "timeout" : "error";
+            if (event.status === "timeout") timeouts.push({ seam: name, eventIndex, sequence: ++sequence });
+            throw error;
+          } finally {
+            event.endSequence = ++sequence;
+            event.elapsedMs = Math.round(performance.now() - seamStart);
+            save();
+          }
         };
       const deps: QaDeps = {
         now: () => Date.parse(now), loadGlossary: async () => glossary,
@@ -105,6 +126,20 @@ async function main() {
         // Raw exceptions may include credentials or request URLs.
         row.error = error instanceof Error ? error.name : "UnknownError";
       }
+      row.timeoutObserved = timeouts.length > 0;
+      row.completion = row.error ? "threw" : "returned";
+      row.timeoutContinuations = timeouts.map(timeout => ({
+        ...timeout,
+        subsequentSeams: events.filter(event => typeof event.startSequence === "number"
+          && event.startSequence > timeout.sequence).map(event => ({
+          name: event.name, status: event.status, startSequence: event.startSequence,
+        })),
+        verifiedFallbackEnteredAfterTimeout: events.some(event => event.name === "verified-fallback"
+          && typeof event.startSequence === "number" && event.startSequence > timeout.sequence),
+        pipelineReturnedAfterTimeout: !row.error,
+        finalResult: row.result ?? null,
+        finalError: row.error ?? null,
+      }));
       save();
     }
   }

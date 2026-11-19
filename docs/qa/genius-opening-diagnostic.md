@@ -30,3 +30,10 @@ npx tsx scripts/qa/genius-opening-evidence.ts --now=2026-11-19T11:57:44Z --out=/
 4. 오늘 일정·보크·비야구 controls 답변을 검수한다. `unsure` 0건만으로 통과시키지 않는다.
 5. 같은 main에서 원인을 확정한 뒤 그 소유 경로만 수정하고 새 exact로 리뷰한다. 날짜/숫자 안전장치를 전역 완화하거나 fallback 대상만 무작정 늘리지 않는다.
 6. 최종 제품 수정에는 base/head 실답변 및 전용계정 UI→DM QA가 별도로 필요하다. 이번 진단 PR 승인으로 제품 배포·#1655 완료를 주장하지 않는다.
+
+## R1 재작업 (진단 도구 한정)
+- R1 exact `1db7062`: KBO 읽기 POST 36회 차단으로 app-snapshot games=null. 기존 48행은 원인 확정 근거로 사용하지 않는다.
+- HTTP/HTTPS `www.koreabaseball.com`의 정확한 `/ws/Main.asmx/GetKboGameList`, `/ws/Main.asmx/GetKboGameDate` POST만 추가 허용한다. 다른 호스트·포트·경로·쓰기 메서드는 허용 확대하지 않는다. 운영 crawler의 경기목록/경기일 읽기 호출을 근거로 선정했다.
+- 각 seam의 status/elapsedMs/startSequence/endSequence, 행별 timeoutObserved/completion/timeoutContinuations를 기록한다. timeout 이후 호출된 subsequentSeams, verifiedFallbackEnteredAfterTimeout, pipelineReturnedAfterTimeout과 최종 결과/오류를 분리한다. 정상 반환은 사실적 복구 성공을 뜻하지 않는다. TimeoutError만 timeout으로 집계하고 다른 오류를 임의로 timeout 처리하지 않는다.
+- 같은 --now로 새 0600 파일에 48행을 독립 재실측한다. 차단 0, 경기 snapshot의 실제 반환 상태, 정상 행/timeout 행의 검색·모델·검증 경로를 따로 확인한다.
+- 원질문/내년의 2025 귀속 후보 및 2026 명시 질문의 p21 근거 선택을 재확인한다. 2027 발표 여부는 미확정으로 유지한다. 제품 코드와 검증기는 변경하지 않는다.
