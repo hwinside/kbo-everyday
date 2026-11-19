@@ -1,0 +1,146 @@
+[
+  {
+    "id": "location-r1-1",
+    "kst": "2026-11-18 12:00:00",
+    "user_id": "synthetic-location-0",
+    "q": "3육아닝 뭐냐?",
+    "a": "",
+    "mp": ""
+  },
+  {
+    "id": "location-r1-2",
+    "kst": "2026-11-18 12:01:00",
+    "user_id": "synthetic-location-0",
+    "q": "3육안..? 3루랑 2루사이ㅡ안타",
+    "a": "",
+    "mp": ""
+  },
+  {
+    "id": "location-r1-3",
+    "kst": "2026-11-18 12:02:00",
+    "user_id": "synthetic-location-0",
+    "q": "안타가 가는 위치 이름들 알려줘",
+    "a": "",
+    "mp": ""
+  },
+  {
+    "id": "location-r1-4",
+    "kst": "2026-11-18 12:03:00",
+    "user_id": "control-0-3",
+    "q": "안타가 뭐야?",
+    "a": "",
+    "mp": ""
+  },
+  {
+    "id": "location-r1-5",
+    "kst": "2026-11-18 12:04:00",
+    "user_id": "control-0-4",
+    "q": "유격수 포지션이 뭐야?",
+    "a": "",
+    "mp": ""
+  },
+  {
+    "id": "location-r1-6",
+    "kst": "2026-11-18 12:05:00",
+    "user_id": "control-0-5",
+    "q": "보크하면 주자 몇 루 가?",
+    "a": "",
+    "mp": ""
+  },
+  {
+    "id": "location-r2-1",
+    "kst": "2026-11-18 12:10:00",
+    "user_id": "synthetic-location-1",
+    "q": "3육아닝 뭐냐?",
+    "a": "",
+    "mp": ""
+  },
+  {
+    "id": "location-r2-2",
+    "kst": "2026-11-18 12:11:00",
+    "user_id": "synthetic-location-1",
+    "q": "3육안..? 3루랑 2루사이ㅡ안타",
+    "a": "",
+    "mp": ""
+  },
+  {
+    "id": "location-r2-3",
+    "kst": "2026-11-18 12:12:00",
+    "user_id": "synthetic-location-1",
+    "q": "안타가 가는 위치 이름들 알려줘",
+    "a": "",
+    "mp": ""
+  },
+  {
+    "id": "location-r2-4",
+    "kst": "2026-11-18 12:13:00",
+    "user_id": "control-1-3",
+    "q": "안타가 뭐야?",
+    "a": "",
+    "mp": ""
+  },
+  {
+    "id": "location-r2-5",
+    "kst": "2026-11-18 12:14:00",
+    "user_id": "control-1-4",
+    "q": "유격수 포지션이 뭐야?",
+    "a": "",
+    "mp": ""
+  },
+  {
+    "id": "location-r2-6",
+    "kst": "2026-11-18 12:15:00",
+    "user_id": "control-1-5",
+    "q": "보크하면 주자 몇 루 가?",
+    "a": "",
+    "mp": ""
+  },
+  {
+    "id": "location-r3-1",
+    "kst": "2026-11-18 12:20:00",
+    "user_id": "synthetic-location-2",
+    "q": "3육아닝 뭐냐?",
+    "a": "",
+    "mp": ""
+  },
+  {
+    "id": "location-r3-2",
+    "kst": "2026-11-18 12:21:00",
+    "user_id": "synthetic-location-2",
+    "q": "3육안..? 3루랑 2루사이ㅡ안타",
+    "a": "",
+    "mp": ""
+  },
+  {
+    "id": "location-r3-3",
+    "kst": "2026-11-18 12:22:00",
+    "user_id": "synthetic-location-2",
+    "q": "안타가 가는 위치 이름들 알려줘",
+    "a": "",
+    "mp": ""
+  },
+  {
+    "id": "location-r3-4",
+    "kst": "2026-11-18 12:23:00",
+    "user_id": "control-2-3",
+    "q": "안타가 뭐야?",
+    "a": "",
+    "mp": ""
+  },
+  {
+    "id": "location-r3-5",
+    "kst": "2026-11-18 12:24:00",
+    "user_id": "control-2-4",
+    "q": "유격수 포지션이 뭐야?",
+    "a": "",
+    "mp": ""
+  },
+  {
+    "id": "location-r3-6",
+    "kst": "2026-11-18 12:25:00",
+    "user_id": "control-2-5",
+    "q": "보크하면 주자 몇 루 가?",
+    "a": "",
+    "mp": ""
+  }
+]

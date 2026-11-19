@@ -62,6 +62,7 @@ import {
   BASEBALL_QA_SYSTEM_PROMPT,
   buildBaseballQaGeminiRequest,
   GLOSSARY_MAPPER_SYSTEM_PROMPT,
+  parseGlossaryMapping,
 } from "@/lib/baseball-qa/gemini-request";
 import {
   buildRagLlmRequest,
@@ -234,6 +235,7 @@ export async function mapGlossaryDefinition(
   const entries = await loadGlossary().catch(() => []);
   const candidates = candidateTerms.map(term => ({
     term, aliases: entries.find(entry => entry.term === term)?.aliases ?? [],
+    answer: entries.find(entry => entry.term === term)?.answer ?? "",
   }));
   const res = await fetch(GEMINI_URL, {
     method: "POST",
@@ -260,17 +262,8 @@ export async function mapGlossaryDefinition(
   const outputTokens: number | null = data.usageMetadata?.candidatesTokenCount ?? null;
   const text: string =
     data.candidates?.[0]?.content?.parts?.find((part: { text?: string }) => part.text)?.text ?? "";
-  let parsed: unknown;
-  try {
-    parsed = JSON.parse(text);
-  } catch {
-    // malformed 는 매핑 실패 — 기존 경로로 양보한다 (#1142 malformed fail-close 계약과 동일 축).
-    return { term: null, inputTokens, outputTokens };
-  }
-  const term = (parsed as { term?: unknown })?.term;
-  const scope = (parsed as { scope?: unknown })?.scope;
   return {
-    term: scope === "baseball" && typeof term === "string" && term.length > 0 ? term : null,
+    term: parseGlossaryMapping(text, candidates),
     inputTokens,
     outputTokens,
   };
