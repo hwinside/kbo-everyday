@@ -43,6 +43,16 @@ async function main() {
     assert.ok(result.answer.includes("2019년 타율"), q);
     assert.ok(!result.answer.includes("팀 기록"), q); assert.equal(fetches, 0, q);
   }
+  // No rank operation and no bound entity: reach the generic period guard
+  // instead of the earlier rank/history or mixed-entity clarification gates.
+  // Assert through answerQuestion, not by calling the copy helper directly.
+  for (const q of ["최근 5경기 타율", "월별 타율"]) {
+    const { result, fetches } = await ask(q);
+    assert.equal(result.source, "blocked", q);
+    assert.equal(result.answer, "요청하신 대상·기록·기간 조합은 현재 확인할 수 없습니다. 선수 기록과 팀 기록의 지원 범위는 서로 다릅니다.", q);
+    assert.doesNotMatch(result.answer, /2019|통산|연도별|요청하신 팀 기록|78/, q);
+    assert.equal(fetches, 0, q);
+  }
   const split = await ask("김영웅 후반기 타율");
   assert.ok(split.result.answer.includes("상황·대회·기간"));
   console.log("PASS entity-bound unsupported-period guidance");
