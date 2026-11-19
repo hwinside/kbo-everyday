@@ -101,6 +101,8 @@ export const GLOSSARY_MAPPER_SYSTEM_PROMPT = [
   "질문에 사전 약어가 있고 주변 구어체나 어미에 오타가 있어도, 그 약어의 뜻을 묻는 의도가 명확하면 해당 용어를 고른다. 약어가 다른 분야·단위·이름을 가리키거나 뜻이 모호하면 null이다.",
   "후보의 aliases는 검수 사전의 별칭이다. 별칭의 뜻을 요청하는 문장은 정본 term의 정의 요청과 같다. 의문형뿐 아니라 설명을 부탁하는 청유·명령형도 정의 요청이다. 다른 분야의 명시적 문맥은 이 대응보다 우선한다.",
   "후보를 고르기 전에 질문 대상의 분야(scope)를 baseball|other|unclear로 판정한다. 명시된 분야·대상을 후보 별칭보다 우선한다. 문자 자체의 뜻·언어·타 종목을 묻는 대상은 other이며, 질문에 야구 사전 별칭이 등장해도 바꾸지 않는다. 분야가 모호하면 unclear다. 야구 문맥에서 용어 정의를 요청할 때만 baseball이다.",
+  "후보의 answer는 선택 시 그대로 제공할 검수 정의문이다. 질문에 후보 단어가 있다는 사실만으로 선택하지 말고, 그 answer 하나가 질문 전체에 직접 답하는지 먼저 판정한다. answer가 비어 있으면 선택하지 않는다.",
+  "위치·방향·종류·이름을 찾는 질문은 그 대상의 일반 정의 요청과 다르다. 상황에 맞는 명칭을 찾거나 여러 명칭을 나열해 달라는 요청을 문장에 포함된 상위 용어의 정의로 대체하지 않는다. 반대로 용어 자체의 뜻·정의를 묻고 answer가 그 요청에 답하면 기존처럼 선택한다.",
   "다음은 정의 질문이 아니므로 반드시 null 이다:",
   "· 용어의 유래·어원·명명 이유 질문 (예: 적시타 단어 유래, 홈런은 왜 홈런이라고 불러?)",
   "· 용어를 적용한 결과·규칙 질문 (예: 보크하면 주자 몇 루 가? — 보크의 뜻이 아니라 결과를 묻는다)",
@@ -109,8 +111,18 @@ export const GLOSSARY_MAPPER_SYSTEM_PROMPT = [
   "· 용어가 문장에 스쳐 지나갈 뿐인 질문",
   "· 좋고 나쁨·유불리·선호·감상을 묻는 평가 질문. 서술어에 구어체나 오타가 있어도 질문 기능은 평가이며, 정의문으로 대신 답하지 않는다.",
   "확실하지 않으면 null 을 고른다 — 정의문을 잘못 주는 쪽이 안 주는 쪽보다 나쁘다.",
-  '반드시 JSON 하나만 출력한다: {"scope":"baseball|other|unclear","term":"후보 목록에 있는 용어 그대로 또는 null"}. scope가 baseball이 아니면 term은 반드시 null이다.',
+  '반드시 JSON 하나만 출력한다: {"scope":"baseball|other|unclear","answerSufficient":true 또는 false,"term":"후보 목록에 있는 용어 그대로 또는 null"}. answerSufficient는 제공된 answer 하나로 질문 전체에 직접 답할 때만 true다. scope가 baseball이 아니거나 answerSufficient가 false면 term은 반드시 null이다.',
 ].join("\n");
+
+/** Match only a supplied answer, never an unseen definition or a partial request. */
+export function parseGlossaryMapping(text: string, candidates: Array<{ term: string; answer: string }>): string | null {
+  let parsed: unknown;
+  try { parsed = JSON.parse(text); } catch { return null; }
+  if (!parsed || typeof parsed !== "object") return null;
+  const result = parsed as { scope?: unknown; answerSufficient?: unknown; term?: unknown };
+  if (result.scope !== "baseball" || result.answerSufficient !== true || typeof result.term !== "string") return null;
+  return candidates.find(candidate => candidate.term === result.term && candidate.answer.trim().length > 0)?.term ?? null;
+}
 
 export const STAT_INTENT_PROMPT = [
   "이번 질문은 등록되지 않은 대상의 기록 질문일 수 있다. 자유로운 문장으로 답하지 말고 의도만 판정한다.",

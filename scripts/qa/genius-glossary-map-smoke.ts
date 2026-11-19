@@ -26,6 +26,8 @@ import {
 } from "../../src/lib/baseball-qa/pipeline";
 import { UNSUPPORTED_SEASON_ANSWER } from "../../src/lib/baseball-qa/stats/season-record";
 
+import { parseGlossaryMapping } from "../../src/lib/baseball-qa/gemini-request";
+
 const glossary: GlossaryEntry[] = [
   { term: "삼진", aliases: ["k", "strikeout"], answer: "타자가 스트라이크 세 개를 당하는 것입니다." },
   { term: "유격수", aliases: ["ss", "숏스탑", "shortstop"], answer: "2루와 3루 사이를 지키는 내야 수비의 핵심입니다." },
@@ -75,6 +77,16 @@ function makeDeps(state: MapperState): QaDeps {
 }
 
 async function main() {
+  const candidate = [{ term: "안타", answer: "타자가 공을 쳐서 실책 없이 안전하게 출루하는 타격입니다." }];
+  const payload = { scope: "baseball", answerSufficient: true, term: "안타" };
+  assert.equal(parseGlossaryMapping(JSON.stringify(payload), candidate), "안타");
+  for (const patch of [{ answerSufficient: false }, { answerSufficient: undefined },
+    { answerSufficient: "true" }, { scope: "other" }, { term: "삼유간" }]) {
+    assert.equal(parseGlossaryMapping(JSON.stringify({ ...payload, ...patch }), candidate), null);
+  }
+  assert.equal(parseGlossaryMapping(JSON.stringify(payload), [{ term: "안타", answer: " " }]), null);
+  for (const malformed of ["null", "[]", "broken"]) assert.equal(parseGlossaryMapping(malformed, candidate), null);
+
   // ── 결정론 후보 추출 ───────────────────────────────────────────────
   // 질문에 실제로 들어있는 용어만 후보다.
   {

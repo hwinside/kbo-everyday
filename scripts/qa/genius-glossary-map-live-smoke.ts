@@ -89,6 +89,17 @@ async function main() {
     else { fail += 1; console.log(`FAIL ${label}`); }
   };
 
+  // Production log Q3808135 plus its clarification and neighboring intents.
+  // A null result is rejection of a wrong definition, NOT recovery of a useful final answer.
+  for (const question of ["3육안..? 3루랑 2루사이ㅡ안타", "안타가 가는 위치 이름들 알려줘",
+    "2루와 3루 사이로 가는 안타를 뭐라고 불러?", "안타 방향별 이름 알려줘"]) {
+    for (let round = 1; round <= 3; round++) {
+      const result = await run(question);
+      assert.ok(!result.structurallyBlocked, `candidate seam not reached: ${question}`);
+      report(result.mapped === null, `위치 명칭 r${round}: ${question} → ${result.mapped}`);
+    }
+  }
+
   // Definition answers must not replace evaluative predicates, including colloquial spelling.
   for (const question of ["스트라이크 조은가?", "볼넷 조은가?", "홈런 좋은가?", "도루 나쁜가?"]) {
     for (let round = 1; round <= 3; round++) {
@@ -103,6 +114,7 @@ async function main() {
     ["K 뜻 알려줄래", "삼진"],
     ["유격수 포지션이 뭐야?", "유격수"],
     ["도루뜻", "도루"],
+    ["안타가 뭐야?", "안타"],
   ] as const) {
     for (let i = 1; i <= 3; i += 1) {
       const { mapped, structurallyBlocked } = await run(question);
