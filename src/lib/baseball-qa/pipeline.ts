@@ -95,7 +95,7 @@ import {
   RECORD_MISSING_ANSWER,
   resolveSeasonRecord,
   resolveSeasonRecordIntent,
-  UNSUPPORTED_SEASON_ANSWER,
+  composeUnsupportedSeasonAnswer,
   UNSUPPORTED_SPLIT_ANSWER,
   hasSeasonRecordSplitQualifier,
   UNTRUSTED_METRIC_ANSWER,
@@ -4867,7 +4867,7 @@ async function answerSeasonRecordQuestion(
     return settle(UNTRUSTED_METRIC_ANSWER, "blocked", "blocked");
   }
   if (intent.kind === "unsupported_season") {
-    return settle(hasSeasonRecordSplitQualifier(question) ? UNSUPPORTED_SPLIT_ANSWER : UNSUPPORTED_SEASON_ANSWER, "blocked", "blocked");
+    return settle(composeUnsupportedSeasonAnswer(question, "player"), "blocked", "blocked");
   }
 
   // ── 연도별·통산·과거 시즌: KBO 공식 연도별 테이블 (2026-08-10 캐처) ────────────
@@ -4880,7 +4880,7 @@ async function answerSeasonRecordQuestion(
     // 미배선·미지원 지표는 종전 "준비 중" 안내가 정확하다 — RECORD_MISSING("올 시즌
     // 기록을 못 찾았어요")은 과거·통산 질문에 엉뚱한 안내다.
     if (!column || !deps.fetchCareerRecord) {
-      return settle(hasSeasonRecordSplitQualifier(question) ? UNSUPPORTED_SPLIT_ANSWER : UNSUPPORTED_SEASON_ANSWER, "blocked", "blocked");
+      return settle(composeUnsupportedSeasonAnswer(question, "player"), "blocked", "blocked");
     }
     let record: CareerRecord | null;
     try {
@@ -6475,7 +6475,9 @@ async function answerQuestionObserved(userId: string, rawQuestion: string, deps:
   ) {
     const answer = recordIntent.kind === "untrusted_metric"
       ? UNTRUSTED_METRIC_ANSWER
-      : hasSeasonRecordSplitQualifier(question) ? UNSUPPORTED_SPLIT_ANSWER : UNSUPPORTED_SEASON_ANSWER;
+      : composeUnsupportedSeasonAnswer(question,
+        mentionsAnyRosterName(question, players) || pickedCandidate ? "player"
+          : mentionsTeamForGate(question) ? "team" : "unknown");
     await deps.log({
       userId, question, questionNorm, matchPath: "blocked", answer,
       inputTokens: null, outputTokens: null,

@@ -836,3 +836,14 @@ export const RECORD_MISSING_ANSWER =
 /** Split-specific copy; not the fallback for missing historical metrics. */
 export const UNSUPPORTED_SPLIT_ANSWER =
   "요청하신 상황·대회·기간으로 나눈 기록은 현재 제공하지 않습니다. 질문을 나눠 다시 물으셔도 같은 조건의 기록은 확인할 수 없으며, 제공 시점은 정해지지 않았습니다. 대신 지원되는 정규시즌의 특정 연도(예: 2019년 타율), 통산, 연도별 기록은 확인할 수 있습니다.";
+
+/** Capability hints belong to the bound entity, not merely a time expression. */
+export function composeUnsupportedSeasonAnswer(question: string, target: "player" | "team" | "unknown"): string {
+  if (target === "team") {
+    return "요청하신 팀 기록을 해당 기간·조건으로 확인하지 못했습니다. 현재 시즌 기록을 대신 답하지 않겠습니다.";
+  }
+  if (target === "unknown") {
+    return "요청하신 대상·기록·기간 조합은 현재 확인할 수 없습니다. 선수 기록과 팀 기록의 지원 범위는 서로 다릅니다.";
+  }
+  return hasSeasonRecordSplitQualifier(question) ? UNSUPPORTED_SPLIT_ANSWER : UNSUPPORTED_SEASON_ANSWER;
+}
