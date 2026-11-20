@@ -311,6 +311,30 @@ export interface StandingsSnapshot {
   season?: number;
 }
 
+/** Preserve each answered metric's own response metadata; never substitute the local clock. */
+export function composeTeamRecordProvenance(
+  metrics: readonly TeamMetricKey[],
+  standings: StandingsSnapshot,
+  records: TeamRecordsPayload,
+): string {
+  const sources = new Set(metrics.map((metric) => TEAM_METRICS[metric].source === "standings" ? "standings" : "records"));
+  const lines = [...sources].map((source) => {
+    const snapshot = source === "standings" ? standings : records;
+    const label = source === "standings" ? "앱 순위표" : "앱 팀기록";
+    const season = Number.isInteger(snapshot.season) && snapshot.season! >= 1900 && snapshot.season! <= 9999
+      ? `${snapshot.season} 시즌` : "시즌 미확인";
+    const ms = snapshot.fetchedAt ? Date.parse(snapshot.fetchedAt) : NaN;
+    const time = Number.isFinite(ms)
+      ? new Intl.DateTimeFormat("sv-SE", {
+        timeZone: "Asia/Seoul", year: "numeric", month: "2-digit", day: "2-digit",
+        hour: "2-digit", minute: "2-digit", hourCycle: "h23",
+      }).format(new Date(ms)) + " KST"
+      : "미확인";
+    return `${label} · ${season} · 응답 시각 ${time}입니다.`;
+  });
+  return lines.length ? `\n\n${lines.join("\n")}\n실제 수집·경기 반영 완료 시각을 뜻하지는 않습니다.` : "";
+}
+
 export interface TeamRecordFetchers {
   fetchStandings: () => Promise<StandingsSnapshot>;
   fetchTeamRecords: () => Promise<TeamRecordsPayload>;
