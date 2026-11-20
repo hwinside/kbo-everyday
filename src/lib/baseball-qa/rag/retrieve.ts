@@ -1274,6 +1274,7 @@ export const RAG_DISCARD_REASONS = [
   "numeric_not_in_evidence",
   "numeric_not_in_question",
   "event_date_unverified",
+  "event_question_year_unverified",
 ] as const;
 
 export type RagDiscardReason = (typeof RAG_DISCARD_REASONS)[number];
@@ -1750,23 +1751,30 @@ function officialEventEvidenceSupported(question: string, evidence: RagEvidence[
  * Empty claims are for non-calendar prose. Semantic omissions remain a replay
  * evaluation concern, not a claim that this validates arbitrary natural language.
  */
-function officialCalendarClaimsMatch(value: unknown, options: ValidateRagOptions): boolean {
-  if (!Array.isArray(value)) return false;
+function officialCalendarClaimsFailure(value: unknown, options: ValidateRagOptions): RagDiscardReason | null {
+  if (!Array.isArray(value)) return "event_date_unverified";
   const currentYear = Number(toKSTDateString(new Date(options.calendarContract!.referenceTimeMs).toISOString()).slice(0, 4));
   const explicit = resolveSeasonTarget(options.officialQuestion ?? "", currentYear);
-  return value.every((claim: unknown) => {
-    if (!claim || typeof claim !== "object" || Array.isArray(claim)) return false;
+  for (const claim of value) {
+    if (!claim || typeof claim !== "object" || Array.isArray(claim)) return "event_date_unverified";
     const binding = claim as Record<string, unknown>;
-    if (!Number.isInteger(binding.season) || !Number.isInteger(binding.evidence)) return false;
+    if (!Number.isInteger(binding.season) || !Number.isInteger(binding.evidence)) return "event_date_unverified";
     const season = binding.season as number;
     const index = binding.evidence as number;
+    if (index < 1) return "event_date_unverified";
+    // This diagnoses model metadata only, not a missing season in user intent.
+    // Relative time, multiple years, and spurious claims must not force a clarification.
+    if (binding.basis === "question" && (explicit.kind !== "year" || explicit.year !== season)) {
+      return "event_question_year_unverified";
+    }
     const requested = binding.basis === "current" ? currentYear
       : binding.basis === "question" && explicit.kind === "year" ? explicit.year : null;
-    if (requested === null || season !== requested || index < 1) return false;
-    if (explicit.kind === "year" && explicit.year !== requested) return false;
+    if (requested === null || season !== requested || index < 1) return "event_date_unverified";
+    if (explicit.kind === "year" && explicit.year !== requested) return "event_date_unverified";
     const source = options.evidence?.[index - 1]?.calendarSeason;
-    return source?.axis === "calendar_event" && source.season === requested;
-  });
+    if (source?.axis !== "calendar_event" || source.season !== requested) return "event_date_unverified";
+  }
+  return null;
 }
 
 /** Decode only complete, unambiguous record-table rows. OCR fragments and
@@ -1945,8 +1953,9 @@ export function validateRagResponse(
     return { kind: "general", answer: generalAnswer, toneCompliant: isBaseballGeniusToneCompliant(generalAnswer) };
   }
   if (status !== RAG_GROUNDED_SENTINEL) return { kind: "insufficient", reason: "unknown_status" };
-  if (options.calendarContract && !officialCalendarClaimsMatch(row.calendarClaims, options)) {
-    return { kind: "insufficient", reason: "event_date_unverified" };
+  if (options.calendarContract) {
+    const reason = officialCalendarClaimsFailure(row.calendarClaims, options);
+    if (reason) return { kind: "insufficient", reason };
   }
   if (typeof row.answer !== "string") return { kind: "insufficient", reason: "missing_answer" };
   const answer = row.answer.trim();
