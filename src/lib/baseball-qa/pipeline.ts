@@ -132,6 +132,7 @@ import {
   buildLiveTeamBlock,
   composeTeamPairAnswer,
   composeTeamRecordAnswer,
+  composeTeamRecordProvenance,
   isTeamPairMetric,
   isTeamScoreQuestion,
   kstSeasonOf,
@@ -6664,7 +6665,7 @@ async function answerQuestionObserved(userId: string, rawQuestion: string, deps:
         pairRecords,
         teamIdOfCanonical,
       );
-      if (pair.kind === "ok") return settleTeam(composeTeamPairAnswer(pair), "kbo_structured");
+      if (pair.kind === "ok") return settleTeam(composeTeamPairAnswer(pair) + composeTeamRecordProvenance([intent.metric], pairStandings, pairRecords), "kbo_structured");
       return settleTeam(TEAM_STAT_HOLD_ANSWER, "history_hold");
     }
     // 지표를 못 잊거나(우승 횟수·상대전적 등 미서빙 값) 구단을 하나로 특정하지 못하면
@@ -6712,7 +6713,8 @@ async function answerQuestionObserved(userId: string, rawQuestion: string, deps:
       const answer = outcomes.map(({ metric, outcome }) => outcome.kind === "ok"
         ? composeTeamRecordAnswer(outcome)
         : `${canonicalTeam} ${TEAM_METRICS[metric].label} 자료는 확인하지 못했습니다.`).join("\n");
-      return settleTeam(answer, "kbo_structured");
+      const answeredMetrics = outcomes.filter(({ outcome }) => outcome.kind === "ok").map(({ metric }) => metric);
+      return settleTeam(answer + composeTeamRecordProvenance(answeredMetrics, standings, records), "kbo_structured");
     }
     return settleTeam(TEAM_STAT_HOLD_ANSWER, "history_hold");
   }
