@@ -1,5 +1,6 @@
 /** Reviewer-run: #1646 operating question plus synthetic boundary fixtures. */
 import assert from "node:assert/strict";
+import { isBaseballGeniusToneCompliant } from "../../src/lib/baseball-qa/tone";
 import { answerQuestion, teamIdOfCanonical, type QaDeps } from "../../src/lib/baseball-qa/pipeline";
 import { composeTeamRecordProvenance, resolveTeamRecordIntent, type StandingsRow } from "../../src/lib/baseball-qa/stats/team-record";
 const now = Date.parse("2026-11-18T02:30:00Z");
@@ -21,6 +22,7 @@ async function ask(question: string, rows = [row], metadata: { season?: number; 
     },
   } as unknown as QaDeps;
   const result = await answerQuestion("qa-team-metrics", question, deps);
+  if (result.source === "kbo_structured") assert.ok(isBaseballGeniusToneCompliant(result.answer), "structured result must retain formal tone");
   assert.equal(loggedAnswers.at(-1), result.answer, "stored answer must include the same provenance");
   return { result, calls, logs };
 }
@@ -32,9 +34,9 @@ async function main() {
     assert.ok(result.answer.includes("승은 78"), q);
     assert.ok(result.answer.includes("패는 61"), q);
     assert.ok(result.answer.includes("앱 순위표 · 2026 시즌 · 응답 시각 2026-11-18 11:25 KST"), q);
-    assert.ok(result.answer.includes("실제 수집·경기 반영 완료 시각은 아님"), q);
+    assert.ok(result.answer.includes("실제 수집·경기 반영 완료 시각을 뜻하지는 않습니다."), q);
     assert.ok(!result.answer.includes("11:30"), "must not replace response timestamp with the injected clock");
-    assert.equal(result.answer.match(/📊/g)?.length, 1);
+    assert.equal(result.answer.match(/응답 시각/g)?.length, 1);
     assert.equal(calls, 1); assert.deepEqual(logs, ["kbo_structured"]);
   }
   for (const [q, metrics] of [
@@ -75,14 +77,14 @@ async function main() {
   const standings = { rows: [row], season: 2026, fetchedAt: "2026-11-18T02:25:00Z" };
   const records = { season: 2025, fetchedAt: "2026-11-17T23:59:00Z" };
   const mixed = composeTeamRecordProvenance(["wins", "hr", "era"], standings, records);
-  assert.equal(mixed.match(/📊/g)?.length, 2, "one line per actual endpoint, not metric");
+  assert.equal(mixed.match(/응답 시각/g)?.length, 2, "one line per actual endpoint, not metric");
   assert.ok(mixed.includes("앱 팀기록 · 2025 시즌 · 응답 시각 2026-11-18 08:59 KST"));
   assert.ok(mixed.includes("앱 순위표 · 2026 시즌 · 응답 시각 2026-11-18 11:25 KST"));
   assert.ok(!composeTeamRecordProvenance(["wins"], standings, records).includes("앱 팀기록"));
   assert.ok(!composeTeamRecordProvenance(["hr"], standings, records).includes("앱 순위표"));
   assert.equal(composeTeamRecordProvenance([], standings, records), "");
   assert.ok(!missing.result.answer.includes("앱 팀기록"));
-  assert.ok(!(await ask("LG 몇 승", [])).result.answer.includes("📊"));
+  assert.ok(!(await ask("LG 몇 승", [])).result.answer.includes("응답 시각"));
   console.log("PASS team multi-metric pipeline, response provenance and boundaries");
 }
 main().catch((e) => { console.error(e); process.exitCode = 1; });

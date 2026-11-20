@@ -330,9 +330,9 @@ export function composeTeamRecordProvenance(
         hour: "2-digit", minute: "2-digit", hourCycle: "h23",
       }).format(new Date(ms)) + " KST"
       : "미확인";
-    return `📊 ${label} · ${season} · 응답 시각 ${time}`;
+    return `${label} · ${season} · 응답 시각 ${time}입니다.`;
   });
-  return lines.length ? `\n\n${lines.join("\n")}\n(실제 수집·경기 반영 완료 시각은 아님)` : "";
+  return lines.length ? `\n\n${lines.join("\n")}\n실제 수집·경기 반영 완료 시각을 뜻하지는 않습니다.` : "";
 }
 
 export interface TeamRecordFetchers {

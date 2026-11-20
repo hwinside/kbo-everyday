@@ -9,7 +9,7 @@
 
 ## 원인과 최소 수정
 API는 season/fetchedAt을 이미 반환하지만 team_record 성공 답변 조립은 값만 반환한다. 지표별 정본(standings / batting·pitching)을 기존 TEAM_METRICS.source에서 추적하여, 실제 성공한 지표의 응답 메타데이터만 붙인다. 단일/복합/2팀 동일 조립 사용. 실패한 지표의 출처는 붙이지 않는다.
-- after 기대: 기존 수치 + `📊 앱 순위표 · 2026 시즌 · 응답 시각 2026-11-18 11:25 KST` + `실제 수집·경기 반영 완료 시각은 아님`.
+- after 기대: 기존 수치 + `앱 순위표 · 2026 시즌 · 응답 시각 2026-11-18 11:25 KST` + `실제 수집·경기 반영 완료 시각을 뜻하지는 않습니다.`.
 - fixture now는 11:30, fetchedAt은 11:25: 현재 시계로 재각인하면 FAIL.
 - 팀기록과 순위표의 날짜·시즌이 다르면 각각 표시한다. 2025 팀기록을 2026으로 재각인하지 않는다.
 - 누락/잘못된 시각은 미확인. 로컬 현재 시각으로 대체하지 않는다. 최신성 검증·기간 조회 복구가 아니라 응답 메타데이터 보존이다.
@@ -23,3 +23,6 @@ API는 season/fetchedAt을 이미 반환하지만 team_record 성공 답변 조�
 5. 프로덕션 전용계정 UI→DM 원질문/단일/2팀 및 과거기간·보크 controls. 같은 시각 앱 API payload의 season/fetchedAt과 비교(브라우저 수신시간·현재시계와 같아야 하는 테스트 아님). 실제 DM 저장과 UI 문구 일치. 운영 미도달은 HOLD, 자연사용 미관측과 분리.
 
 작성자: 제품 tsc PASS / ESLint 오류0 기존경고5 / diff-check PASS, QA 실행0. Graphify ModuleNotFoundError로 갱신 미실행. 독립 before/after·회귀·프로덕션 QA는 리뷰 결과 후 기록한다.
+
+## R2: CI tone regression
+R1 Vercel qa:team-fullname-routing 두팀5건 톤SSOT FAIL. 메타데이터 행/주의문을 합니다체로 수정하고 이모지를 제거. 톤 검증기는 변경하지 않고 새 게이트도 같은 SSOT를 모든 structured 결과에 적용. 재작업1. R1 독립3게이트/4변이/base확인과 별개로 새exact 재검증 필요.
