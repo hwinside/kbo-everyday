@@ -85,6 +85,25 @@ t("일정 시즌은 원문 해시·머리글·페이지 해시 일치에서만 �
   }
 });
 
+t("실제 2026 일정 p4만 사건 연도로 결속하며 제목·인접 페이지로 확대하지 않는다", () => {
+  const fixture = JSON.parse(readFileSync(path.join(HERE, "fixtures/genius-opening-calendar-page.json"), "utf8"));
+  const profiles = JSON.parse(readFileSync(path.join(HERE, "../baseball-qa/rag/official-calendar-seasons.json"), "utf8"));
+  const input = doc([...fixture.pages, { page: 3, text: "2026 Team Index\n창단: 1982년" }], fixture.title);
+  const bindings = bindCalendarSeasons(input, fixture.documentContentHash, profiles);
+  const bound = bindings.get(4);
+  if (bindings.size !== 1 || bound?.season !== 2026 || bound?.axis !== "calendar_event") throw new Error("actual March schedule must bind exactly one page");
+  if (bound.sourcePdfSha256 !== fixture.sourcePdfSha256) throw new Error("PDF provenance mismatch");
+  if (!fixture.pages[0].text.includes("28 토 KT-L K-S 키-한 롯-삼 두-N")) throw new Error("actual opening schedule fixture changed");
+  if (bindCalendarSeasons(input, "unverified-revision", profiles).size) throw new Error("unknown document must stay unbound");
+  for (const text of [fixture.pages[0].text.replace("2026 KBO 정규시즌", "2027 KBO 정규시즌"), fixture.pages[0].text.replace("28 토", "27 금")]) {
+    let rejected = false;
+    try { bindCalendarSeasons(doc([{ page: 4, text }], fixture.title), fixture.documentContentHash, profiles); } catch { rejected = true; }
+    if (!rejected) throw new Error("changed year or date must invalidate evidence");
+  }
+  // The regulation page mixes an opening date with historical amendment dates.
+  if (bindCalendarSeasons(doc([{ page: 21, text: "개막전 3/28 · 2025.5.27 개정" }], "2026 KBO 리그 규정"), "8d2b83fc788790a3", profiles).size) throw new Error("regulation title is not an event-year proof");
+});
+
 t("사고 재현 — 같은 페이지의 조문 3개가 각각 살아남는다", () => {
   const p = prepareDocument(doc([
     { page: 10, section: "5.09 아 웃", text: body(300) },

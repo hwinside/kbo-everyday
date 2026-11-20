@@ -53,6 +53,24 @@
           ]
         }
       ]
+    },
+    {
+      "documentContentHash": "1f7be81a72eb02470b7535ba149523456bc1f38c8d2d52e879254536868a1f87",
+      "sourcePdfSha256": "011b175a661b3b36023e1fd1226f6dd7d0633478fe030924d0229f2cb384170f",
+      "note": "Only physical page 4: explicit 2026 KBO regular-season March schedule. This is a published schedule, not proof games were played; no adjacent team/history pages or league-regulation amendments are bound. Corroboration: https://www.koreabaseball.com/MediaNews/Notice/View.aspx?bdSe=11794 (2025-12-19).",
+      "sections": [
+        {
+          "calendarSeason": 2026,
+          "headingPage": 4,
+          "heading": "2026 KBO 정규시즌 경기일정",
+          "pages": [
+            {
+              "page": 4,
+              "textSha256": "c317479eff55b2e55fae7289e24d25bd7e945dfcf35960086eccf7b09916acf0"
+            }
+          ]
+        }
+      ]
     }
   ]
 }
