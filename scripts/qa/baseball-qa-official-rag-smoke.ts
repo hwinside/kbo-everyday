@@ -737,6 +737,13 @@ check("공식 일정 계약 — 요청 연도/자료 연도 불일치·미상·�
   assert.equal(validate([{ ...current[0], season: 2025 }], "올해 일정은?").kind, "insufficient");
   assert.equal(validate(past, "2026년 일정은?").kind, "insufficient");
   assert.equal(validate(past, "2025년 일정은?").kind, "grounded");
+  for (const question of ["KBO 개막 날짜 알려줘", "2026년 일정은?", "올해 일정은?", "2025년과 2026년 일정은?"]) {
+    assert.deepEqual(validate(past, question), { kind: "insufficient", reason: "event_question_year_unverified" });
+  }
+  assert.deepEqual(validate(past, "２０２５년 일정은?"), validate(past, "2025년 일정은?"));
+  assert.deepEqual(validate(current, "올해 일정은?"), { kind: "insufficient", reason: "event_date_unverified" });
+  assert.deepEqual(validate([{ ...past[0], basis: "unknown" }], "KBO 개막 날짜 알려줘"),
+    { kind: "insufficient", reason: "event_date_unverified" });
   for (const invalid of [
     { ...past[0], season: "2025" }, { ...past[0], evidence: "1" },
     { ...past[0], evidence: "자료1" }, { ...past[0], evidence: 0 },
@@ -756,23 +763,6 @@ check("공식 일정 계약 — 요청 연도/자료 연도 불일치·미상·�
   }).kind, "grounded");
 });
 
-check("일정 시즌 되묻기 — 수치 없는 확인 질문만 GENERAL 통과, 날짜 후보는 차단", () => {
-  const question = "개막전 언제야?";
-  const options = {
-    numericEvidence: true, officialQuestion: question, evidence: [OFFICIAL],
-    generalFallback: { question },
-    calendarContract: { referenceTimeMs: Date.parse("2026-11-21T00:00:00Z") },
-  };
-  const validate = (answer: string) => validateRagResponse(JSON.stringify({
-    status: RAG_GENERAL_SENTINEL, answer, calendarClaims: [],
-  }), options);
-  assert.equal(validate("어느 시즌의 개막 일정을 말씀하시는지 알려주시겠습니까?").kind, "general");
-  for (const answer of ["2026년 개막 일정을 말씀하십니까?", "3월 28일에 개막합니다.", "2025년에는 3월 22일이었습니다."]) {
-    const result = validate(answer);
-    assert.equal(result.kind, "insufficient");
-    if (result.kind === "insufficient") assert.equal(result.reason, "numeric_not_in_question");
-  }
-});
 
 checkAsync("순수 요청 빌더 — 공식 기준일 주입과 기본 서버 시계 (env 불필요)", async () => {
   const fixed = buildRagLlmRequest("올해 일정은?", [OFFICIAL], RAG_OFFICIAL_SYSTEM_PROMPT,

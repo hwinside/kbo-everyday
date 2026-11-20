@@ -14,6 +14,7 @@ export function renderRagHold(value: ValidatedRagAnswer): string {
     // This validates model-produced calendar metadata, not the user's intent.
     // A non-date answer can carry spurious claims (e.g. a standings year).
     // Keep HOLD, but do not diagnose a missing schedule date from this reason.
+    case "event_question_year_unverified":
     case "event_date_unverified": return RAG_DATE_HOLD;
     case "numeric_not_in_evidence": return RAG_NUMBER_HOLD;
     // These guards do not establish an evidence deficit: tier2 numbers are

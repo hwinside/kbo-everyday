@@ -87,6 +87,10 @@ async function main() {
   }
 
   await run("official", "2026년 가을야구는 언제 시작해?", JSON.stringify({ status: "GROUNDED", answer: "10월 6일 시작합니다.", calendarClaims: [{ basis: "question", season: 2026, evidence: 1 }] }), RAG_DATE_HOLD, "event_date_unverified");
+  // Fabricated question-year metadata stays HOLD in UI, logs, envelope and replay.
+  await run("official", "KBO 개막 날짜 알려줘", JSON.stringify({ status: "GROUNDED", answer: "2025년 3월 22일입니다.", calendarClaims: [{ basis: "question", season: 2025, evidence: 1 }] }), RAG_DATE_HOLD, "event_question_year_unverified");
+  // Spurious calendar metadata on non-calendar prose must not trigger a season question.
+  await run("official", "보크의 정의를 설명해줘", JSON.stringify({ status: "GROUNDED", answer: "투수의 반칙입니다.", calendarClaims: [{ basis: "question", season: 2025, evidence: 1 }] }), RAG_DATE_HOLD, "event_question_year_unverified");
   await run("official", "인필드 플라이 규칙 알려줘", JSON.stringify({ status: "INSUFFICIENT" }), RAG_NEUTRAL_HOLD, "model_insufficient");
   await run("official", "인필드 플라이 규칙 알려줘", "not-json", RAG_RESPONSE_HOLD, "malformed_json");
   await run("official", "인필드 플라이 규칙 알려줘", JSON.stringify({ status: "GROUNDED", answer: "7명이 아웃됩니다.", calendarClaims: [] }), RAG_NUMBER_HOLD, "numeric_not_in_evidence");
