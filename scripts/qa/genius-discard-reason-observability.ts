@@ -297,7 +297,7 @@ async function run(): Promise<void> {
       assert.ok(new RegExp(nullable, "i").test(sql), `CHECK 가 ${nullable} 을 허용하지 않는다`);
     }
 
-    const reasonSql = readFileSync(path.join(process.cwd(), "supabase/migrations/20260929112000_genius_event_date_discard_reason.sql"), "utf8");
+    const reasonSql = readFileSync(path.join(process.cwd(), "supabase/migrations/20261121064000_genius_question_year_discard_reason.sql"), "utf8");
     const reasonClause = reasonSql.match(/rag_discard_reason in \(([^)]*)\)/i)?.[1];
     assert.ok(reasonClause, "폐기 사유 CHECK 의 허용 목록을 파싱하지 못했다");
     assert.deepEqual(

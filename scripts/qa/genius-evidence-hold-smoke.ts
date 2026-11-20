@@ -1,9 +1,18 @@
 /** Reviewer-run: real pipeline validation, final storage and retry replay. No network. */
 import assert from "node:assert/strict";
+import { readFileSync } from "node:fs";
 import fixture from "./fixtures/genius-standings-calendar-hold.json";
 import { answerQuestion, unpackStoredQaFinal, type QaDeps, type LlmResult } from "../../src/lib/baseball-qa/pipeline";
 import { RAG_DISCARD_REASONS, validateRagResponse, type RagEvidence } from "../../src/lib/baseball-qa/rag/retrieve";
 import { renderRagHold, RAG_DATE_HOLD, RAG_NUMBER_HOLD, RAG_NEUTRAL_HOLD, RAG_RESPONSE_HOLD } from "../../src/lib/baseball-qa/rag/hold-answer";
+
+// Deploy contract: a new runtime reason must be accepted by the DB CHECK.
+const reasonMigration = readFileSync("supabase/migrations/20261121064000_genius_question_year_discard_reason.sql", "utf8");
+const reasonClause = reasonMigration.match(/rag_discard_reason in \(([^)]*)\)/i)?.[1];
+assert.ok(reasonClause, "discard reason CHECK must exist");
+assert.match(reasonMigration, /rag_discard_reason is null/i);
+assert.deepEqual([...reasonClause.matchAll(/'([^']+)'/g)].map(match => match[1]).sort(),
+  [...RAG_DISCARD_REASONS].sort(), "runtime reason set and DB CHECK must match exactly");
 
 const official: RagEvidence = { content: "2025년 포스트시즌은 10월 6일 시작했다.", pageTitle: "연감", sectionPath: "포스트시즌",
   canonicalUrl: "https://www.koreabaseball.com/kbo/board/ebook/ebookpublication.aspx", revision: "fixture", asOf: "2026-09-30", sourceGrade: "tier1",
