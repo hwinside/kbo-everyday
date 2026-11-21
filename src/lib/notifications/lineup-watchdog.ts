@@ -59,6 +59,8 @@ export interface LineupWatchdogSummary {
   snapshotsOpened: number;
   snapshotOpenErrors: number;
   snapshotsCompleted: number;
+  snapshotsPartial: number; // accepted 일부 + permanent/expired 일부인 terminal 대상
+  snapshotsFailed: number; // accepted 0 + permanent/expired인 terminal 대상
   openUnresolved: number; // open 됐으나 이번 tick 종결 확인 못함(deadline 소진로 drain/finalize 미수행) = systemic
   accepted: number;
   drainErrors: number;
@@ -114,6 +116,7 @@ export async function runLineupWatchdog(args: {
   const summary: LineupWatchdogSummary = {
     scheduled: 0, lineupProbes: 0, lineupSignals: 0, probeFailures: 0, confirmed: 0, targets: 0,
     dueSnapshots: 0, dueDrained: 0, snapshotsOpened: 0, snapshotOpenErrors: 0, snapshotsCompleted: 0,
+    snapshotsPartial: 0, snapshotsFailed: 0,
     openUnresolved: 0, accepted: 0, drainErrors: 0, pending: 0, permanentFailed: 0, expired: 0,
   };
 
@@ -182,6 +185,8 @@ export async function runLineupWatchdog(args: {
         summary.pending += fin.pending;
         summary.permanentFailed += fin.permanentFailed;
         summary.expired += fin.expired;
+        if (fin.deliveryStatus === "partial") summary.snapshotsPartial++;
+        if (fin.deliveryStatus === "failed") summary.snapshotsFailed++;
         finalizedOk = true; // finalize 성공 = 이 대상 이번 tick 종결 확정(pending/permanent/expired 확정).
       } catch {
         // finalize 실패(원장 durable) — 마지막 성공 batch 의 terminal counters 전부 보존로 systemic 노출
@@ -286,6 +291,8 @@ export async function runLineupWatchdog(args: {
     summary.drainErrors > 0 || // drain/FCM/due 조회 실패
     summary.pending > 0 || // 이번 tick 발송 시도했으나 FCM transient 로 미완료(부분 FCM 실패) — 삼순 #952 4차 blocker2
     summary.permanentFailed > 0 || // 영구 실패(불량 토큰 등) = 부분 delivery 실패 — 삼순 #952 6차 ②
+    summary.snapshotsPartial > 0 || // terminal partial을 lineup_notified 성공으로 오판하지 않음
+    summary.snapshotsFailed > 0 || // terminal failed를 운영 응답에 보존
     summary.openUnresolved > 0 || // open 됐으나 이번 tick 미종결(deadline 소진) — 삼순 #952 6차 ①
     summary.expired > 0 || // 마감 내 미발송(실제 놓침) — 경보
     (summary.targets > 0 && summary.snapshotsOpened === 0);
