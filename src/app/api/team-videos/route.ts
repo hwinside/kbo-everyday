@@ -4,12 +4,13 @@ import { supabaseAdmin } from "@/lib/supabase/admin";
 import { TEAMS } from "@/lib/constants/teams";
 import {
   recordQuota,
-  countSearch,
+  countPlaylistItems,
   countVideoList,
   withQuotaRecording,
   type QuotaCounter,
 } from "@/lib/video/youtube-quota";
-import type { YouTubeSearchItem } from "@/types/api";
+import { fetchChannelUploadsViaApi } from "@/lib/video/youtube-api";
+import { selectTeamVideoItems } from "@/lib/video/team-videos-select";
 
 const YOUTUBE_API_KEY = process.env.YOUTUBE_API_KEY || "";
 
@@ -54,11 +55,6 @@ function isGameTimeKST(): boolean {
 /** 경기 시간대: 2시간, 비경기: 24시간 */
 function getTeamVideosTTL(): number {
   return isGameTimeKST() ? 2 * 60 * 60 * 1000 : 24 * 60 * 60 * 1000;
-}
-
-function decodeHtml(s: string) {
-  return s.replace(/&quot;/g, '"').replace(/&amp;/g, "&").replace(/&lt;/g, "<")
-    .replace(/&gt;/g, ">").replace(/&#39;/g, "'").replace(/&apos;/g, "'");
 }
 
 function parseIsoDurationSeconds(iso: string): number {
@@ -126,35 +122,27 @@ export async function GET(req: NextRequest) {
     // counter 를 try 밖(withQuotaRecording 내부)에서 생성하고, fetch/res.json() 가 throw 해도
     // finally 공통 종료 경로에서 이미 소비된 search(100) 를 정확히 1회 기록(삼순 #709 3번).
     return await withQuotaRecording(recordQuotaUnits, async (quota) => {
-      const duration = type === "short" ? "short" : "medium";
-      const maxResults = type === "short" ? 20 : 10;
-      const url = `https://www.googleapis.com/youtube/v3/search?part=snippet&channelId=${team.youtubeChannelId}&type=video&videoDuration=${duration}&maxResults=${maxResults}&order=date&key=${YOUTUBE_API_KEY}`;
-      countSearch(quota); // search.list 실제 시도(100 units)
-      const res = await fetch(url);
-      const data = await res.json();
+      // channelId를 이미 알므로 search.list(100 units) 대신 uploads 플레이리스트를
+      // playlistItems.list(1 unit)로 가져온다(약 50배 quota 절감). 종류별 videoDuration
+      // 필터링은 uploads가 석임 혼재이므로 아래 videos.list duration 기준으로 유지.
+      // uploads는 short/long 미구분 단일 목록이라 필터 후 충분하도록 50개까지 수집.
+      const targetCount = type === "short" ? 20 : 10;
+      countPlaylistItems(quota); // playlistItems.list 실제 시도(1 unit)
+      const uploads = await fetchChannelUploadsViaApi(team.youtubeChannelId, 50);
 
-      if (data.error) {
-        // search 는 이미 시도됨 — finally 가 소비분을 durable 기록.
+      if (!uploads) {
+        // playlistItems 실패(403/network/non-2xx) — finally 가 소비분을 durable 기록.
         return fallback(team.shortName, type);
       }
 
-      const rawItems: YouTubeSearchItem[] = data.items || [];
-      const detailMap = await fetchVideoDetails(rawItems.map((item) => item.id.videoId).filter(Boolean), quota);
+      const detailMap = await fetchVideoDetails(uploads.map((it) => it.video_id).filter(Boolean), quota);
 
-      const items: TeamVideoItem[] = rawItems
-        .filter((item) => {
-          const detail = detailMap.get(item.id.videoId);
-          if (!detail) return false;
-          const short = isShortVideo(decodeHtml(item.snippet.title), detail.durationSeconds);
-          return type === "short" ? short : !short;
-        })
-        .map((item: YouTubeSearchItem) => ({
-          id: item.id.videoId,
-          title: decodeHtml(item.snippet.title),
-          thumbnail: item.snippet.thumbnails?.high?.url || item.snippet.thumbnails?.medium?.url,
-          publishedAt: item.snippet.publishedAt,
-          durationSeconds: detailMap.get(item.id.videoId)?.durationSeconds ?? 0,
-        }));
+      const items: TeamVideoItem[] = selectTeamVideoItems(
+        uploads,
+        detailMap,
+        type === "short" ? "short" : "long",
+        targetCount,
+      );
 
       if (items.length === 0) return fallback(team.shortName, type);
 
