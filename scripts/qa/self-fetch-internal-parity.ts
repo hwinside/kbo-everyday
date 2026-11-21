@@ -140,6 +140,7 @@ function boxScore() {
 
 function kboList(state: "live" | "scheduled" | "final" | "cancelled") {
   return {
+    code: "100",
     game: [{
       G_ID: "20260729WOLG0",
       G_DT: "20260729",

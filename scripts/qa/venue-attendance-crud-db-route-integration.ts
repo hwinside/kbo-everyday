@@ -115,7 +115,7 @@ function installFetchStub() {
     if (url.includes("GetKboGameList")) {
       const body = JSON.parse(String(init?.body ?? "{}")) as { date?: string };
       const games = STUB_GAMES.filter((g) => g.date === body.date).map(rawGame);
-      return new Response(JSON.stringify({ game: games }), { status: 200 });
+      return new Response(JSON.stringify({ code: "100", game: games }), { status: 200 });
     }
     // 그 외(스코어보드·Naver·standings 등)는 실패 처리 — 이 회귀의 관심 밖.
     return new Response("{}", { status: 500 });
