@@ -55,3 +55,30 @@ test('public-source cache coalesces success, never retains partial/error and exp
     assert.deepEqual(await cache('fail',healthy),[1,2]);
   } finally {Date.now = original;}
 });
+
+
+test('incomplete attendance explains hidden comparisons without blaming healthy or baseline-only values', async () => {
+  const {incompleteComparisonCaption} = await import('../src/lib/venue-stats/ui');
+  const make = (incomplete: number, value: unknown) => ({
+    coverage: {incompleteFinalGames: incomplete},
+    metrics: Object.fromEntries(['B1','B2','B4'].map(id=>[id,{state:'partial_data',value}])),
+  }) as unknown as Parameters<typeof incompleteComparisonCaption>[0];
+  assert.match(incompleteComparisonCaption(make(1,null))!, /선수 기록이 확인되지 않아/);
+  assert.match(incompleteComparisonCaption(make(1,null))!, /직관 기록은 그대로/);
+  assert.equal(incompleteComparisonCaption(make(0,null)),null);
+  assert.equal(incompleteComparisonCaption(make(1,{attendanceAvg:.286})),null);
+});
+
+
+test('excluded/non-final attendance never starts a post-aggregation error lookup', async () => {
+  const {canonicalErrorRequests} = await import('../src/lib/venue-stats/game-errors');
+  const final = fullSeason()[0];
+  const regular = new Map([
+    [final.gameId, final],
+    ['cancelled', {...final,gameId:'cancelled',status:'cancelled'} as KboGame],
+    ['missing-score', {...final,gameId:'missing-score',awayScore:null} as KboGame],
+  ]);
+  const result = canonicalErrorRequests([final.gameId,'preseason','unavailable','cancelled','missing-score'],regular);
+  assert.deepEqual(result.map(r=>r.gameId),[final.gameId]);
+  assert.equal(result[0].canonical.awayScore,5);
+});

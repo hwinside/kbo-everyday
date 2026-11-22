@@ -236,6 +236,21 @@ async function defaultNaverScheduleFetch(
 }
 
 /** 직관 경기 canonical — 원천의 경기 identity·팀·final score 를 exact 대조한다. */
+/** Only confirmed regular finals contribute to D7. Excluded/non-final/unavailable
+ * attendance must not trigger an uncached KBO→Naver timeout after the main lookup. */
+export function canonicalErrorRequests(gameIds: string[], regularGames: Map<string, KboGame>): Array<{gameId: string; canonical: CanonicalGame}> {
+  return gameIds.flatMap(gameId => {
+    const game = regularGames.get(gameId);
+    if (game?.status !== "final" || game.gameId !== gameId ||
+        !Number.isInteger(game.awayScore) || !Number.isInteger(game.homeScore) ||
+        game.awayScore! < 0 || game.homeScore! < 0) return [];
+    return [{gameId, canonical: {
+      gameId, awayTeamId: game.awayTeamId, homeTeamId: game.homeTeamId,
+      awayScore: game.awayScore!, homeScore: game.homeScore!,
+    }}];
+  });
+}
+
 export interface CanonicalGame {
   gameId: string;
   awayTeamId: number;

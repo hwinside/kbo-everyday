@@ -26,6 +26,7 @@ import { supabaseAdmin as supabase } from "@/lib/supabase/admin";
 import { fetchAttendanceGamesWithinDeadline } from "@/lib/venue-attendance/fetch-games";
 import {
   fetchGameErrorsWithinDeadline,
+  canonicalErrorRequests,
   __resetGameErrorCaches,
 } from "@/lib/venue-stats/game-errors";
 import bundledBatters from "@/lib/constants/stats-2026-batters.json";
@@ -626,22 +627,7 @@ async function handleGet(req: NextRequest) {
   //    exact 대조한다(삼순 P0).
   //    경기 목록 조회 뒤에 실행해야 canonical 을 알 수 있으므로 위 Promise.all 밖이다.
   const gameErrors = await fetchGameErrorsWithinDeadline(
-    gameIds.map((gameId) => {
-      const game = attendanceGames.games.get(gameId);
-      const canonical =
-        game?.status === "final" &&
-        typeof game.awayScore === "number" &&
-        typeof game.homeScore === "number"
-          ? {
-              gameId: game.gameId,
-              awayTeamId: game.awayTeamId,
-              homeTeamId: game.homeTeamId,
-              awayScore: game.awayScore,
-              homeScore: game.homeScore,
-            }
-          : null;
-      return { gameId, canonical };
-    }),
+    canonicalErrorRequests(gameIds, attendanceGames.games),
   ).catch(() => new Map<string, { away: number; home: number }>());
 
   // 로그/ledger 조회 실패는 fail-closed — ledger 없음 취급(incomplete)으로 B/C가 partial로 강등된다.

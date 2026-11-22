@@ -721,6 +721,15 @@ export function venueErrorTags(value: D7Value | null | undefined): VenueErrorTag
   return empty;
 }
 
+export function incompleteComparisonCaption(scope: VenueStatsScopePayload): string | null {
+  if (scope.coverage.incompleteFinalGames <= 0) return null;
+  const blocked = (["B1", "B2", "B4"] as const).some(id =>
+    scope.metrics[id].state === "partial_data" && scope.metrics[id].value === null);
+  return blocked
+    ? "일부 경기의 선수 기록이 확인되지 않아 팀 타율·ERA·홈런 비교를 표시하지 못하고 있어요. 직관 기록은 그대로 보관돼 있어요."
+    : null;
+}
+
 export function coverageCaption(scope: VenueStatsScopePayload): string {
   const { attendanceGames, finalGames, incompleteFinalGames, unavailableGames } = scope.coverage;
   const excluded = scope.coverage.excludedAttendance?.length ?? 0;
