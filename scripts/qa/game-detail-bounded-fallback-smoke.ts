@@ -118,6 +118,7 @@ function kboList(state: GameState) {
     state === "live" ? "2" :
     "1";
   return {
+    code: "100",
     game: [{
       G_ID: GAME_ID,
       G_DT: "20260729",
