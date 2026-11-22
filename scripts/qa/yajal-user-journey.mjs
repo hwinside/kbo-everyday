@@ -20,6 +20,7 @@ async function query(request) {
   return data;
 }
 async function sampleMessages(conversationId) {
+  // query-guard: bounded -- Latest 30 rows of this fresh test account's single-question conversation only; a sample, never a complete history/count. Missing question/reply stays unobserved, not PASS.
   return query(client.from('dm_messages').select('id,conversation_id,sender_id,content,payload,created_at').eq('conversation_id', conversationId).order('id', { ascending: false }).limit(30));
 }
 async function main() {
@@ -45,6 +46,7 @@ async function main() {
   evidence.doctor.authenticatedUserId = verified.user.id;
   const profile = await query(client.from('profiles').select('id,nickname').eq('id', config.userId).single());
   if (!profile?.nickname) throw new Error('test profile is not ready');
+  // query-guard: bounded -- Existence probe only: any one prior message rejects this account; no history or total is inferred.
   const prior = await query(client.from('dm_messages').select('id').eq('sender_id', config.userId).limit(1));
   if (prior.length) throw new Error('fresh dedicated account required');
   evidence.doctor.priorUserMessageCount = 0;
