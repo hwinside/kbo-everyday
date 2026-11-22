@@ -3,6 +3,8 @@
   "version": "0.1.0",
   "private": true,
   "scripts": {
+    "qa:ui:yajal-collect": "node scripts/qa/yajal-user-journey.mjs",
+    "qa:yajal-collector-contract": "node --test scripts/qa/yajal-user-journey.test.mjs",
     "qa:game-event-order": "node --import tsx --test tests/game-event-order.test.ts",
     "qa:postseason-preview-context": "tsx scripts/qa/postseason-preview-context.ts",
     "qa:oauth-recovery": "node --test tests/oauth-recovery.test.cjs",
