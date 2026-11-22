@@ -263,7 +263,14 @@ async function computeSeasonAggregates(
   season: number,
   deps: SeasonAggregatesDeps = {},
 ): Promise<SeasonAggregates> {
-  const failClosed: SeasonAggregates = { seasonGames: null, teamSeasonTotals: null, officialScoresComplete: false };
+  const startedAt = Date.now();
+  const failClosed = (reason: string, details: Record<string, number> = {}): SeasonAggregates => {
+    // Only bounded diagnostic fields: never log user IDs, tokens, RPC payloads or raw errors.
+    console.warn("[venue-stats] season_aggregate_unavailable", {
+      season, reason, elapsedMs: Date.now() - startedAt, ...details,
+    });
+    return { seasonGames: null, teamSeasonTotals: null, officialScoresComplete: false };
+  };
   let universe: Array<{ gameId: string; gameDate: string }>;
   const officialGames = new Map<string, {
     awayTeamId: number;
@@ -284,13 +291,17 @@ async function computeSeasonAggregates(
     });
     // 삼순 P0 gate 1 — 일자 1건이라도 수집 실패한 non-empty partial 우주는
     // authoritative로 쓰지 않는다 — 그대로 B/C attendance_only·E1 unsupported로 fail-closed.
-    if (!collection.complete) return failClosed;
+    if (!collection.complete) return failClosed("schedule_incomplete", {
+      expectedDates: collection.expectedDates.length,
+      failedDates: collection.failedDates.length,
+      collectedDates: collection.collectedDates.length,
+    });
     const seen = new Set<string>();
     universe = [];
     for (const g of collection.games) {
       if (g.status !== "final" || seen.has(g.gameId)) continue;
       const gameDate = toIsoGameDate(String(g.date ?? ""));
-      if (gameDate === null) return failClosed;
+      if (gameDate === null) return failClosed("invalid_game_date");
       seen.add(g.gameId);
       universe.push({ gameId: g.gameId, gameDate });
       // 낮/야간 — 팀 시즌 일정의 낮 경기 "기회"를 세기 위해 보존(삼순: 기회 대비 참석 비율).
@@ -314,24 +325,29 @@ async function computeSeasonAggregates(
       }
     }
   } catch {
-    return failClosed;
+    return failClosed("schedule_exception");
   }
-  if (!officialScoreUniverseComplete) officialGames.clear();
-  if (universe.length === 0) return failClosed;
+  if (!officialScoreUniverseComplete) {
+    officialGames.clear();
+    console.warn("[venue-stats] season_aggregate_unavailable", {
+      season, reason: "official_scores_incomplete", elapsedMs: Date.now() - startedAt,
+    });
+  }
+  if (universe.length === 0) return failClosed("empty_universe");
 
   const rpc =
     deps.rpc ??
     (async (args) => supabase.rpc("venue_stats_season_team_aggregates", args));
   const { data, error } = await rpc({ p_season: season, p_games: universe });
   if (error || !data || typeof data !== "object") {
-    return failClosed;
+    return failClosed("rpc_error_or_empty");
   }
   const payload = data as {
     games?: Array<{ gameId?: unknown; gameDate?: unknown; complete?: unknown }>;
     teams?: Array<Record<string, unknown>>;
   };
   if (!Array.isArray(payload.games) || !Array.isArray(payload.teams)) {
-    return failClosed;
+    return failClosed("rpc_shape");
   }
   const seasonGames: SeasonGameVerification[] = payload.games.flatMap((g) => {
     if (typeof g.gameId !== "string" || typeof g.gameDate !== "string") return [];
@@ -350,9 +366,9 @@ async function computeSeasonAggregates(
   const universeKey = (g: { gameId: string; gameDate: string }) =>
     `${g.gameId}\u0000${g.gameDate}`;
   const rpcKeys = new Set(seasonGames.map(universeKey));
-  if (rpcKeys.size !== universe.length) return failClosed;
+  if (rpcKeys.size !== universe.length) return failClosed("rpc_game_count");
   for (const u of universe) {
-    if (!rpcKeys.has(universeKey(u))) return failClosed;
+    if (!rpcKeys.has(universeKey(u))) return failClosed("rpc_game_identity");
   }
   // 삼순 P0-2 gate — teams exact + malformed reject.
   //  1) complete 우주 경기의 참가팀(gameId 코드→teamId) 집합을 기대 집합으로 삼고,
@@ -365,7 +381,7 @@ async function computeSeasonAggregates(
     if (!g.complete) continue;
     for (const code of g.teamCodes) {
       const teamId = TEAM_CODE_TO_ID.get(code);
-      if (teamId === undefined) return failClosed; // complete 경기 팀코드 해석 불가 → fail-closed
+      if (teamId === undefined) return failClosed("unknown_team_code"); // complete 경기 팀코드 해석 불가 → fail-closed
       completeTeamGameCounts.set(teamId, (completeTeamGameCounts.get(teamId) ?? 0) + 1);
     }
   }
@@ -377,7 +393,7 @@ async function computeSeasonAggregates(
     const teamId = nonNegInt(t.teamId);
     // 유효하지 않은/우주 밖/중복 teamId → fail-closed.
     if (teamId === null || !expectedTeamIds.has(teamId) || teamSeasonTotals.has(teamId)) {
-      return failClosed;
+      return failClosed("rpc_team_identity");
     }
     const completeGames = nonNegInt(t.completeGames);
     const ab = nonNegInt(t.ab);
@@ -390,19 +406,19 @@ async function computeSeasonAggregates(
       completeGames === null || ab === null || h === null || hr === null ||
       outs === null || er === null || hAllowed === null
     ) {
-      return failClosed; // malformed(NaN/누락/음수/비정수) → 조용한 0 대체 금지, fail-closed
+      return failClosed("rpc_team_values"); // malformed(NaN/누락/음수/비정수) → 조용한 0 대체 금지, fail-closed
     }
     // 삼순 4차 P0-2 — completeGames는 우주에서 계산한 해당 팀 complete 경기 수와
     // exact equality여야 한다. 상한만 검사하면 undercount(실제 2 → RPC 1)가 통과해
     // B4 등 per-game 분모(시즌 합계 ÷ completeGames)를 오염시킨다 → 불일치 즉시 fail-closed.
     if (completeGames !== (completeTeamGameCounts.get(teamId) ?? 0)) {
-      return failClosed;
+      return failClosed("rpc_team_game_count");
     }
     teamSeasonTotals.set(teamId, { teamId, completeGames, ab, h, hr, outs, er, hAllowed });
   }
   // exact — 기대 팀이 하나라도 빠지면(teams=[] 포함) fail-closed.
   for (const teamId of expectedTeamIds) {
-    if (!teamSeasonTotals.has(teamId)) return failClosed;
+    if (!teamSeasonTotals.has(teamId)) return failClosed("rpc_team_missing");
   }
   return { seasonGames, teamSeasonTotals, officialScoresComplete: officialScoreUniverseComplete };
 }
@@ -479,6 +495,20 @@ export function __expireSeasonAggregatesCache(season: number): void {
 
 /** 본인 전용 — userId 파라미터를 받지 않아 공개 프로필 조회로 확장되지 않는다 (§9 401·타인 차단). */
 export async function GET(req: NextRequest) {
+  const startedAt = Date.now();
+  try {
+    const response = await handleGet(req);
+    if (response.status >= 500) {
+      console.warn("[venue-stats] request_failed", { status: response.status, elapsedMs: Date.now() - startedAt });
+    }
+    return response;
+  } catch {
+    console.error("[venue-stats] request_failed", { reason: "unhandled_dependency", elapsedMs: Date.now() - startedAt });
+    return NextResponse.json({ error: "직관 통계 조회 실패" }, { status: 500 });
+  }
+}
+
+async function handleGet(req: NextRequest) {
   const verified = await routeRuntimeDeps.getVerifiedUser(req);
   if (!verified) {
     return NextResponse.json({ error: "인증이 필요합니다" }, { status: 401 });
@@ -514,9 +544,11 @@ export async function GET(req: NextRequest) {
   ]);
 
   if (attendanceResult.error) {
+    console.warn("[venue-stats] query_failed", { reason: "attendance", season: requestedSeason });
     return NextResponse.json({ error: "직관 기록 조회 실패" }, { status: 500 });
   }
   if (profileResult.error) {
+    console.warn("[venue-stats] query_failed", { reason: "profile", season: requestedSeason });
     return NextResponse.json({ error: "프로필 조회 실패" }, { status: 500 });
   }
 

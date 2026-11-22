@@ -671,7 +671,8 @@ export default function VenueStatsDashboard() {
       </div>
 
       {showLoading ? (
-        <div className="mt-5 space-y-3">
+        <div className="mt-5 space-y-3" role="status" aria-live="polite">
+          <p className="text-sm text-white/60">{season}시즌 통계를 불러오고 있어요. 잠시만 기다려 주세요.</p>
           <div className="h-52 animate-pulse rounded-2xl bg-white/[0.05]" />
           <div className="h-28 animate-pulse rounded-2xl bg-white/[0.05]" />
         </div>
