@@ -402,6 +402,11 @@ let initial2026Served = false;
 let fail2025 = false;
 let serveSampleLimited = false;
 let serveAttendanceOnly = false;
+const incompleteAttendancePayload = structuredClone(partialBaselinePayload);
+for (const scope of [incompleteAttendancePayload.overall, incompleteAttendancePayload.gps]) {
+  for (const id of ["B1", "B2", "B4"]) scope.metrics[id].value = null;
+}
+let serveIncompleteAttendance = false;
 let servePartialBaseline = false;
 let serveLosingSplits = false;
 let breakFavoritePhoto = false;
@@ -413,6 +418,7 @@ const server = createServer((req, res) => {
       ? stalePayload
       : serveNeutralScore ? neutralScorePayload
       : serveLosingSplits ? losingSplitPayload
+      : serveIncompleteAttendance ? incompleteAttendancePayload
       : servePartialBaseline ? partialBaselinePayload
       : serveAttendanceOnly ? attendanceOnlyPayload
       : serveSampleLimited ? sampleLimitedPayload
@@ -693,6 +699,9 @@ try {
     .catch(() => null);
   await page.locator("select").selectOption("2025");
   await page.waitForTimeout(50);
+  if (!(await page.getByRole("status").getByText("2025시즌 통계를 불러오고 있어요. 잠시만 기다려 주세요.").isVisible())) {
+    throw new Error("selected-season loading explanation missing");
+  }
   if ((await page.getByText("71", { exact: true }).count()) > 0) {
     throw new Error("stale previous-season value visible while selected season is loading");
   }
@@ -1053,6 +1062,18 @@ try {
   if ((await page.evaluate(() => document.documentElement.scrollWidth)) > 390) {
     throw new Error("partial-baseline horizontal overflow");
   }
+
+  if (await page.getByTestId("venue-incomplete-note").count() !== 0) {
+    throw new Error("baseline-only partial must not claim missing attendance records");
+  }
+  serveIncompleteAttendance = true;
+  await page.reload({ waitUntil: "domcontentloaded" });
+  await page.getByTestId("venue-incomplete-note").waitFor({ timeout: 4000 });
+  const incompleteNote = await page.getByTestId("venue-incomplete-note").innerText();
+  if (!incompleteNote.includes("선수 기록이 확인되지 않아") || !incompleteNote.includes("직관 기록은 그대로 보관")) {
+    throw new Error("incomplete attendance needs a visible explanation without promising recovery");
+  }
+  serveIncompleteAttendance = false;
 
   // ── 50점 중립 문구 RED (삼순 P1 2026-08-02) ──────────────────────────
   // 초과성과·팀 delta 가 전부 0이면 점수는 정확히 50이고, 화면 계약은 `50 = 평소`다.

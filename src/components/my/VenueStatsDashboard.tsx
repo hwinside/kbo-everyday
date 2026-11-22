@@ -60,6 +60,7 @@ import {
   buildVenueStatsHero,
   batterCompatibility,
   coverageCaption,
+  incompleteComparisonCaption,
   excludedAttendanceCaption,
   formatAvg,
   formatEra,
@@ -671,7 +672,8 @@ export default function VenueStatsDashboard() {
       </div>
 
       {showLoading ? (
-        <div className="mt-5 space-y-3">
+        <div className="mt-5 space-y-3" role="status" aria-live="polite">
+          <p className="text-sm text-white/60">{season}시즌 통계를 불러오고 있어요. 잠시만 기다려 주세요.</p>
           <div className="h-52 animate-pulse rounded-2xl bg-white/[0.05]" />
           <div className="h-28 animate-pulse rounded-2xl bg-white/[0.05]" />
         </div>
@@ -810,6 +812,11 @@ export default function VenueStatsDashboard() {
                       ? "팀 시즌 비교값을 확인 중이에요"
                       : `팀 시즌 승률 ${formatRate(hero.teamRate)}보다 ${formatSigned(hero.deltaPp, 1, "%p")}`}
             </p>
+            {incompleteComparisonCaption(scope) && (
+              <p data-testid="venue-incomplete-note" className="mt-2 text-[11px] leading-relaxed text-amber-200/90">
+                {incompleteComparisonCaption(scope)}
+              </p>
+            )}
             {excludedAttendanceCaption(scope) && (
               <p data-testid="venue-excluded-note" className="mt-1 text-[10px] font-bold text-amber-200/90">
                 {excludedAttendanceCaption(scope)}
