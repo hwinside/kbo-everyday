@@ -58,11 +58,12 @@ test('unexpected request failures return controlled 500 without logging raw erro
   const errors: unknown[][] = [];
   const original = console.error;
   console.error = (...args) => {errors.push(args);};
-  route.__setVenueStatsRouteRuntimeDepsForTests({getVerifiedUser: async () => {throw new Error('private-auth-error');}});
+  route.__setVenueStatsRouteRuntimeDepsForTests({getVerifiedUser: async () => {throw new TypeError('private-auth-error');}});
   try {
     const response = await route.GET(new NextRequest('https://test.invalid/api/me/venue-stats?season=2026'));
     assert.equal(response.status, 500);
     assert.equal(errors.length, 1);
+    assert.equal((errors[0][1] as Record<string, unknown>).errorName, 'TypeError');
     assert.equal((errors[0][1] as Record<string, unknown>).reason, 'unhandled_dependency');
     assert.equal(JSON.stringify(errors).includes('private-auth-error'), false);
   } finally {

@@ -8,6 +8,7 @@
 
 import { fetchGames, fetchKboGamesOnly, type KboGame } from "./kbo-api";
 import { REGULAR_SEASON_WINDOWS, type RegularSeasonWindow } from "./naver-games";
+import { TEAM_CODE_MAP } from "@/lib/constants/teams";
 
 interface CacheEntry {
   data: KboGame[];
@@ -86,6 +87,32 @@ export async function getSeasonGames(season: number, srId = "0,1,3,4,5,7,9"): Pr
 
 // ── 시즌 우주 fail-closed 수집 (삼순 리뷰 P0) ────────────────────────────────
 
+/**
+ * Closed 2026 season: KBO published 720 games / 144 per club (2025-12-19 schedule).
+ * A successful regular-only KBO read of EVERY date, with exactly all those finals,
+ * independently proves completeness even when the secondary no-game endpoint is down.
+ * Never apply to an ongoing/unknown season, failed reads, or incomplete score/identity data.
+ */
+export function hasCompleteFinalSeasonSchedule(season: number, today: string, games: KboGame[]): boolean {
+  const window = REGULAR_SEASON_WINDOWS[String(season)];
+  if (season !== 2026 || !window?.finalized || today.replaceAll("-", "") <= window.end) return false;
+  const finals = games.filter(g => g.status === "final");
+  if (finals.length !== 720 || new Set(games.map(g => g.gameId)).size !== games.length) return false;
+  if (games.some(g => g.status !== "final" && g.status !== "cancelled")) return false;
+  const counts = new Map<number, number>();
+  for (const game of finals) {
+    if (game.date < window.start || game.date > window.end ||
+        !/^\d{8}[A-Z]{4}[0-9]$/.test(game.gameId) || !game.gameId.startsWith(game.date) ||
+        TEAM_CODE_MAP[game.gameId.slice(8, 10)] !== game.awayTeamId ||
+        TEAM_CODE_MAP[game.gameId.slice(10, 12)] !== game.homeTeamId ||
+        game.awayTeamId === game.homeTeamId ||
+        !Number.isInteger(game.awayScore) || !Number.isInteger(game.homeScore) ||
+        game.awayScore! < 0 || game.homeScore! < 0) return false;
+    for (const id of [game.awayTeamId, game.homeTeamId]) counts.set(id, (counts.get(id) ?? 0) + 1);
+  }
+  return Object.values(TEAM_CODE_MAP).every(id => counts.get(id) === 144);
+}
+
 /** 시즌 경기 수집 결과 + 완료 증거. */
 export interface SeasonGameCollection {
   games: KboGame[];
@@ -134,6 +161,19 @@ const NON_REGULAR_SR_ID = "1,3,4,5,7,9";
  * (fetchGames가 srId="0" soft-empty에서 내부 Naver 교차확인을 시리즈 계약 때문에 거절하고
  *  빈 배열을 fulfill하는 것을 그대로 신뢰하지 않는다.)
  */
+async function verifyRegularEmptyDate(date: string): Promise<SeasonGameFetchResult> {
+  try {
+    const { fetchNaverGames } = await import("./naver-games");
+    const cross = await fetchNaverGames(date, NAVER_FULL_SR_ID);
+    if (cross.length === 0) return { games: [], emptyVerified: true };
+    const nonRegular = await fetchKboGamesOnly(date, NON_REGULAR_SR_ID);
+    const nonRegularIds = new Set(nonRegular.map(game => game.gameId));
+    return { games: [], emptyVerified: cross.every(game => nonRegularIds.has(game.gameId)) };
+  } catch {
+    return { games: [], emptyVerified: false };
+  }
+}
+
 export async function fetchSeasonUniverseDate(
   date: string,
   srId = "0,1,3,4,5,7,9",
@@ -149,16 +189,7 @@ export async function fetchSeasonUniverseDate(
       return { games: [], emptyVerified: false };
     }
     if (regular.length > 0) return { games: regular, emptyVerified: false };
-    try {
-      const { fetchNaverGames } = await import("./naver-games");
-      const cross = await fetchNaverGames(date, NAVER_FULL_SR_ID);
-      if (cross.length === 0) return { games: [], emptyVerified: true };
-      const nonRegular = await fetchKboGamesOnly(date, NON_REGULAR_SR_ID);
-      const nonRegularIds = new Set(nonRegular.map((game) => game.gameId));
-      return { games: [], emptyVerified: cross.every((game) => nonRegularIds.has(game.gameId)) };
-    } catch {
-      return { games: [], emptyVerified: false };
-    }
+    return verifyRegularEmptyDate(date);
   }
 
   const games = await fetchGames(date, srId);
@@ -258,7 +289,31 @@ export async function collectSeasonGameUniverse(
   const fetcher = opts?.fetcher ?? fetchSeasonUniverseDate;
   const today = opts?.today ?? new Date().toLocaleDateString("sv-SE", { timeZone: "Asia/Seoul" });
   const dates = getSeasonDates(season, srId, today, opts?.regularSeasonWindow);
-  const results = await Promise.allSettled(dates.map((d) => fetcher(d, srId)));
+  let results: PromiseSettledResult<SeasonGameFetchResult>[];
+  // Only the real KBO primary can supply this completeness witness; injected fetchers
+  // keep the existing all-date cross-check path used by integration fault tests.
+  if (!opts?.fetcher && !opts?.regularSeasonWindow && srId === REGULAR_ONLY_SR_ID &&
+      season === 2026 && REGULAR_SEASON_WINDOWS[String(season)]?.finalized &&
+      today.replaceAll("-", "") > REGULAR_SEASON_WINDOWS[String(season)].end) {
+    const primary = await Promise.allSettled(dates.map(date => fetchKboGamesOnly(date, srId)));
+    const games = primary.flatMap(result => result.status === "fulfilled" ? result.value : []);
+    const dateBound = primary.every((result, index) => result.status === "fulfilled" &&
+      result.value.every(game => game.date === dates[index]));
+    if (dateBound && hasCompleteFinalSeasonSchedule(season, today, games)) {
+      return { games, complete: true, expectedDates: dates, collectedDates: dates, failedDates: [] };
+    }
+    // No witness: reuse primary reads, cross-check only empty dates. Failed/incorrect
+    // date reads stay failed instead of issuing a second full-season request burst.
+    results = await Promise.allSettled(primary.map(async (result, index) => {
+      if (result.status === "rejected") throw result.reason;
+      if (result.value.some(game => game.date !== dates[index])) throw new Error("schedule_date_mismatch");
+      return result.value.length > 0
+        ? { games: result.value, emptyVerified: false }
+        : verifyRegularEmptyDate(dates[index]);
+    }));
+  } else {
+    results = await Promise.allSettled(dates.map((d) => fetcher(d, srId)));
+  }
 
   const games: KboGame[] = [];
   const collectedDates: string[] = [];

@@ -693,6 +693,9 @@ try {
     .catch(() => null);
   await page.locator("select").selectOption("2025");
   await page.waitForTimeout(50);
+  if (!(await page.getByRole("status").getByText("2025시즌 통계를 불러오고 있어요. 잠시만 기다려 주세요.").isVisible())) {
+    throw new Error("selected-season loading explanation missing");
+  }
   if ((await page.getByText("71", { exact: true }).count()) > 0) {
     throw new Error("stale previous-season value visible while selected season is loading");
   }

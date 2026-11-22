@@ -159,6 +159,7 @@
     "qa:backfill-workflow-matrix": "bash scripts/qa/backfill-workflow-matrix.sh",
     "qa:ledger-count-guard": "bash scripts/qa/ledger-count-guard-smoke.sh",
     "qa:ledger-complete-parse": "bash scripts/qa/ledger-complete-parse-smoke.sh",
+    "qa:venue-stats-diagnostics": "node --import tsx --test tests/venue-stats-diagnostics.test.ts tests/venue-stats-final-season.test.ts",
     "qa:venue-stats-state": "tsx scripts/qa/venue-stats-state-ladder-smoke.ts",
     "qa:venue-stats-s1b-aggregate": "tsx scripts/qa/venue-stats-s1b-aggregate-smoke.ts && tsx scripts/qa/venue-stats-s1b-db-route-integration.ts",
     "qa:venue-stats-s1b-db-route": "tsx scripts/qa/venue-stats-s1b-db-route-integration.ts",

@@ -15,7 +15,7 @@
  */
 import { NextRequest, NextResponse } from "next/server";
 import { getVerifiedUserFromRequest } from "@/lib/auth/verified-user";
-import { fetchGames, fetchStandings, type TeamStanding } from "@/lib/crawler/kbo-api";
+import { fetchGames, fetchStandings, type KboGame, type TeamStanding } from "@/lib/crawler/kbo-api";
 import {
   collectSeasonGameUniverse,
   type SeasonGameFetcher,
@@ -43,7 +43,28 @@ import type { SeasonSupportStatus } from "@/lib/venue-stats/types";
 import { buildCurrentSeasonBaselines } from "@/lib/venue-stats/current-season-baseline";
 import { loadCachedTeamRecords } from "@/app/api/team-records/route";
 
+import { createVerifiedSourceCache } from "@/lib/venue-stats/source-cache";
+import { isOutsideConfirmedRegularSeason } from "@/lib/crawler/naver-games";
+import { TEAM_CODE_MAP } from "@/lib/constants/teams";
+
 export const maxDuration = 60;
+
+// Cache only public, successfully verified source data; user rows and responses remain no-store.
+const cachedAttendanceGames = createVerifiedSourceCache<KboGame[]>(games =>
+  games.length > 0 && games.every(game => game.status === "final" || game.status === "cancelled"));
+const cachedStandings = createVerifiedSourceCache<TeamStanding[]>(rows =>
+  rows.length === 10 && new Set(rows.map(row => row.teamId)).size === 10 &&
+  rows.every(row => Object.values(TEAM_CODE_MAP).includes(row.teamId) &&
+    Number.isInteger(row.games) && row.games > 0 &&
+    [row.wins, row.losses, row.draws].every(n => Number.isInteger(n) && n >= 0) &&
+    row.wins + row.losses + row.draws === row.games));
+
+function fetchStatsAttendanceGames(date: string, srId: string): Promise<KboGame[]> {
+  // Official finalized window proves these dates have no regular-season games.
+  // This does not suppress the separate non-regular attendance lookup.
+  if (srId === "0" && isOutsideConfirmedRegularSeason(date)) return Promise.resolve([]);
+  return cachedAttendanceGames(`${date}:${srId}`, () => fetchGames(date, srId));
+}
 
 /** §9 supportedSeason — player_game_logs ledger·standings 비교 소스가 있는 시즌. */
 const SUPPORTED_SEASON = 2026;
@@ -67,6 +88,8 @@ let routeRuntimeDeps = defaultRouteRuntimeDeps;
 export function __setVenueStatsRouteRuntimeDepsForTests(
   overrides: Partial<VenueStatsRouteRuntimeDeps> | null,
 ): void {
+  cachedAttendanceGames.clear();
+  cachedStandings.clear();
   routeRuntimeDeps = overrides
     ? { ...defaultRouteRuntimeDeps, ...overrides }
     : defaultRouteRuntimeDeps;
@@ -264,11 +287,14 @@ async function computeSeasonAggregates(
   deps: SeasonAggregatesDeps = {},
 ): Promise<SeasonAggregates> {
   const startedAt = Date.now();
-  const failClosed = (reason: string, details: Record<string, number> = {}): SeasonAggregates => {
+  const warnUnavailable = (reason: string, details: Record<string, number> = {}): void => {
     // Only bounded diagnostic fields: never log user IDs, tokens, RPC payloads or raw errors.
     console.warn("[venue-stats] season_aggregate_unavailable", {
       season, reason, elapsedMs: Date.now() - startedAt, ...details,
     });
+  };
+  const failClosed = (reason: string, details: Record<string, number> = {}): SeasonAggregates => {
+    warnUnavailable(reason, details);
     return { seasonGames: null, teamSeasonTotals: null, officialScoresComplete: false };
   };
   let universe: Array<{ gameId: string; gameDate: string }>;
@@ -329,9 +355,7 @@ async function computeSeasonAggregates(
   }
   if (!officialScoreUniverseComplete) {
     officialGames.clear();
-    console.warn("[venue-stats] season_aggregate_unavailable", {
-      season, reason: "official_scores_incomplete", elapsedMs: Date.now() - startedAt,
-    });
+    warnUnavailable("official_scores_incomplete");
   }
   if (universe.length === 0) return failClosed("empty_universe");
 
@@ -502,8 +526,13 @@ export async function GET(req: NextRequest) {
       console.warn("[venue-stats] request_failed", { status: response.status, elapsedMs: Date.now() - startedAt });
     }
     return response;
-  } catch {
-    console.error("[venue-stats] request_failed", { reason: "unhandled_dependency", elapsedMs: Date.now() - startedAt });
+  } catch (error) {
+    // Error.name can also contain arbitrary upstream text: allow known bounded identifiers only.
+    const safeNames = ["Error", "TypeError", "RangeError", "SyntaxError", "ReferenceError", "URIError", "EvalError", "AbortError", "TimeoutError", "AggregateError"];
+    const errorName = error instanceof Error
+      ? (safeNames.includes(error.name) ? error.name : "CustomError")
+      : typeof error;
+    console.error("[venue-stats] request_failed", { reason: "unhandled_dependency", errorName, elapsedMs: Date.now() - startedAt });
     return NextResponse.json({ error: "직관 통계 조회 실패" }, { status: 500 });
   }
 }
@@ -570,10 +599,10 @@ async function handleGet(req: NextRequest) {
     await Promise.all([
       Promise.all([
         fetchAttendanceGamesWithinDeadline(rows, {
-          fetcher: (date) => fetchGames(date, REGULAR_SEASON_SR_ID),
+          fetcher: (date) => fetchStatsAttendanceGames(date, REGULAR_SEASON_SR_ID),
         }),
         fetchAttendanceGamesWithinDeadline(rows, {
-          fetcher: (date) => fetchGames(date, NON_REGULAR_SEASON_SR_ID),
+          fetcher: (date) => fetchStatsAttendanceGames(date, NON_REGULAR_SEASON_SR_ID),
         }),
       ]).then(([games, nonRegularGames]) => ({ games, nonRegularGames })),
       fetchAttendanceGameLogs(gameIds),
@@ -582,7 +611,7 @@ async function handleGet(req: NextRequest) {
         ? fetchSeasonAggregates(requestedSeason)
         : Promise.resolve<SeasonAggregates>({ seasonGames: null, teamSeasonTotals: null, officialScoresComplete: false }),
       seasonSupported
-        ? fetchStandings().catch(() => null as TeamStanding[] | null)
+        ? cachedStandings(String(requestedSeason), fetchStandings).catch(() => null as TeamStanding[] | null)
         : Promise.resolve<TeamStanding[] | null>(null),
       seasonSupported
         ? fetchLiveSeasonSnapshots()
