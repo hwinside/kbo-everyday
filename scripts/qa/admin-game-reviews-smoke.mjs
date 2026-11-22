@@ -20,7 +20,7 @@ let reads = 0;
 const ranges = [];
 class Query {
   constructor(table) { this.table = table; this.filters = []; this.orders = []; this.from = 0; this.size = 1000; }
-  select() { return this; }
+  select(columns = "*") { this.columns = columns; return this; }
   neq(key, value) { this.filters.push((r) => r[key] !== value); return this; }
   is(key, value) { this.filters.push((r) => r[key] === value); return this; }
   gte(key, value) { this.filters.push((r) => Date.parse(r[key]) >= Date.parse(value)); return this; }
@@ -33,6 +33,10 @@ class Query {
   then(ok, fail) {
     reads++;
     if (this.table !== "game_reviews") return Promise.resolve({ data: [], error: null }).then(ok, fail);
+    // Multiple relationships to profiles make unqualified embeds fail in PostgREST.
+    if (/\bprofiles\s*\(/.test(this.columns)) {
+      return Promise.resolve({ data: null, error: { message: "Ambiguous profiles relationship", code: "PGRST201" } }).then(ok, fail);
+    }
     if (dbError) return Promise.resolve({ data: null, error: { message: "fixture DB error", code: "XX000" } }).then(ok, fail);
     const data = rows.filter((row) => this.filters.every((f) => f(row))).sort((a, b) => {
       for (const [key, ascending] of this.orders) {
