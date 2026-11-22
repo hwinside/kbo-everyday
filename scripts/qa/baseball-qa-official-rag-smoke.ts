@@ -737,6 +737,13 @@ check("공식 일정 계약 — 요청 연도/자료 연도 불일치·미상·�
   assert.equal(validate([{ ...current[0], season: 2025 }], "올해 일정은?").kind, "insufficient");
   assert.equal(validate(past, "2026년 일정은?").kind, "insufficient");
   assert.equal(validate(past, "2025년 일정은?").kind, "grounded");
+  for (const question of ["KBO 개막 날짜 알려줘", "2026년 일정은?", "올해 일정은?", "2025년과 2026년 일정은?"]) {
+    assert.deepEqual(validate(past, question), { kind: "insufficient", reason: "event_question_year_unverified" });
+  }
+  assert.deepEqual(validate(past, "２０２５년 일정은?"), validate(past, "2025년 일정은?"));
+  assert.deepEqual(validate(current, "올해 일정은?"), { kind: "insufficient", reason: "event_date_unverified" });
+  assert.deepEqual(validate([{ ...past[0], basis: "unknown" }], "KBO 개막 날짜 알려줘"),
+    { kind: "insufficient", reason: "event_date_unverified" });
   for (const invalid of [
     { ...past[0], season: "2025" }, { ...past[0], evidence: "1" },
     { ...past[0], evidence: "자료1" }, { ...past[0], evidence: 0 },
@@ -755,6 +762,7 @@ check("공식 일정 계약 — 요청 연도/자료 연도 불일치·미상·�
     numericEvidence: true, officialQuestion: "이 규칙은 뭐야?", evidence, calendarContract: { referenceTimeMs },
   }).kind, "grounded");
 });
+
 
 checkAsync("순수 요청 빌더 — 공식 기준일 주입과 기본 서버 시계 (env 불필요)", async () => {
   const fixed = buildRagLlmRequest("올해 일정은?", [OFFICIAL], RAG_OFFICIAL_SYSTEM_PROMPT,

@@ -14,7 +14,7 @@ import { execFileSync } from "node:child_process";
 import { copyFileSync, readFileSync, writeFileSync, unlinkSync } from "node:fs";
 
 const TARGETS = {
-  dateMigration: "supabase/migrations/20260929112000_genius_event_date_discard_reason.sql",
+  dateMigration: "supabase/migrations/20261121064000_genius_question_year_discard_reason.sql",
   pipeline: "src/lib/baseball-qa/pipeline.ts",
   retrieve: "src/lib/baseball-qa/rag/retrieve.ts",
   logrow: "src/lib/baseball-qa/log-row.ts",
