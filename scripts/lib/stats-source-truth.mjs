@@ -1,3 +1,4 @@
+import { ensureBatterBasic2 } from "./kbo-basic2.mjs";
 import { createHash } from "node:crypto";
 import { computeDefenseRuns } from "./defense-runs.mjs";
 import { collectAllPages, createKboPageAdapter, signatureOf } from "./kbo-pagination.mjs";
@@ -105,6 +106,16 @@ export async function collectKboPages(page, url, season, { keyOf } = {}) {
 
   const adapter = createKboPageAdapter(page);
 
+  // The oracle must compare regular-season snapshots, not the site's postseason default.
+  const seriesSelector = "select[name$='ddlSeries$ddlSeries']";
+  if (season && (await page.$(seriesSelector))) {
+    await selectAndConfirm(
+      createSelectAdapter(page, seriesSelector, async () => signatureOf(await adapter.scrapeTable())),
+      "0",
+      { label: `${url} 정규시즌` },
+    );
+  }
+
   const seasonSelector = "#cphContents_cphContents_cphContents_ddlSeason_ddlSeason";
   if (season && (await page.$(seasonSelector))) {
     // ⚠︎ 종전에는 16회 polling 동안 표가 안 바뀌어도 그냥 루프를 빠져나와
@@ -116,6 +127,10 @@ export async function collectKboPages(page, url, season, { keyOf } = {}) {
       String(season),
       { label: `${url} 시즌` },
     );
+  }
+
+  if (/\/HitterBasic\/Basic2\.aspx(?:[?#]|$)/.test(url)) {
+    await ensureBatterBasic2(page, season);
   }
 
   const rows = await collectAllPages({ ...adapter, log: () => {} });
